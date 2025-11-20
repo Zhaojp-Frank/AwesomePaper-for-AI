@@ -488,3 +488,244 @@ https://arxiv.org/abs/2510.02611 2025.10.2 斯坦福
 2. 💡 本文发现不同采样温度能解决不同子集的难题，这表明单一温度采样未能充分发掘模型潜力，因此提出沿温度维度进行扩展以拓宽LLMs的推理边界。
 3. 🚀 该多温度扩展策略在多个模型和基准测试上平均带来7.3点的额外性能提升，使得基础模型无需额外训练即可达到与强化学习（RL）训练模型相当的水平，并设计了高效的多温度投票方法以降低计算开销。
 
+## 分子生物学ReaSyn
+Rethinking Molecule Synthesizability with Chain-of-Reaction
+
+https://arxiv.org/abs/2509.16084
+
+https://mp.weixin.qq.com/s/lDWO5MdH_ywKYVBg4gVx-g 
+
+基于https://github.com/wenhao-gao/synformer （MIT 2024）修改 pytorch，pytorch-lighting，A100
+
+1. 🎯 针对分子生成模型在可合成性方面表现不佳，以及现有方法在化学空间覆盖和优化性能上的局限，本文提出了 ReaSyn 框架，旨在通过生成可合成途径来探索给定分子的可合成类似物。
+2. 💡 ReaSyn 引入了“Chain-of-Reaction (CoR)”符号，将其合成途径类比于大语言模型 (LLM) 的“Chain-of-Thought (CoT)”推理路径，显式地包含反应物、反应类型和中间产物以实现密集的逐步监督和推理，并通过强化学习微调和目标导向的测试时间计算扩展进一步增强其推理能力。
+3. 🏆 实验证明，ReaSyn 在可合成分子重建、目标导向分子优化和命中扩展等任务中均显著超越现有方法，实现了最高的重建率、途径多样性和优化性能，展现了其在导航庞大可合成化学空间中的卓越能力。
+
+## RSPO
+Towards Stable and Effective Reinforcement Learning for Mixture-of-Experts
+
+https://arxiv.org/abs/2510.23027 2025.10.27 微软
+
+1. 🎯 针对专家混合模型（MoE）在强化学习（RL）训练中因Router波动和方差不匹配而导致的稳定性问题，本文提出了一种新型路由器感知策略优化算法——Router-Shift Policy Optimization (RSPO)。
+2. 💡 RSPO 通过引入一个路由器偏移比率来量化新旧策略间路由分布的偏差，并以此对 token 级重要性采样（IS）权重进行软性重缩放，同时采用序列级重要性比率的几何平均以减少梯度方差。
+3. 🚀 实验证明，RSPO 在数学推理基准测试中显著提升了 MoE 模型的收敛稳定性和最终性能，优于现有基线方法，并有助于保持更高的 token 熵。
+
+MoE模型通过稀疏激活专家来提高模型容量和计算效率，使其在大规模RL训练中具有吸引力。然而，将RL应用于MoE模型面临稳定性挑战，主要源于路由器波动（router fluctuation）：相同输入 token 选择的专家集合在策略更新后可能发生显著变化，导致重要性采样（IS）权重方差增大，优化不稳定，甚至奖励崩溃。此外，传统方法常采用 token-level 的 IS 比率，这与RLVR（Reinforcement Learning with Verifiable Rewards）通常使用的 sequence-level 奖励不匹配，进一步加剧了不稳定性。
+为解决这些问题，本文提出了一种名为 Router-Shift Policy Optimization (RSPO) 的RL算法，专为MoE架构设计，以实现稳定高效的训练。RSPO 不像 router freezing 或 routing replay 那样对路由器施加严格限制，而是引入了一个 路由器偏移比率（router shift ratio），用于量化当前策略与旧策略之间路由决策的偏离程度。此比率基于路由器 logit 计算，并用于软性地重新缩放 IS 权重。
+RSPO 的核心思想和技术细节如下：
+1. 问题动机：
+  ○ 路由器波动（Routing fluctuations）： 策略更新后，相同 token 激活的专家集合或其路由概率可能发生变化。这导致 IS 比率大幅波动，频繁触发裁剪机制，增加训练方差。
+  ○ 方差不匹配（Variance mismatch）： 大多数 GRPO 实现将 sequence-level 的优势估计与 token-level 的 IS 比率对齐，这在 MoE 环境下被放大，加剧了不稳定性。
+2. RSPO 算法：
+RSPO 保留了 sequence-level 的重要性比率，但采用 token-level 裁剪以减少信息损失。同时，引入路由器偏移比率来度量路由器分布在当前策略和旧策略之间的偏差，并用其对 token-level 的重要性比率进行重新加权，并软性裁剪表现出严重路由漂移的 token。这在不冻结路由器的情况下稳定了训练。
+
+## AEPO
+Agentic Entropy-Balanced Policy Optimization
+https://www.arxiv.org/abs/2510.14545 快手 人大
+https://github.com/dongguanting/ARPO
+1. 🔍 本文提出了Agentic Entropy-Balanced Policy Optimization (AEPO) 算法，旨在解决Agentic强化学习中，过度依赖熵信号导致的轨迹回溯崩溃和高熵Token梯度裁剪问题。
+2. 💡 AEPO包含两部分：一是动态熵平衡 回溯机制，通过熵预监控自适应分配采样预算并惩罚连续高熵分支；二是熵平衡策略优化，通过停止梯度操作保留并重新缩放高熵Token梯度，并结合熵感知优势估计。
+3. 🚀 在14个挑战性数据集上的实验表明，AEPO持续优于7种主流强化学习算法，显著提升了回溯采样多样性和策略熵稳定性，从而促进了可扩展网络Agent的训练。
+
+本文提出了一种名为Agentic Entropy-Balanced Policy Optimization (AEPO) 的强化学习算法，旨在解决Agentic强化学习（Agentic RL）中，过度依赖熵信号进行探索可能导致的训练崩溃问题。该算法通过在Rollout和策略更新阶段平衡熵来提升多轮、长周期工具使用（multi-turn, long-horizon tool-use）的Web Agent性能。
+文章首先揭示了Agentic RL中两个由高熵引发的核心挑战：
+1. High-entropy Rollout Collapse (高熵Rollout崩溃)：在Rollout阶段，连续的高熵工具调用步骤（tool-call steps）会导致模型在一个单一轨迹（single trajectory）上过度分支（over-branching），从而耗尽其他潜在正确分支的采样预算，限制了Rollout采样的多样性和覆盖范围。
+2. High-entropy Token Gradient Clipping (高熵Token梯度裁剪)：在策略更新阶段，传统的强化学习算法会积极裁剪高熵Token的梯度，这阻碍了模型学习有效的探索性行为，尤其是在涉及外部工具调用时。
+
+## RollFlash
+ROLL Flash – Accelerating RLVR and Agentic Training with Asynchrony
+
+https://arxiv.org/abs/2510.11345 2025.10.13 阿里
+1. 🚀 ROLL Flash 是一个为大语言模型（LLM）强化学习（RL）后训练设计的异步系统，通过细粒度并行和Rollout-训练解耦两大核心原则，有效解决了传统同步方法中资源利用率低和可扩展性差的问题。
+2. ⚙️ 该系统采用队列调度、提示复制、环境级异步执行等机制，实现Rollout与训练阶段的并行化，理论和实践均证明其能显著缓解长尾Rollout造成的GPU空闲，从而提升资源利用率和吞吐量。
+3. ⚡️ 实验结果显示，ROLL Flash在RLVR任务中实现了高达2.24倍的加速，在Agentic任务中达到2.72倍的加速，并且在最优异步比配置下，通过支持Off-policy算法，能保持与同步训练相当的性能和稳定性。
+
+## RLBoost
+RLBoost: Harvesting Preemptible Resources for Cost-Efficient Reinforcement Learning on LLMs
+
+https://arxiv.org/abs/2510.19225 2025.10.24 UCB, CMU, Goolge etc
+
+https://github.com/Terra-Flux/PolyRL 基于SGLang Verl
+1. 💡 RLBoost提出了一种混合架构，旨在解决大型语言模型(LLM)强化学习(RL)中rollout和训练阶段资源需求不匹配的问题，通过有效利用抢占式GPU资源实现成本效益。
+2. 🤖 该系统通过自适应rollout卸载 动态调整预留训练集群的工作负载、拉取式权重传输快速为新实例提供最新模型，以及token级响应收集与迁移来高效处理抢占并实现持续负载均衡。
+3. 🚀 实验结果表明，与仅使用按需GPU资源相比，RLBoost在保持同步RL算法的同时，将训练吞吐量提高了1.51至1.97倍，并将成本效率提升了28%至49%。
+RLBoost 提出了一种系统性解决方案，旨在通过利用可抢占式 GPU 资源，实现大语言模型（LLM）强化学习（RL）训练的高效且经济。
+
+##开源模型 IOI金牌
+Scaling Test-Time Compute to Achieve IOI Gold Medal with Open-Weight Models
+
+https://arxiv.org/abs/2510.14232v1 2025.10.16
+
+1. 🏆 本文提出了GENCLUSTER，一个可扩展的测试时计算框架，旨在通过大规模代码生成、行为聚类、排名和轮询提交策略，帮助大型语言模型（LLMs）在有限验证预算下高效探索解决方案空间。
+2. 🥇 实验首次证明，该框架结合开源模型gpt-oss-120b，能在国际信息学奥林匹克竞赛（IOI）中达到金牌水平，得分446.75。OpenAI的分数比这个高7%~20%；分数比DeepSeek高25+%。
+  a. OSS加大K分数提升scale 47%；DeepSeekscale 37%；Qwen3-235B-A22B scale 15%
+
+## EPPO 采样遗忘
+https://arxiv.org/abs/2510.05837 2025.10.7 微软等
+
+1. 🤖 针对大型语言模型（LLMs）中可验证奖励强化学习（RLVR）存在的探索-利用平衡挑战，现有方法常过度侧重利用，导致熵坍缩和泛化能力受限。
+2. 💡 为此，本文提出了EEPO（Exploration-Enhanced Policy Optimization）框架，通过“先采样后遗忘”机制促进探索，该机制将rollout过程分为两阶段，在第一阶段采样后执行轻量级遗忘步骤，以暂时抑制已采样响应，强制第二阶段探索输出空间的不同区域。
+3. 🚀 在五个数学推理基准上，EEPO始终优于GRPO及其他基线方法，在Qwen2.5-3B上实现平均相对收益24.3%，在Llama3.2-3B-Instruct上实现33.0%，在Qwen3-8B-Base上实现10.4%，同时保持了训练效率。
+4. EEPO (Exploration-Enhanced Policy Optimization) 是一种旨在解决大型语言模型 (LLM) 可验证奖励强化学习 (RLVR) 中探索-利用困境的框架。现有 RLVR 方法（如 GRPO）往往过度强调利用高奖励轨迹，导致策略熵急剧下降（即熵坍塌），模型对训练分布过拟合，泛化能力受限，并陷入“自我强化循环”：模型反复采样并奖励主导行为模式，进一步抑制了对其他潜在优质推理策略的探索。
+为了解决这一问题，EEPO 引入了一种“先采样后遗忘 (sample-then-forget)”机制，通过自适应遗忘在 rollout 过程中促进探索。该机制将 GRPO 的 rollout 过程分为两个阶段：
+1. 第一阶段采样 (Stage 1 sampling)：Rollout 模型 $\pi_{rollout}$ 生成一半轨迹 (例如 $G/2$ 条)。
+2. 遗忘 (Unlearning)：Rollout 模型对第一阶段采样的轨迹执行一个轻量级的遗忘步骤，暂时抑制这些已采样的响应。
+3. 第二阶段采样 (Stage 2 sampling)：模型从经过遗忘更新后的 $\pi_{rollout}$ 中采样剩余的轨迹
+   
+## MoE R3 
+
+小米
+1. 💡 Mixture-of-Experts (MoE) 强化学习 (RL) 训练存在路由机制不稳定性问题，主要源于推理和训练阶段路由行为的显著不一致性，甚至在相同条件下重复前向传播也会产生专家选择差异。
+2. 🛠️ 为解决此根本性问题，本文提出了 Rollout Routing Replay (R3) 方法，通过记录推理引擎的路由分布并在训练时复现，以对齐两阶段的路由决策并保留梯度流。
+3. 📈 实验结果表明，R3 显著降低了训练-推理策略的 KL 散度，将极端差异令牌的数量减少了一个数量级，从而有效稳定了 MoE RL 训练，防止了崩溃并优于现有方法。
+
+## PEAR阶段熵
+PEAR: Phase Entropy Aware Reward for Efficient Reasoning
+
+https://arxiv.org/abs/2510.08026 2025.10.10 新加坡南洋理工
+
+https://github.com/iNLP-Lab/PEAR
+1. 🧐大型推理模型(LRMs)生成的思维链(CoT)解释常过长，增加了推理成本并降低可用性；通过实证分析发现，模型熵与推理响应长度在不同阶段呈正相关，其中“思考阶段”熵高而“最终答案阶段”熵低。
+2. 💡基于此洞察，本文提出Phase Entropy Aware Reward (PEAR)奖励机制，它在奖励设计中融入阶段性熵值，惩罚思考阶段的过度探索性熵，同时允许最终答案阶段适度探索，以生成更简洁的推理路径。// 还应该有转折token 鼓励
+3. 📊PEAR在四个基准测试中显著减少了37.8%至59.4%的响应长度，同时保持了竞争力甚至更高的准确率，并展示出强大的域外泛化能力，无需预设长度目标或硬性截断规则。
+
+## LLMs as Improvement Operators
+Rethinking Thinking Tokens: LLMs as Improvement Operators  
+  
+https://arxiv.org/abs/2510.01123 2025.10.1 Meta Superintelligence Lpdf & Anthropic
+
+优化纯CoT推理 和 RL
+1. 💡 该研究将大型语言模型（LLM）视为改进操作符，提出了Parallel-Distill-Refine (PDR) 和 Sequential Refinement (SR) 等迭代推理方法，旨在解决长链思维 (Long CoT) 推理导致的上下文长度、计算成本和延迟过高问题。
+2. 🚀 PDR通过并行生成多样化的草稿，将其提炼为有界的文本工作区，再基于此工作区进行迭代细化，有效解耦了上下文长度与总生成Token数，从而在固定延迟下实现对计算成本的精确控制。
+3. ✅ 实验证明，PDR在相同顺序预算（Bseq）下，其准确性优于Long CoT和SR，尤其在数学任务上获得最大增益（AIME 2024/2025分别提升11%和9%）；与PDR推理方法一致的RL训练能进一步提升模型性能。
+
+## 2-GRPO
+It Takes Two: Your GRPO Is Secretly DPO
+https://arxiv.org/abs/2510.00977 2025.10.1
+
+1. ✨ GRPO（Group Relative Policy Optimization）是LLM后训练中的一种重要强化学习算法，但普遍认为其需要较大的分组规模以确保统计估计的稳定，从而带来高昂的计算成本。
+2. 💡 本研究将GRPO重新诠释为对比学习的一种形式，揭示了其与DPO（Direct Preference Optimization）的内在联系，并在此启发下提出了极小分组尺寸（G=2）的2-GRPO。
+3. ⚡ 理论分析与实证结果表明，2-GRPO在保持与16-GRPO相当性能的同时，能将rollout使用量减少八分之一，并显著缩短70%以上的训练时间，挑战了GRPO需要大分组规模的传统认知。
+
+## LoopLM
+Scaling Latent Reasoning via Looped Language Models 
+https://arxiv.org/abs/2510.25741v1 2025.10.29
+
+http://ouro-llm.github.io/
+
+1. 论文提出了Ouro（循环语言模型，LoopLM），通过在预训练阶段集成迭代潜在计算和熵正则化深度分配目标，在7.7T tokens上训练，旨在将推理能力内置于模型中而非依赖后训练。
+2. 实验结果表明，1.4B和2.6B的Ouro模型在多项基准测试中，性能可媲美甚至超越4B和8B的SOTA LLM，其卓越优势主要源于其知识操纵能力的提升，而非知识存储容量的增加。
+3. LoopLM通过自适应计算和高效KV缓存共享机制提高了推理效率和安全性，并提供了一个比显式Chain-of-Thought（CoT）更忠实的内部推理过程，确立了循环深度作为模型扩展的第三个关键维度。
+
+## 混合架构
+Hybrid Architectures for Language Models: Systematic Analysis and Design Insights
+
+https://arxiv.org/abs/2510.04800 Meta 2025.10.6
+1. 📚 该研究系统地评估了语言模型中层间（inter-layer）和层内（intra-layer）混合架构的设计策略，旨在深入分析其建模质量与计算效率。
+2. ✨ 实验结果表明，混合模型在语言建模性能、长上下文能力和MoE兼容性方面均优于同质架构及SWA模型，其中层内混合架构在质量-效率的Pareto曲线上表现最佳。
+3. 💡 这些混合架构通过利用Mamba的线性复杂度，显著提升了训练和推理效率，并提供了关于最优模块比例、排列顺序及融合策略的实用设计指导。
+这篇论文深入探讨了语言模型的“混合架构”（Hybrid Architectures），旨在平衡建模质量与计算效率，尤其是在处理长上下文时。论文对两种主要的混合策略——“层间混合”（inter-layer hybrid）和“层内混合”（intra-layer hybrid）进行了系统性的分析和比较。
+
+## Attn与规则
+Extracting Rule-based Descriptions of Attention Features in Transformers
+
+https://arxiv.org/abs/2510.18148 2025.10.20
+
+1. 🤔 现有Transformer特征的机械可解释性常依赖于主观的示例检查，本研究提出通过提取注意力层稀疏自编码器（SAE）特征的规则描述，以提供更具解释性的理解。
+2. ⚙️ 论文将注意力头计算分解为基于输入特征 对交互的加权和，并提出了三种规则类型：跳跃n-gram规则（skip-gram rules）、缺失规则（absence rules）和计数规则（counting rules），同时开发了一种自动提取这些规则的实证方法并应用于GPT-2 small。
+3. 📊 结果表明，大多数特征可由约100条跳跃n-gram规则良好描述，早期层中也广泛存在缺失规则，并发现了计数规则，这为未来通过规则描述和理解大型语言模型行为奠定了基础。
+这篇论文深入探讨了 Transformer 语言模型中注意力特征的机制可解释性（mechanistic interpretability），旨在用基于规则的描述（rule-based descriptions）来解释模型行为，而非传统上依赖对高激活范例（exemplars）的主观检查。虽然现有的主流方法，如稀疏自编码器（Sparse Autoencoders, SAEs），能提取特征向量（feature vectors），但对这些特征的解释通常需要耗时的人工检查，且可能存在主观性、不完整或不准确的问题。
+论文提出了一种不同的解决方案：用符号化、人类可读的规则来描述 SAE 特征。具体来说，该研究关注注意力层（attention layers）的输出特征，并将其计算表达为输入特征之间交互的加权和。这些交互可以匹配输入中的 token 模式，并相应地增加或减少特定输出 token 的可能性。
+论文的核心方法论是将注意力特征的计算进行分解（Decomposing Attention Features），使其可以被解释为特征对（feature pairs）之间交互的加权和，这些交互代表了输出 token 的促进或抑制。
+
+## 样本级梯度更新
+Per-example gradients: a new frontier for understanding and improving optimizers  
+https://arxiv.org/abs/2510.00236 Google Deepmind, 2025.9.30
+
+1. 💡 深度学习优化器通常仅使用mini-batch平均梯度，限制了对逐样本梯度统计信息的访问；本文证明了通过计算图修改或JAX的vmap转换，高效获取此类逐样本梯度统计信息在计算上是可行的。
+2. 🛠️ 研究表明，这些泛型梯度统计信息可通过自动微分图的“手术式”修改实现，在某些情况下，其计算和内存开销与传统mini-batch梯度计算几乎相同，尤其在Transformer等序列模型中表现出高效性。
+3. 📈 基于逐样本梯度分析，作者发现SignSGD中符号操作的最佳位置应尽可能晚地应用，且Adam优化器中的预处理器若由梯度均方项而非方差项主导，则训练速度更快、稳定性更强，这与传统观点相悖。
+
+这篇论文探讨了在深度学习优化器中访问并利用单样本梯度（per-example gradients）信息的新方法和可能性。传统上，深度学习训练算法通常将 mini-batch 中的样本视为一个整体，通过对 mini-batch 梯度求平均值进行处理。由于自动微分（AD）框架在计算除平均值之外的其他统计量时资源开销巨大，研究人员通常避免使用这些信息。这篇论文指出，情况并非总是如此。
+核心方法学：高效计算单样本梯度统计量
+
+论文的核心贡献之一是提出并验证了两种高效获取单样本梯度统计量的方法：
+1. 计算图重构（Computational Graph Surgery）：
+该方法通过对自动微分（AD）的计算图进行“重构”来实现。在 mini-batch 梯度计算中，大多数操作保留了单样本信息，直到最后一个聚合步骤。通常，梯度在进行求和约简（sum reduction）之前，每个样本的计算路径是独立的。通过在求和约简之前“注入”所需的非线性函数 $\phi$，可以直接计算单样本梯度统计量。
+具体来说，对于一个权重为 $W_k \in \mathbb{R}^{D \times D}$ 的全连接层，单样本的梯度为 $\nabla_{W_k} f(\theta; x_i) = s_i r_i^\top$（一个秩一矩阵），其中 $s_i$ 是中间输入， $r_i$ 是反向传播的残差。 mini-batch 梯度是 $\nabla_{W_k} \sum_{i=1}^B f(\theta; x_i) = \sum_{i=1}^B s_i r_i^\top = SR$，其中 $S=(s_1, \dots, s_B)^\top$ 和 $R=(r_1, \dots, r_B)$ 分别堆叠了中间输入和残差。
+对于“可因式分解（factorable）”的操作 $\phi$（例如 $\text{sign}$ 函数或任意幂函数，如平方），如果 $\phi(sr) = \phi(s)\phi(r)$，则可以通过简单地对 $S$ 和 $R$ 进行元素级操作来计算相应的单样本梯度统计量。例如，元素级平方和可以表示为：
+$\sum_{i=1}^B [\nabla_{W_k} f(\theta; x_i)]^2 = \sum_{i=1}^B (s_i r_i^\top)^2 = \sum_{i=1}^B (s_i)^2 (r_i^\top)^2 = S^2 R^2$
+2. JAX vmap 向量化变换：
+对于序列模型（如 Transformer），激活值的内存成本为 $BDL$（$B$ 为 batch size， $D$ 为维度， $L$ 为序列长度），而参数的内存成本为 $D^2$。如果序列长度 $L$ 大于等于维度 $D$，那么存储 $B$ 个独立梯度的成本可能小于存储激活值的成本。在这种情况下，使用 JAX 的 vmap 向量化变换来实现单样本梯度统计量是可行的，并仅带来适度的计算开销（例如，在 1.2B 参数的 Transformer 模型上，仅增加约 17% 的计算开销），同时不增加峰值内存使用。这种方法为快速原型开发和实验提供了途径
+
+## Jet-Nemotron
+Jet-Nemotron: Efficient Language Model with Post Neural Architecture Search
+https://arxiv.org/abs508.15884 NVIDIA
+
+https://github.com/NVlabs/Jet-Nemotron
+
+1. 🧠 Jet-Nemotron 是一系列新型混合架构语言模型，其在保持或超越领先全注意力模型准确性的同时，显著提升了生成吞吐量。
+2. 🚀 该模型通过Post Neural Architecture Search (PostNAS)这一高效神经架构探索流程，以及新颖的JetBlock线性注意力机制设计，实现了优化的模型构建。
+3. 📈 Jet-Nemotron-2B 在多项基准测试中表现出色，与Qwen3等模型相比，在长上下文生成任务上实现了高达53.6倍的吞吐量加速和6.1倍的预填充加速，并显著降低了LLM架构探索成本。
+本文提出了一种名为 Jet-Nemotron 的新型混合架构语言模型家族，其目标是在显著提高生成吞吐量的同时，达到或超越现有最先进的全注意力（full-attention）模型的准确性。Jet-Nemotron 的开发核心是一种新颖的神经架构探索流程，称为 Post Neural Architecture Search (PostNAS)，它能有效进行模型设计。
+
+核心方法学：PostNAS
+PostNAS 与以往方法不同，它首先从一个预训练的 full-attention 模型开始，并冻结其多层感知机（MLP）权重，从而实现对注意力块设计的有效探索。这一策略显著降低了训练成本和数据需求。PostNAS 流程包含四个关键步骤：
+1. Full Attention Layer Placement and Elimination（全注意力层放置与消除）：
+  ○ 动机：保留少量 full-attention 层对于在 MMLU、数学推理和检索等复杂任务上保持高精度至关重要，但最佳放置位置尚不明确。
+  ○ 方法：作者引入了一种新颖的方法，通过训练一个 once-for-all super network 来自动学习 full-attention 层的最佳放置位置。在训练过程中，每次迭代随机采样一个子网络，并使用特征蒸馏损失（feature distillation loss）进行训练。训练完成后，通过 beam search 确定在给定约束（例如，两个 full-attention 层）下的最优放置。搜索目标取决于任务，例如 MMLU 最小化损失，数学和检索任务最大化准确率。
+  ○ 发现：不同注意力层对不同能力（如 MMLU 和检索）的贡献不同，且并非所有层都同等重要。学习到的放置策略显著优于均匀放置策略。
+2. Linear Attention Block Selection（线性注意力块选择）：
+  ○ 动机：确定 full-attention 层的放置后，需要选择最适合该设置的线性注意力块。
+  ○ 方法：作者评估了包括 RWKV7、RetNet、Mamba2、GLA、Deltanet 和 Gated DeltaNet 在内的六种现有最先进的线性注意力块，从准确性、训练效率和推理速度等方面进行系统评估。
+  ○ 发现：Gated DeltaNet 表现出最佳的综合准确性，这归因于其结合了 Data-Dependent Gating Mechanism 和 Delta Rule，前者动态控制模型是更关注当前 token 还是历史状态，后者使用当前 token 的信息增量更新历史状态以节省有限的状态记忆。
+3. New Attention Block Design (JetBlock)（新注意力块设计）：
+  ○ 动机：现有线性注意力块通常使用静态卷积核，缺乏动态适应输入特征的能力。
+  ○ 方法：作者提出了一个新的线性注意力块 JetBlock，它将 dynamic convolution 集成到线性注意力中。JetBlock 使用一个 kernel generator 模块根据输入特征动态生成 causal convolution kernels，并将其应用于 value (V) tokens。同时，它移除了 query (Q) 和 key (K) 上冗余的静态卷积，简化了计算。
+  ○ 发现：JetBlock 相比以往的线性注意力块（如 Gated DeltaNet）在数学推理和检索任务上显示出更高的准确性，同时保持了相似的效率。
+4. Hardware-Aware Architecture Search（硬件感知架构搜索）：
+  ○ 动机：传统上，模型参数量被用作效率指标，但这与实际硬件上的生成效率并不直接相关。
+  ○ 方法：作者将生成吞吐量作为选择架构超参数（如 key/value dimension 和 number of attention heads）的直接目标。在固定 KV cache 大小（这是影响长上下文和长生成吞吐量最关键的因素）的前提下，通过小范围的网格搜索来寻找最优配置。
+  ○ 发现：KV cache 大小是影响长上下文和长生成吞吐量最关键的因素。当 KV cache 大小不变时，具有不同参数量的模型表现出相似的生成吞吐量。通过这种搜索，最终配置在保持与原始设计相当的生成吞吐量的同时，通过增加参数量提高了准确性。
+关键成果：Jet-Nemotron 模型家族
+Jet-Nemotron-2B 模型在综合基准测试（包括 MMLU(-Pro)、常识推理、数学推理、检索、编码和长上下文任务）中，与 Qwen3、Qwen2.5、Gemma3 和 Llama3.2 等领先的 full-attention 模型相比，表现出相当或更优的准确性。
+● 效率提升：在 NVIDIA H100 GPU 上，当上下文长度为 64K tokens 时，Jet-Nemotron-2B 实现了高达 53.6 倍的生成吞吐量加速和 6.1 倍的预填充（prefilling）加速。在 256K 上下文长度下，预填充速度提升 6.14 倍，解码速度提升 53.6 倍。
+● 准确性超越：Jet-Nemotron-2B 在 MMLU 和 MMLU-Pro 上的准确性甚至超过了最近先进的 MoE full-attention 模型，如 DeepSeek-V3-Small 和 Moonlight（尽管它们总参数高达 15B，激活参数为 2.2B）。
+● 架构优势：Jet-Nemotron 家族通过显著减少 full-attention 层的数量和更小的 KV cache，实现了卓越的推理效率。例如，Jet-Nemotron-2B 采用两个 full-attention 层和两个 sliding window attention (SWA) 层，其余层替换为 JetBlock，而 Jet-Nemotron-4B 采用三个 full-attention 层和七个 SWA 层。
+● 训练成本降低：PostNAS 通过重用预训练 LLM，降低了 LLM 架构探索的成本和风险，加速了语言模型架构设计的创新
+
+## CAD(CoreAttnDisaggr)
+Efficient Long-context Language Model Training by Core Attention Disaggregation
+
+https://arxiv.org/abs/2510.18121 2025.10.20 CMU, UCSD, 阶跃
+
+1. 📖 针对长上下文大型语言模型（LLM）训练中，核心注意力（core attention, CA）计算与模型其他组件间的负载不平衡问题，本文提出了一种核心注意力解耦（Core Attention Disaggregation, CAD）技术。
+2. 💡 CAD将无参数的CA计算从其他组件中分离，并调度到独立的注意力服务器资源池，通过利用CA的无状态性和可组合性，实现了token划分与动态重批处理，从而达到近乎完美的负载均衡。
+3. 🚀 该技术在名为DistCA的系统中实现，结合了就地AttnServer、乒乓式执行机制以隐藏通信开销和通信感知调度器，在多达512块H200 GPU和512K上下文长度下，将端到端训练吞吐量提高了1.35倍。
+
+**核心问题与挑战** 
+现有系统通常将核心注意力（即参数无关的 softmax(QK⊤)V 计算）与其他组件共置。然而，在长上下文场景下，核心注意力计算量呈二次方增长，而模型其余部分的计算量呈近线性增长。这种计算复杂度的不匹配导致负载不平衡，进而引发数据并行（Data Parallelism, DP）和流水线并行（Pipeline Parallelism, PP）训练中的“掉队者”（straggler）问题。例如，文档打包（document packing）策略虽然提高了吞吐量，但不同长度文档的组合会导致注意力计算量差异显著，即使总token数相同，也会产生高达1.34-1.44倍的减速。
+现有的解决方案，如可变长度数据块（variable-length data chunk）尝试平衡计算量但牺牲了内存平衡，导致部分GPU激活内存膨胀；按文档上下文并行（per-document context parallelism, CP）虽然能平衡计算和内存，但会引入显著的all-gather通信开销，并可能因小分片而降低核函数效率，且无法缓解PP掉队者问题。
+核心注意力解耦 (CAD) 方法
+CAD基于两个关键观察：
+1. 无状态性（Statelessness）：核心注意力不包含可训练参数，只存储少量每行softmax统计信息，因此其平衡问题可简化为计算密集型任务的调度。
+2. 可组合性（Composability）：核心注意力计算可以在token粒度上被分解为任意长度的分片。每个分片可以独立计算，并且来自不同文档（或DP/PP副本）的分片可以被重新批处理（re-batched）以形成单个高利用率的注意力核函数调用（例如Flash Attention）。核函数的吞吐量主要取决于聚合的token总数，而非其原始文档来源。
+CAD将核心注意力从模型其余部分中解耦，并在一个专用于CA计算的资源池（称为“注意力服务器” attention servers）上独立调度。注意力服务器接受任意划分的文档分片的核心注意力任务（CA-tasks）作为计算请求。运行时动态地将这些CA-tasks批处理成大型融合核函数调用，并调度到任何注意力服务器上，从而实现近乎完美的负载均衡，同时避免内存不平衡。与CP不同，CAD完全解耦了核心注意力与模型其余部分的并行化方式，消除了DP和PP中的掉队者。
+
+基于Megatron-LM修改，实现了AlltoAll；对比了WLB-LLM
+
+**局限性**
+● 虽然DistCA采用就地注意力服务器来提高内存利用率，但如果内存需求已满足，专用GPU池可能进一步减少计算时间，并提供更好的容错和性能隔离。
+● 调度器目前限制CA-task为具有完整K、V上下文的Q分片，未来可考虑更灵活的上下文范围。
+● 通信成本估算模型可能过于悲观，未来可考虑已驻留在目标设备上的K、V状态。
+● 在34B模型的4D并行实验中，内存碎片化和频繁的PyTorch垃圾回收导致了运行时开销，限制了DistCA的性能，未来计划通过静态内存分配和CUDA Graphs解决。
+
+## 训练表征变化
+Tracing the Representation Geometry of Language Models from Pretraining to Post-training  
+https://arxiv.org/abs/2509.23024 McGill University & UC Berkeley, 2025.9.27
+
+这项研究通过测量语言模型表示的有效秩（RankMe）和特征谱衰减（𝛼ReQ），揭示了预训练过程中一致的非单调三阶段几何演化：先是快速表示崩溃的“warmup”阶段，随后是维度扩展并伴随n-gram记忆的“entropy-seeking”阶段，最后是各向异性整合并显著提升下游任务性能的“compression-seeking”阶段。
+🧠 研究发现，这些几何阶段源于交叉熵优化在偏斜token频率和表示瓶颈（d ≪ |𝒱|）下的基本相互作用，其中“entropy-seeking”阶段与短上下文记忆相关，而“compression-seeking”阶段则促进了长上下文理解和泛化能力。
+🔄 后训练阶段进一步改变了几何结构：SFT和DPO驱动“entropy-seeking”动态以整合特定指令或偏好数据，提高内部分布性能但降低了分布外（OOD）鲁棒性；而RLVR则诱导“compression-seeking”动态，增强了奖励对齐但减少了生成多样性。
+
+<img width="1436" height="851" alt="image" src="https://github.com/user-attachments/assets/2a1faaa2-b962-47e2-bba4-08568e249d09" />
