@@ -67,4 +67,424 @@ Seer的核心贡献在于其引入的三项关键技术：
     *   **自适应推测范围机制（Adaptive Speculation Range Mechanism）**：DGDS动态调整`max_draft_length`和候选路径数$k$。系统根据当前并发级别、模型架构（如dense或MoE）预先计算的推测token阈值，动态计算最大Draft长度。生成Draft tokens时，还会根据token出现频率和CST提供的置信度分数过滤候选，以提高接受率。这种自适应控制能够在保持解码准确性的同时，最大化分布式Rollout实例的整体吞吐量和推测解码效率。
 
 **实验结果**：
+
+<img width="2263" height="859" alt="image" src="https://github.com/user-attachments/assets/3ccda96b-3de1-4377-a887-2bc392a300fe" />
+
 Seer在生产级RL工作负载上进行了评估，结果表明，与最先进的同步RL系统相比，Seer的端到端Rollout吞吐量提高了74%至97%，长尾延迟降低了75%至93%，显著加速了RL训练迭代。消融实验也验证了分段Rollout、上下文感知调度和自适应分组推测解码各自的有效性。例如，上下文感知调度实现了接近Oracle LFS调度器95%的吞吐性能，而自适应分组推测解码相比无SD基线提高了30%的端到端吞吐量。
+
+## Honesty over Accuracy: Trustworthy Language Models through Reinforced Hesitation
+
+https://arxiv.org/abs/2511.11500 
+
+2024.11.14 丰田研究院（芝加哥），UCSD等
+
+1. LLMs包括GPT等SOTA模型在内即使在不确定或错误答案后果严重时也极少拒绝回答。这源于现有训练范式（如RLVR）奖励任何答案而非沉默，导致它们无法建立可信赖智能所需的基本犹豫能力。
+2. 为此提出“强化犹豫”（Reinforced Hesitation, RH）机制，通过将强化学习中可验证奖励（RLVR）的二元奖励（对错）扩展为三元奖励（正确+1，拒绝回答0，错误-λ），在训练阶段明确赋予犹豫以价值。
+3. Qwen3-1.7b模型RH训练形成了一个帕累托前沿，在不同风险偏好下表现最佳，并且其学会的“拒绝回答”信号可用于级联推理（cascading）和自级联（self-cascading）等高效推理策略，显著提升了模型在准确性和信任度上的表现。3种正面效果：1）拒绝回答率显著提升；2）回答更精简；3）通过自级联（提高多样性）设计的多种采样，提高了准确率（从不做拒绝回答的基线 85% -> 92%）
+
+**核心问题与现有范式缺陷**
+LLMs在医学诊断、金融咨询、法律研究等高风险领域中的应用日益广泛，但其在这些场景中犯错的成本是非线性的，一个自信的错误可能会永久性地损害用户信任。然而，当前的评估标准仍主要关注准确率最大化，对错误的类型和后果不加区分，这导致模型在追求排行榜名次的同时，丧失了“知之谓知之 不知谓不知”这一可信智能的基本要求。特别是RLVR范式，其二进制奖励机制（答对+1，答错0）鼓励模型进行猜测，即使推理过程是虚假的，只要答案正确也会得到奖励，从而忽略了灾难性风险。
+
+作者首先通过实验评估了当前前沿模型（如GPT-4o、Gemini 2.5 Pro等）在GSM8K、MedQA和GPQA等基准测试上的表现。即使在提示中明确告知了严重的错误惩罚和拒绝回答选项，这些模型也几乎从不选择拒绝回答（通常低于1%），且错误率依然很高（超过10%）。这表明，仅仅依靠提示词无法纠正模型在数千次训练步骤中形成的“有回答胜于无回答”的内在偏好，模型缺乏有效的拒绝回答能力并非能力缺失，而是训练中形成的固有行为。
+
+提出的解决方案：Reinforced Hesitation (RH)
+为了解决这一根本性问题，本文提出了Reinforced Hesitation (RH)，这是对RLVR奖励机制的一个最小化修改。RH将RLVR的二元奖励信号（+1，0）转换为三元结构（+1，0，-$\lambda$），分别对应正确答案、拒绝回答和错误答案。惩罚参数 $\lambda \geq 0$ 编码了领域特定的错误后果和验证成本：
+$\text{reward} = \begin{cases} +1 & \text{if the answer is correct,} \\ 0 & \text{if the model says ‘I don’t know’,} \\ -\lambda & \text{If the answer is wrong.} \end{cases}$
+在一个理性Agent的视角下，当回答的预期效用低于零时，Agent会选择拒绝回答，这在置信度阈值 $\frac{\lambda}{1+\lambda}$ 处形成了一个自然的决策边界。因此，$\lambda$ 不仅仅是一个超参数，它是一个可解释的领域控制参数，用于权衡错误与拒绝回答：例如，在错误代价巨大的医学诊断中，可设置 $\lambda=100$（要求 $>99\%$ 的置信度）；在错误可容忍的创意任务中，可设置 $\lambda=1$（要求 $>50\%$ 的置信度）。
+核心方法论（技术细节）
+RH作为LLM后训练标准RLVR阶段的修改，无需对模型架构或早期训练阶段进行改动。总奖励 $R_{\text{total}}(y, y^*)$ 被分解为内容奖励 $R_{\text{content}}(y, y^*)$ 和格式奖励 $R_{\text{format}}(y)$：
+$R_{\text{total}}(y, y^*) = R_{\text{content}}(y, y^*) + R_{\text{format}}(y)$
+其中，内容奖励 $R_{\text{content}}(y, y^*)$ 即上述三元奖励结构：
+$R_{\text{content}}(y, y^*) = \begin{cases} +1 & \text{if } y = y^* \text{ (correct answer)} \\ 0 & \text{if } y = \text{“I don’t know”} \\ -\lambda & \text{if } y \neq y^* \text{ (incorrect answer)} \end{cases}$
+格式惩罚 $R_{\text{format}}(y)$ 用于确保输出结构正确，例如：
+$R_{\text{format}}(y) = \begin{cases} 0 & \text{if format is valid} \\ -0.5\lambda & \text{if format is violated (missing tags, truncation, etc.)} \end{cases}$
+这种分解可以防止模型通过破坏输出格式来规避惩罚。RH的训练过程（算法1）是在标准的RLVR框架内，通过在提示中明确允许模型拒绝回答（例如：“If you don’t know the answer with sufficient confidence, you must say ‘I don’t know’.”），并用三元奖励计算替代二元奖励。
+实验设计与结果
+作者使用Qwen3-1.7B模型，在Knights & Knaves逻辑谜题数据集上进行了一系列受控RLVR实验，数据集包含5、6、7人谜题，并根据逻辑复杂性分为简单和困难两类。实验通过改变 $\lambda \in \{0, 1, 2, 5, 10, 20\}$ 来观察模型行为。
+
+实验结果表明，不同 $\lambda$ 值训练出的模型展现出截然不同的行为模式：
+1. 激进回答者 ($\lambda=0$)：模型总是回答，错误率保持在15%左右，几乎不拒绝回答。
+2. 平衡型 ($\lambda \in \{1, 2, 5\}$)：模型学会权衡覆盖率与安全性，错误率降至2%以下。它们能进行校准式拒绝回答，对简单问题拒绝率仅5-10%，而对复杂问题拒绝率高达60-95%。
+3. 保守拒绝者 ($\lambda \ge 10$)：模型学会通过保守拒绝回答来最大化预期奖励，错误率低于1%（$\lambda=20$ 时几乎普遍拒绝回答）。
+
+训练动态显示，当 $\lambda=10$ 时，模型经历了“瞬时危机”：拒绝回答率一度飙升至90%（在简单问题上更是达到97%），随后恢复到稳定的状态，这表明模型不是丧失了能力，而是在学习新的决策边界。所有 $\lambda>0$ 的模型都表现出难度区分能力，对难题的拒绝率显著高于简单题。此外，高 $\lambda$ 值还会促使模型生成更简洁的响应，因为超出最大Token长度会受到惩罚，从而意外地提高了推理效率。
+
+模型表示“我不知道”时，为什么再次提问可能会有所帮助？答案在于 LLM 推理的本质。每次生成都涉及两种形式的非确定性：算法上的（影响 token 选择的抽样策略，如 temperature 和 top-p）和计算上的（硬件级别的数值不稳定性，在自回归步骤中以不同的方式累积）。对于模型学会弃权的问题，这些变化有时会产生不同的结果。一个导致弃权的推理链，由于生成过程中早期不同的随机选择，可能会发展出提供答案的信心。 自我级联利用了这一点，将每次弃权视为探索解决方案空间中不同轨迹的机会，而不是永久性的失败。
+
+## MoC
+Mixture-of-Channels: Exploiting Sparse FFNs for Efficient LLMs Pre-Training and Inference
+
+https://arxiv.org/abs/2511.09323v1 北大yuan kun 2025.11.12
+
+https://mp.weixin.qq.com/s/IHeGDK4SNP3C__L1wDjL7g
+
+降低激活内存和计算量：利用SwiLU激活接近稀疏 选重要的通道（50%）理论内存降低4x（实测E2E 25%）；并借助A100的硬件稀疏（2:8??），FFN层加速38%~56%。最大1B的模型。精度号称持平。
+
+1. 👉 大型语言模型（LLMs）训练面临巨大的内存开销，特别是在FlashAttention优化注意力机制后，前馈网络（FFNs）的激活内存已成为预训练和推理的关键瓶颈。
+2. 💡 本文提出了一种新颖的FFN架构，Mixture-of-Channels (MoC)，它利用SwiGLU固有的门控机制，为每个token选择性地激活Top-K个最相关的通道。
+3. 🚀 MoC显著减少了预训练期间的激活内存，并通过仅加载所需权重到GPU SRAM来提高推理效率，实验证明其在保持模型性能的同时，实现了显著的内存节省和吞吐量提升。
+
+## Virtual Width Networks
+
+http://arxiv.org/abs/2511.11238v1 2025.11.17 字节
+
+https://mp.weixin.qq.com/s/sYflxeZSInStAvTdxaow6g 
+
+1. 💡 本文提出了Virtual Width Networks (VWN)框架，它通过解耦表示宽度和骨干网络宽度，能够在不增加隐藏层二次计算成本的情况下扩展嵌入空间，主要通过Generalized Hyper-Connections (GHC)实现。
+2. 🚀 大规模实验显示，VWN的8倍虚拟宽度扩展可将next-token预测的优化速度提升超过2倍，next-2-token预测提升3倍，且这种效率优势会随训练的进行而放大，并与Multi-Token Prediction (MTP)展现出协同效应。
+3. 📈 研究还发现虚拟宽度与损失降低之间存在近似对数线性关系，这为将虚拟宽度扩展作为一个新的可预测维度来提升大型模型效率提供了重要的经验基础和探索方向。
+
+## Optimizing Mixture of Block Attention
+
+https://arxiv.org/abs/2511.11571 2025.11.14, MIT 韩松团队
+
+https://github.com/mit-han-lab/flash-moba
+
+1. ✨ 本文针对Mixture of Block Attention (MoBA)在长上下文LLM中的应用，提出了一个统计模型，并通过信噪比（SNR ∝ √(d/B)）揭示了路由准确性与架构参数（d/B比值、关键键卷积）的关键联系，从而提供了MoBA设计的理论指导。提高信噪比关键: 更大的dimension；更小的Block块
+2. 🌟 针对理论上最优但GPU效率低下的小block问题，开发了硬件感知的FlashMoBA CUDA内核，通过融合tiled Top-K和“gather-and-densify”(固定Key，gather Q)策略，显著提升了MoBA的执行效率。
+3. 🚀 1B模型，精度可匹敌或略超dense，>=128K时 attn加速10~14x
+
+MoBA 机制回顾
+MoBA 通过将 Key 和 Value 分割成大小为$B$的块，并通过一个学习到的路由器让每个 Query 仅稀疏地关注一小部分 Key-Value 块，从而将计算复杂度从 $O(N^2)$ 降低到近乎线性的 $O(N \cdot kB)$。具体而言，对于每个 Query $q$，MoBA 会计算其与每个 Key 块质心（centroid）$\tilde{k}_i = \frac{1}{B}\sum_{k \in K_i} k$ 的相似度 $s_i = q^\top \cdot \tilde{k}_i$。随后，选择得分最高的 $k$ 个块进行注意力计算。为了保持因果性，对未来块进行掩码，并且每个 Query 总是关注其自身所在的块。
+这篇论文深入探讨了 Mixture of Block Attention (MoBA) 这一高效处理长上下文的 LLM 机制，旨在解决其性能机制理解不足和 GPU 实现效率低下的两大核心问题。论文首先通过建立一个统计模型来分析 MoBA 的底层工作原理，揭示了其性能关键在于路由器准确区分相关与非相关块的能力。在此基础上，论文提出了 FlashMoBA，一个硬件感知的 CUDA kernel，使得理论上最优的小块尺寸在实践中变得高效可行。
+MoBA 的统计模型与信号-噪声比 (SNR) 分析
+论文构建了一个统计模型来理解 MoBA 路由器如何成功选择正确块的挑战。
+1. 块选择挑战建模：路由器通过块的质心来评分，这可能导致单个相关 Token 的信号被淹没。论文将 Query $q$ 与 Key 之间的点积视为随机变量，假设“信号”Key $k^*$ 的期望点积 $\mu_{signal} = E[q^\top k^*]$ 高于“噪声”Key $k$ 的期望点积 $\mu_{noise} = E[q^\top k]$。两者的基本分离是 $\Delta\mu = \mu_{signal} - \mu_{noise}$。
+2. SNR 分析：为量化块选择的成功条件，论文分析了路由器得分的信号-噪声比 (SNR)。考虑信号块 $j^*$ 和纯噪声块 $j$ 之间得分差异 $D = s_{j^*} - s_j$。此差异的期望值代表“信号”，其标准差代表“噪声”。
+通过统计分析（详见附录 A），得到：
+  ○ 期望差异：$E[D] = \frac{\Delta\mu_{eff}}{B}$
+其中，$\Delta\mu_{eff} = \Delta\mu + (m-1)(\mu_{cluster} - \mu_{noise})$ 是有效信号分离，如果目标块中聚集了 $m$ 个相关信号 Token，则该分离被放大。
+  ○ 差异方差：$Var(D) \approx \frac{2}{dB}$ (对于归一化向量，假设点积方差 $\sigma^2 \approx 1/d$)
+由此，核心发现是 SNR：
+$\text{SNR} = \frac{E[D]}{\sqrt{Var(D)}} = \Delta\mu_{eff} \sqrt{\frac{d}{2B}}$
+检索失败（噪声块排名高于信号块）的概率 $p_{fail} = \Phi(-\text{SNR})$ 随 SNR 增加呈指数下降。
+3. 架构洞察：SNR 公式提供了两个关键设计原则：
+  ○ $d/B$ 比是关键：SNR 与 $\sqrt{d/B}$ 成正比。这意味着增加头维度 $d$ 或减小块大小 $B$ 都能提高路由器的检索能力。为了控制模型容量，论文在实验中固定 $d$ 并系统性地改变 $B$。
+  ○ 块内聚类是性能倍增器：当语义相关的 Token 在块内聚集时（可以通过对 Key 进行 Token 级别的卷积来促进），有效信号 $\Delta\mu_{eff}$ 会通过更大的 $m$ 和 $\mu_{cluster}$ 而增加，从而显著提高 SNR。
+FlashMoBA：小块 MoBA 的优化核
+尽管理论上小块尺寸能带来质量提升，但朴素的 GPU 实现效率低下。原始 MoBA 在小块配置下，其性能瓶颈会抵消稀疏性带来的计算节省。FlashMoBA 旨在解决这些挑战，使理论最优配置在实践中可行。
+1. 小块尺寸带来的性能挑战：
+  ○ 内存访问效率低下：为每个 Query 收集稀疏、非连续的 Key-Value 块导致 HBM 非 coalesced 内存读取。
+  ○ Top-K 和门控开销：小块尺寸 $B$ 增加路由器需要评分的块数量 $n=N/B$，原始实现会具体化一个大的$N \times n$分数矩阵，造成巨大的内存开销。
+  ○ GPU 占用率低：每个块的工作量减少以及启动大量独立核的开销导致并行度差和硬件利用率低。
+2. FlashMoBA 核设计：FlashMoBA 采用三个融合核（fused kernels），以最小化 HBM 往返次数并与 GPU 架构对齐：
+  ○ Tiled Top-K Selection (Flash TopK)：
+    ⅰ. 计算块质心：一个融合的 Triton 核首先计算 Key-块质心，生成一个比原始 Key 矩阵小$B$倍的 $\tilde{K}$ 矩阵。
+    ⅱ. 融合 Top-K 选择：第二个融合核采用 FlashAttention-2 的瓦片（tiling）策略，识别每个 Query 的 Top-K 块，通过计算 $Q$ 和 $\tilde{K}$ 之间的分数，而无需将完整的得分矩阵具体化到 HBM。它在片上维护 Top-K 索引和分数列表，使用冒泡排序进行高效更新。
+    ⅲ. 索引重格式化为 Varlen 格式：为了后续注意力计算的密集化，将以 Query 为中心的 Top-K 索引重格式化为以 Key-块为中心的变长 (varlen) 布局。这通过两阶段的 epilogue 实现：首先通过前缀和计算每个 Key-块的内存偏移，然后将 Query-centric 索引散射到 Varlen 数组中。
+  ○ 带有 Gather-and-Densify 的前向传播：
+核心策略是“gather-and-densify”，允许在稀疏上下文中利用 FlashAttention-2 的高效密集计算模式。区分两种块：
+    ■ 逻辑块 (Logical Blocks)：Query ($Q_i$) 和 Key ($K_j$) 的大型连续块，核在外层循环中遍历。逻辑 Key 块等同于 MoBA Key 块。
+    ■ 物理块 (Physical Blocks)：加载到 SRAM 中进行实际矩阵乘法的小瓦片（例如 64x64 或 128x128）。
+核将一个逻辑 Query 块分配给一个线程块，并遍历所有逻辑 Key 块。对于每对 $(Q_i, K_j)$，它使用 varlen 索引识别 $Q_i$ 中相关的 Query 子集，并将此稀疏子集批处理成密集的物理块。一个物理 Query 块从 HBM 收集到 SRAM 中进行计算。这种两级阻塞方法通过在 SRAM 中缓存 Query，使得它们可以在逻辑 Key 块的所有物理瓦片中重复使用，从而摊销代价高昂的不规则内存访问，并进行高效的密集 GEMM 计算。
+  ○ 带有重计算的后向传播：
+后向传播沿用 FlashAttention-2 的内存高效设计，实现为三个融合核的序列。它并行化计算，每个线程块处理一个 Key 块。为处理稀疏性，它模仿前向传播的“gather-and-densify”策略，使用 varlen 索引将 Query 和输出梯度子集收集到片上瓦片中。它在后向传播期间重新计算注意力分数，以避免存储完整的注意力矩阵。Key 和 Value 梯度直接写入 HBM，而部分 Query 梯度（dQ）通过原子操作累积到高精度全局缓冲区中。
+
+## UltraAttn 
+UltraAttn: Efficiently Parallelizing Attention through Hierarchical Context-Tiling
+
+https://dl.acm.org/doi/pdf/10.1145/3712285.3759894 SC25 翟季冬团队
+
+https://github.com/oliverYoung2001/UltraAttn
+
+//挑的是llama2-7b模型 这么小的模型做CP并行，不够典型
+
+1. 📚 本文提出了UltraAttn，一种针对不规则注意力机制（irregular attention）的新型上下文并行（context parallelism）解决方案，旨在解决现有方法在长上下文LLM训练和推理中存在的通信开销大、内核粒度不灵活及带宽浪费等问题。
+2. 🚀 UltraAttn通过在节点、设备和内核层级进行分层上下文切片（hierarchical context-tiling），并结合基于整数线性规划（ILP）的运行时调度器，显著减少通信量、优化硬件利用率并实现计算与通信的平衡。
+3. ⚡ 在64个GPU上，UltraAttn在多种不规则注意力类型中，相对于现有最先进的上下文并行方法实现了平均5.5倍的加速，并展现出卓越的强扩展性和性能预测准确性。
+UltraAttn 提出了一种针对不规则稀疏注意力（irregular block-sparse attention）的高效并行化解决方案，旨在加速大型语言模型（LLMs）的长上下文训练和推理。现有上下文并行化方法存在可扩展性差的问题，主要表现为：1) 条带状（striped-like）划分模式导致高通信流量；2) 基于环（ring-based）的通信模式限制了内核粒度，降低了设备利用率，并引入冗余通信。UltraAttn 通过分层上下文切片（hierarchical context-tiling）和基于整数线性规划（ILP）的运行时优化来解决这些问题，显著提高了分布式注意力的性能、适应性和可扩展性。
+核心方法学
+UltraAttn 的核心在于在三个层面（节点级、设备级、内核级）进行上下文切片，并结合 ILP 优化的运行时调度
+
+## SwiReasoing切换
+SwiReasoning: Switch-Thinking in Latent and Explicit for Pareto-Superior Reasoning LLMs
+
+https://arxiv.org/abs/2510.05069 2025.10.9 佐治亚 微软等
+
+https://github.com/sdc17/SwiReasoning
+
+1. 📄 针对现有大型语言模型（LLMs）在显式推理中信息损失及隐式推理中稳定性与效率不足的问题，本文提出了SWIREASONING，一个免训练的动态推理框架。
+2. 🔄 该框架基于次token分布的熵趋势评估置信度，智能地在显式和隐式推理模式间切换，以平衡探索和收敛；同时，通过限制模式切换次数来有效抑制过度思考，提升词元效率。
+3. 📈 在多项数学和STEM推理基准测试中，SWIREASONING在不同LLM模型上均持续提高了平均1.5%至2.8%的准确性，并在有限词元预算下实现了56%至79%的平均词元效率提升。
+SWIREASONING 是一种免训练（training-free）的框架，旨在提升大型语言模型（LLMs）在推理任务中的表现，同时提高 token 效率。该研究指出，传统的显式思维链（explicit chain-of-thought, CoT）推理受限于自然语言的离散性，在每一步都会选择一个 token 并丢弃其他可能性，从而限制了信息带宽和潜在推理路径。另一方面，虽然通过在连续的隐空间（latent space）中进行推理（latent reasoning）可以保留更丰富的信息并隐含地探索多条假设路径，但在免训练设置下，纯粹的隐式推理容易扩散概率质量、引入噪声，阻碍模型收敛到高置信度的解决方案，从而影响准确性。此外，即使在隐空间中，模型也可能出现“过度思考”（overthinking）现象，浪费 token 并降低效率。
+
+## FastGRO 4+
+FastGRPO: Accelerating Policy Optimization via Concurrency-aware Speculative Decoding and Online Draft Learning
+
+https://arxiv.org/abs/2509.21792 兰州大学 2025.9.26 ICLR 2026投稿
+
+https://github.com/yedaotian9/GRPO_speculative
+
+针对RL 投机优化，基于EAGLE-2实现。
+● batch变化 影响加速效果：-> 动态调整投机的参数(深度 广度)，使得投机+验证|原batch 打满算力 
+● RL的更新后分布漂移 : -> 小模型也要更新，否则影响接受率（3.7->2.5）。训练有开销 说不多
+7/8b模型单卡（torch），H800。消融实验里展示 更新draft模型的帮助更大。
+
+## IMO bench 
+Towards Robust Mathematical Reasoning
+https://arxiv.org/abs/2511.01846 2025.11.3 Google
+
+https://aclanthology.org/2025.emnlp-main.1794/
+
+https://imobench.github.io
+
+1. 🎉 本文提出了IMO-Bench，一套旨在评估和提升大模型国际数学奥林匹克（IMO）级别数学推理能力的基准套件。
+2. 🏆 该套件包含IMO-AnswerBench（短答案）、IMO-Proof Bench（完整证明书写）和IMO-GradingBench（证明评分）三个部分，其中Gemini Deep Think模型在IMO 2025中实现了金牌级别的表现。
+3. 🤖 研究还开发并验证了与人类评估高度相关的自动化评分系统，旨在推动社区从单纯追求答案转向发展深入、可验证的数学推理过程。
+本文介绍了 IMO-Bench，一个旨在评估基础模型数学推理能力的基准套件，尤其关注国际数学奥林匹克 (IMO) 级别的鲁棒推理，以应对现有评估过于简单或仅侧重于最终答案匹配的局限性。IMO 竞赛题目以其严谨的多步骤推理和高度的创新性而闻名，使其成为评估 AI 推理能力的理想测试平台。
+
+## AlphaEvolve
+Mathematical exploration and discovery at scale
+
+https://arxiv.org/abs/2511.02864 2025.11.3 Google DeepMind
+
+AlphaEvolve: A coding agent for scientific and algorithmic discovery. Technical report, Google DeepMind, May 2025.
+1. 🚀 AlphaEvolve 是一种通用进化coding agent，它结合了大型语言模型 (LLM) 的生成能力和自动化评估的迭代进化框架，旨在自主发现新颖的数学构造并推进对长期开放问题的理解。
+2. 💡 该系统在数学分析、组合学、几何学和数论等67个问题中，不仅重新发现了最佳已知解决方案，还在多个案例中找到改进方案，并能将有限输入结果推广为普遍有效的公式。
+3. 🛠️ AlphaEvolve 通过“搜索模式”和“泛化模式”实现大规模数学探索，可与 Deep Think 和 AlphaProof 等AI工具集成以实现自动化证明和形式化验证，从而匹配甚至超越人类已知的最佳结果，但对于需要深层全新见解的问题仍有局限。
+
+核心方法论：
+AlphaEvolve的核心是一个复杂的搜索算法，其设计灵感来源于局部搜索，但将其应用在更高抽象层次的空间中。
+1. 演化计算框架：
+AlphaEvolve维护一个程序群体（population），每个程序都编码了一个给定问题的潜在解决方案。这个群体通过一个模拟自然选择的循环进行迭代改进。该过程包含两个主要组成部分：
+  ○ 生成器（Generator，LLM）： 负责引入变异。它选取当前群体中表现较好的程序，并利用LLM对它们进行“变异”，生成新的候选解决方案。这些变异是智能的、语法感知的代码修改，灵感来源于父程序的逻辑和人类用户提供的专家建议。这个过程可以在多个CPU上并行化。
+  ○ 评估器（Evaluator，通常由用户提供）： 这是“适应度函数”。它是一段确定性的代码，运行群体中的一个程序，并根据其性能为其分配一个数值分数。对于数学构造问题，这个分数可以是构造满足特定属性的程度（例如，图中的边数或填充的密度）。
+演化过程从几个简单的初始程序开始。在每一代中，选择一些得分较高的程序，将其输入LLM以生成新的、可能更好的后代。这些后代随后被评估、评分，其中得分较高的将构成未来程序的基础。这种生成和选择的循环使得程序群体能够随着时间演化，从而产生质量越来越高的解决方案。
+2. 在程序空间中搜索：
+AlphaEvolve的关键思想之一是，其局部搜索不是在数学对象（例如，图）的空间中进行，而是在生成这些对象的程序（例如，Python程序）的空间中进行。这种方法利用了LLM生成类似但略有不同的程序（“变异”）的能力。尽管每次LLM调用通常比修改一个数学对象本身昂贵得多，但通过在程序空间中搜索，可以探索比传统局部搜索方法少成千上万甚至数百万倍的候选对象。许多“优美”的数学对象，如最优的Hoffman-Singleton图，通常具有简洁、优雅的代码描述。因此，在程序空间中搜索可以作为一种强大的先验，偏好简洁性和结构性，帮助系统避开杂乱的局部最优解，找到优雅且通常是最优的解决方案。
+3. 搜索模式（Search Mode）——演化搜索启发式算法：
+AlphaEvolve的核心创新在于其“搜索模式”。它不是演化直接生成数学构造的程序，而是演化搜索数学构造的程序。
+  ○ 在AlphaEvolve的群体中，每个程序都是一个“搜索启发式算法”（search heuristic）。
+  ○ 每个启发式算法都会获得一个固定的时间预算（例如100秒），任务是在此时间内找到最佳的数学构造。
+  ○ 该启发式算法的得分即为其所能找到的最佳构造的得分。
+这种方法解决了LLM调用速度慢与数学对象评估速度快的矛盾：一次缓慢的LLM调用来生成一个新的搜索启发式算法，可以触发由该启发式算法自身进行的、大规模且廉价的数百万次候选构造的探索。
+搜索过程并非每次都从零开始，而是新的启发式算法在其改进迄今为止发现的最佳构造的能力上进行评估。这创建了一个动态、自适应的搜索过程：初期，侧重于广泛探索的启发式算法可能受到青睐；随着接近好的解决方案，执行巧妙、问题特定优化的启发式算法可能占据主导。最终结果通常是一系列专业的启发式算法，它们串联起来能够产生最先进的构造。
+4. 泛化模式（Generalizer Mode）——从实例到公式：
+除了为固定问题规模（例如，针对𝑛=11的填充问题）找到构造外，AlphaEvolve还引入了更具雄心的“泛化模式”。在该模式下，AlphaEvolve被要求编写一个能够解决任意给定𝑛值的问题的程序。程序的评估基于其在一定范围的𝑛值上的表现。期望是AlphaEvolve通过观察自身针对小𝑛值（通常是最优的）的解决方案，能够发现模式并将其推广为适用于所有𝑛值的构造。这种模式在某些情况下产生了激动人心的结果，例如在Nikodym问题上启发了新的数学论文。
+
+## Kosmos
+Kosmos: An AI Scientist for Autonomous Discovery
+
+https://arxiv.org/abs/2511.02824 爱迪生科学，牛津等
+
+1. 🔬 Kosmos是一款AI科学家，它利用结构化“世界模型”协调并行数据分析和文献检索代理，以实现对开放性科学目标的自主、连贯探索。
+2. 🚀 该系统能够进行数百次代理运行，处理数万行代码并阅读数千篇论文，单次运行平均可完成相当于人类研究者六个月的工作量，并产出引用清晰、可追溯的科学报告。
+3. 💡 Kosmos已在多领域取得七项发现（其中四项为全新贡献），其报告中79.4%的陈述被独立专家验证准确，证明了其在加速和规模化数据驱动型科学发现方面的强大潜力。
+
+## 渐进训练 5
+Deep Progressive Training: scaling up depth capacity of zero/one-layer models
+
+https://arxiv.org/abs/2511.04981 Meta Bu Zhiqi(唯一作者)
+
+1. 🚀该研究提出了一种“零/一层渐进式训练”方法，旨在通过在训练过程中从极浅模型逐步扩展深度，高效提升大型深度模型的训练效率。
+2. ⚙️该方法基于优化理论和特征学习，强调了新层的随机或复制初始化、通过μP理论实现的超参数迁移以及WSD（Warmup-Stable-Decay）学习率调度在确保收敛和训练稳定性方面的关键作用。
+3. ⚡️实验证明，这种渐进式训练策略在GPT2等模型上可节省约80%的计算量或实现5倍加速，同时能达到与全尺寸模型几乎相同的性能，并适用于ResNet、GPT2和MoE等多种架构。
+该论文深入研究了深度学习模型中的渐进式训练（progressive training）策略，旨在通过在训练过程中逐步扩展模型容量来提高深度模型的训练效率，同时保持或接近固有的模型性能。作者提出并倡导“零/一层渐进式训练”（zero/one-layer progressive training）方法，并通过优化理论和特征学习视角提供了关于新层初始化、超参数迁移、学习率调度和模型扩展时机的深刻见解。例如，在GPT2模型上，零/一层渐进式训练可以节省约80%的计算资源，相当于将训练速度提升约5倍，同时达到与完全训练的60层、70亿参数模型几乎相同的损失。
+
+## CAT KV压缩 5？
+Attention and Compression is all you need for Controllably Efficient Language Models
+
+https://arxiv.org/abs/2511.05313 纽约大学等2025.11.7 压缩token，加速效果不错（基线recompute?）；精度比dense持平，比混合线性高，延迟和混合线性持平；
+
+https://github.com/rajesh-lab/cat-transformer
+
+1. 🎯 针对现有高效Transformer模型在提高效率时常牺牲上下文召回性能、且缺乏灵活性的问题，本文提出了一种名为Compress & Attend Transformer (CAT) 的新架构，它结合了密集注意力机制和序列压缩技术。
+2. 💡 CAT通过并行压缩历史令牌块并让解码器关注这些压缩表示来生成当前令牌块，其独特之处在于可在训练时支持多种块大小，从而实现测试阶段在不重新训练的情况下动态调整质量与计算效率的权衡。
+3. 🚀 实验结果表明，单个自适应CAT模型在语言建模、常识推理和长上下文理解等任务上全面超越了许多现有高效基线，并能以1.4-3倍的速度和2-9倍的内存效率，达到与密集Transformer相当甚至更优的性能。
+
+## AlphaResearch 5
+AlphaResearch: Accelerating New Algorithm Discovery with Language Models
+
+https://arxiv.org/abs/2511.08522 清华 纽约 字节等 2025.11.11
+
+https://github.com/answers111/alpha-research
+1. 🤖 AlphaResearch是一个自主研究智能体，旨在利用大语言模型（LLM）发现开放式问题的新算法，其创新之处在于结合了基于程序执行的验证与模拟真实世界同行评审的双重研究环境。
+2. 🏆 在包含8个开放式算法问题的AlphaResearchComp基准测试中，AlphaResearch取得了2/8的胜率，其中在“Packing Circles”问题上发现的算法性能超越了人类研究者及现有SOTA。
+3. 💡 这项研究不仅展示了LLM加速算法发现的潜力，还通过对6/8失败案例的分析，为未来自主算法发现的挑战与发展方向提供了宝贵见解。
+AlphaResearch 是一项旨在通过大型语言模型（LLMs）加速新算法发现的研究。该论文提出了一种名为 AlphaResearch 的自主研究智能体，其目标是在开放式问题上发现新算法，以弥补当前 LLMs 在处理复杂但易于验证的问题上取得显著进展，但在独立发现未知知识方面的不足。
+为协同发现过程的可行性和创新性，AlphaResearch 构建了一个新颖的双重研究环境 (dual research environment)。该环境结合了基于执行的验证 (execution-based verify) 和模拟的真实世界同行评审环境 (simulated real-world peer review environment)。AlphaResearch 通过迭代运行以下步骤来发现新算法：
+1. 提出新想法 (propose new ideas)
+2. 在双重研究环境中验证想法 (verify the ideas)
+3. 优化研究提案 (optimize the research proposals) 以获得更好的性能。
+
+## Tree剪枝 5
+Chopping Trees: Semantic Similarity Based Dynamic Pruning for Tree-of-Thought Reasoning
+
+https://arxiv.org/abs/2511.08595 MIT等 2025.10.30  NIPS25
+
+https://github.com/kimjoonghokim/SSDP
+1. 🧠 针对Tree-of-Thought (ToT) 推理中因语义冗余导致的高昂计算成本，本文提出了一种名为语义相似度动态剪枝（SSDP）的轻量级方法。
+2. ✂️ SSDP通过将在线语义合并模块整合到并行树搜索框架中，能够实时识别并修剪语义上等效的推理路径，大幅减少搜索空间。
+3. ⚡️ 在GSM8K和MATH500等基准测试中，SSDP在保持竞争性准确率的同时，相比最先进的树搜索基线实现了高达2.3倍的速度提升，并减少了85%-90%的探索节点，为LLM推理提供了一种高效且可扩展的方案。
+7b/8b模型相比best-of-N 精度更高；速度~4x。基于陶大成的DPTS
+
+## 连续推理百万步 5
+Solving a Million-Step LLM Task with Zero Errors
+
+https://arxiv.org/abs/2511.09030 Cognizant AI Lab，2025.11.12
+
+https://mp.weixin.qq.com/s/7JpXtjcXOa3LFNVXNvoGtg
+
+意义：
+模型规模不是唯一路径：MAKER证明，通过正确的架构设计，即使是较小的模型也能完成极其复杂的任务。这为AI发展提供了一个正交方向：不是一味追求更大、更"智能"的基础模型，而是通过更好的系统设计来提升能力。
+错误纠正至关重要：
+在计算机科学的许多领域（如数字电路、通信系统、生物系统），错误纠正都是实现可靠性的关键。
+
+MAKER将这一原则应用到LLM系统中，取得了显著成功。
+极致分解的力量：通过将任务分解到极致，每个子任务变得足够简单，使得错误率大大降低。这种"分而治之"的策略在软件工程中已被广泛应用，现在也证明对LLM系统有效。
+MAKER的成功表明，大规模分解的agent过程（MDAPs）可能为高效解决组织和社会层面的问题提供了一条途径。这不仅是技术突破，更是AI发展范式的重要转变。
+
+## EBM（能量校准）4
+Think Consistently, Reason Efficiently: Energy-Based Calibration for Implicit Chain-of-Thought
+
+https://arxiv.org/abs/2511.07124v1 剑桥 清华 腾讯等，2025.11.10
+
+https://mp.weixin.qq.com/s/twLIi_Mw-NPu5126bcMdxQ
+1. 传统的显式CoT推理方法存在错误传播和表达限制，而现有隐式CoT模型则缺乏明确机制来确保推理步骤的一致性，常导致推理路径发散和结果不稳定。
+2. 针对此问题，本文提出了基于能量的思维链校准（EBM-CoT）框架，利用能量模型（EBM）动态调整LLM的潜在思维表征，将其引导至嵌入空间中能量更低、一致性更高的区域。
+3. 🌍 实验证明，EBM-CoT显著提升了数学、常识和符号推理任务中的准确性和一致性，以单链推理实现了接近多链自洽的效果，从而提高了推理效率。
+
+## SSR
+SSR: Socratic Self-Refine for Large Language Model Reasoning
+
+https://arxiv.org/abs/2511.10621 Salesforce等 2025.11.13
+
+https://github.com/SalesforceAIResearch/socratic-self-refine-reasoning
+
+## TiDR 5
+TiDAR: Think in Diffusion, Talk in Autoregression
+
+https://arxiv.org/abs/2511.08923 NV 2025.11.12
+
+1. 提出一种创新的序列级混合架构，旨在解决自回归（AR）模型的高质量低效率与扩散语言模型（dLMs）并行性强但质量受损的矛盾。
+2. 该架构通过在单次前向传播中，利用特殊设计的注意力掩码，结合扩散机制并行生成草稿（Thinking）和自回归机制进行高质量采样（Talking）。
+3. TiDAR在保持与AR模型相当的生成质量下，实现了4.71倍至5.91倍的吞吐量加速，并在效率和质量上超越了投机解码及其他扩散模型。
+
+## KV Cache Transform Coding for Compact Storage in LLM Inference
+
+https://arxiv.org/abs/2511.01815
+1. 🧠 针对大型语言模型（LLM）推理中KV缓存管理面临的显存消耗和传输开销挑战，本文提出了kvtc，一种轻量级变换编码器，旨在实现KV缓存的紧凑存储。
+2. 🌟 kvtc借鉴经典媒体压缩技术，通过结合基于PCA的特征去相关、利用动态规划实现自适应量化以及熵编码（DEFLATE），仅需一次简短的初始校准，且不改变模型参数。
+3. 🚀 实验结果表明，kvtc能够在保持推理和长上下文准确性的前提下，实现高达20倍（特定用例下可达40倍或更高）的压缩率，并一致优于现有的推理时基线方法，显著降低了LLM服务的内存和传输成本。
+
+## NVFP4训练 5
+TetraJet-v2: Accurate NVFP4 Training for Large Language Models with Oscillation Suppression and Outlier Control
+
+https://arxiv.org/abs/2510.27527 2025.10.31 清华大学陈剑飞 
+1. 🚀 本文提出了TetraJet-v2，一个针对大型语言模型（LLM）的端到端NVFP4全量化训练方法，旨在解决低精度训练中普遍存在的权重震荡和异常值问题。
+2. 💡 该方法引入了无偏双块量化设计，并开发了OsciReset算法以抑制权重震荡，同时提出了OutControl算法来保留激活值和梯度中的异常值精度。
+3. ✅ 实验结果表明，TetraJet-v2在高达370M模型和200B tokens数据规模的LLM预训练上，持续优于现有FP4训练方法，平均将与全精度训练的性能差距缩小了51.3%。
+该论文提出了TetraJet-v2，一种针对大型语言模型（LLMs）的端到端NVFP4全量化训练（FQT）方法，旨在解决低精度训练中普遍存在的权重振荡和离群值问题，从而实现接近无损的训练性能。
+
+核心问题与贡献：
+LLMs训练成本高昂，促使研究人员探索低精度FQT。NVFP4等4比特格式能显著提升效率，但在如此低的精度下实现接近无损的训练仍具挑战。论文识别出阻碍低精度LLM训练的两个关键问题：
+1. 权重振荡（Weight Oscillation）：量化权重在高精度主权重（master weights）只有微小变化时，却在两个量化桶之间频繁跳变，损害模型性能。
+2. 离群特征（Outlier Features）：激活中少数通道的幅度巨大，导致动态范围过高，FP4难以精确表示，这与模型最终性能高度相关。
+为解决这些问题，TetraJet-v2提出了三项关键技术：
+1. NVFP4线性层的无偏双块量化方法（Unbiased Double-Block Quantization for NVFP4 Linear Layers）：设计了满足NVFP4数值需求的双块缩放机制，并提供无偏梯度估计的全FP4线性层。
+  a. 在32block之外 在增加一层128的block 先行缩放到 448*6
+2. OsciReset算法：抑制训练过程中的权重振荡。
+3. OutControl算法：保持离群值的精度
+
+## Vibe Thinking 5(TBD)
+Tiny Model, Big Logic: Diversity-Driven Optimization Elicits Large-Model Reasoning Ability in VibeThinker-1.5B
+
+https://arxiv.org/abs/2511.06221 2025.11.9 weibo
+
+1. 🧠 VibeThinker-1.5B模型挑战了小型模型缺乏强大推理能力的普遍观点，以仅1.5亿参数和不到8000美元的总训练成本，实现了与领先大型模型相当甚至更优的推理性能。
+2. 🛠️ 该模型采用创新的“Spectrum-to-Signal Principle (SSP)”后训练方法，通过SFT阶段的“Two-Stage Diversity-Exploring Distillation”生成多样化解决方案，并在RL阶段利用“MaxEnt-Guided Policy Optimization (MGPO)”策略放大正确的信号。
+3. 🚀 VibeThinker-1.5B在AIME24、AIME25和HMMT25等挑战性数学基准上超越了参数量大400倍的DeepSeek R1，并在LiveCodeBench V6编码基准上表现出色，证明了小型模型实现高级推理能力的可行性并大幅降低了相关成本。
+
+VibeThinker-1.5B是Sina Weibo Inc.发布的一个1.5B参数的紧凑型密集模型，挑战了当前大型模型领域中“小模型缺乏强大推理能力，必须通过扩展参数量来增强性能”的普遍共识。该研究报告提出，这一假设可能是不准确的。
+该模型通过一种创新的后训练方法，即“频谱到信号原则（Spectrum-to-Signal Principle, SSP）”，在多样性驱动的优化下，激发了小型模型的强大推理能力。SSP框架系统地增强了模型输出的多样性，并将其分为两个协同阶段：
+SFT阶段像“撒网”一样广泛探索解决方案，RL阶段则“收网”聚焦最优路径，这种分工协同是模型成功的关键。
+
+## 稀疏更新 
+田渊栋等
+
+这篇论文深入探讨了RLVR（Reinforcement Learning with Verifiable Rewards）如何有效地提升大型语言模型（LLM）的推理能力，同时却只修改了极小部分参数的“稀疏更新”这一反直觉现象。作者认为，这种表面上的稀疏性是模型条件优化偏差（model-conditioned optimization bias）的体现，即对于一个固定的预训练模型，参数更新会一致地集中在模型偏好的参数区域，并且这种模式在不同的训练运行中高度一致，对数据集和RL算法的变化具有很强的鲁棒性。
+为了从机制上解释这些动态，论文提出了一个“三门理论”（Three-Gate Theory）
+
+## 反思：多数是确认
+First Try Matters: Revisiting the Role of Reflection in Reasoning Models
+
+https://arxiv.org/abs/2510.08308 MicroMind AI等 2025.10.9 
+
+https://github.com/Olafyii/first-try-matters 推理基于SGlang
+
+1. 本研究系统分析了大型语言模型推理过程中的“反思”行为，发现这些反思步骤大多是确认性的（超过90%），而非纠正性的，即很少改变模型最初得出的答案。
+2. 💡 尽管反思在推理过程中消耗大量tokens但对最终性能提升有限，但训练数据中丰富的反思能显著提高模型首次尝试的正确性，而非增强其自我纠错能力。
+3. 🚀 基于此，研究提出了一种问题感知型早期停止推理方法，通过动态截断不必要的反思步骤，可在降低24.5% token消耗的同时，将准确率降幅控制在2.9%以内。
+
+## OWL
+OWL: Overcoming Window Length-Dependence in Speculative Decoding for Long-Context Inputs
+
+https://arxiv.org/abs/2510.07535 Snowflake AI Research, CMU, 2025.10.8
+
+https://anonymous.4open.science/r/owl-BFB8
+
+这篇论文提出了一种名为OWL（Overcoming Window Length-Dependence in Speculative Decoding for Long-Context Inputs）的新型推测解码方法，旨在解决现有方法在处理长上下文输入时性能严重下降的问题。论文首先指出，尽管推测解码能加速大型语言模型（LLM）的推理，但现有基准测试（如最大2K tokens）未能反映真实世界中长上下文（如多轮对话、智能体系统）的场景。例如，EAGLE3在长上下文输入下甚至导致生成速度降低0.81倍。
+为解决这些问题，论文做出了三项主要贡献：
+1. LongSpecBench新基准测试： 引入了一个专门用于评估长上下文推测解码性能的新基准测试LongSpecBench。该基准从WildChat-4.8M对话数据集中采样200个输入长度介于4K到64K tokens的例子。实验表明，现有方法如EAGLE3在此基准上表现不佳，其接受长度仅为1.28。
+2. OWL模型： 提出了一种创新的推测解码模型OWL，它在长上下文输入上的接受长度比EAGLE3高出近5倍。OWL的核心创新包括：
+  ○ 长度泛化Drafter： 针对现有基于Transformer的Drafter（如EAGLE3）受限于训练上下文窗口（如2K tokens）的问题，OWL设计了一个基于LSTM的Drafter。该Drafter仅依赖目标LLM的最后一个token的隐藏状态来预测后续token，从而避免了对完整输入序列的依赖，使其与上下文长度无关，实现了长度泛化。具体地，给定下一个预测token
+
+## SuffixDecoding
+SuffixDecoding: Extreme Speculative Decoding for Emerging AI Applications
+
+https://arxiv.org/pdf/2411.04975 NIPS25
+
+https://github.com/snowflakedb/ArcticInference 
+1. 🧐 针对大型语言模型（LLM）代理应用中常见的重复且可预测的长令牌序列推理请求，现有推测解码方法未能有效利用这些模式，导致延迟瓶颈。
+2. 🚀 SuffixDecoding提出一种新颖的无模型推测解码方法，利用高效的后缀树缓存提示和历史输出中的长令牌序列，并根据接受可能性自适应地调整推测长度，从而优化计算效率。
+3. ⚡ 评估结果显示，在SWE-Bench和Text-to-SQL等代理基准测试中，SuffixDecoding实现了高达5.3倍的速度提升，显著优于EAGLE-2/3等基于模型和Token Recycling等无模型的现有先进方法。
+
+SuffixDecoding是一种新颖的无模型推测解码（speculative decoding）方法，旨在解决新兴AI应用（尤其是基于LLM的Agent应用）中存在的推理延迟问题。这类Agent工作负载（如多Agent管道或自我修正循环）通常会提交重复且高度可预测的推理请求，生成长而重复的token序列，而现有推测解码方法未能有效利用这些模式。
+该研究的核心方法是利用高效的后缀树（suffix trees）来缓存提示（prompts）和先前输出中的长token序列。具体而言，SuffixDecoding维护两个后缀树：一个全局后缀树（global suffix tree）用于存储历史生成的输出，另一个per-request后缀树用于存储当前正在进行的推理请求的提示和已生成部分。后缀树的每个节点代表一个token，从根节点到任意节点的路径编码了之前观察到的子序列，从而能够快速匹配模式并识别基于先前出现次数的可能延续。这种无模型的方法使得草稿token的生成速度极快（约20微秒/token），且无需额外的GPU开销。
+
+## 机会专家
+Opportunistic Expert Activation: Batch-Aware Expert Routing for Faster Decode Without Retraining
+
+https://arxiv.org/abs/2511.02237 2025.11.4 Tri Dao等
+
+1. 💡 针对MoE大型语言模型在自回归生成（解码阶段）中常见的内存瓶颈问题，研究发现其延迟主要受限于批次内激活专家总数，而非单个专家的计算负载。
+2. 🚀 本文提出了一种名为机遇性专家激活（OEA）的批次感知路由框架，该框架在不重新训练模型的情况下，通过两阶段策略动态优化专家路由：首先为每个令牌确定一组基线核心专家，然后允许令牌“顺带利用”批次中其他令牌已激活的专家。
+3. ⚡ 实验结果表明，在Qwen3-30B和Qwen3-235B模型上，OEA在保持模型质量不显著下降的前提下，分别实现了MoE层解码延迟39%和15%的显著降低。
+
+这篇论文介绍了一种名为“机会主义专家激活”（Opportunistic Expert Activation, OEA）的批次感知（batch-aware）路由框架，旨在通过动态调整令牌到专家的映射，以减少在大型语言模型（LLMs）自回归生成（decode stage）阶段激活的专家总数，从而降低推理延迟，同时保持模型质量。
+
+## bigbang
+BigBang-Proton: Next-Word-Prediction is Scientific Multitask Learner
+
+大爆炸-光子: 基于自回归序列的跨尺度、跨结构、跨学科通用科学预训练大模型（~1.5B，20层，序列10^30）
+
+https://arxiv.org/abs/2510.00129 2025.9.30 上海 超对称公司（SuperSymmetry Tech）
+
+https://github.com/supersymmetry-technologies/BigBang-Proton 
+
+https://huggingface.co/SuperSymmetryTechnologies/BigBang-Proton
+Hengkui Wu (hkwu@ssymmetry.com)
+Liujiang Liu (liuliujiang@ssymmetry.com)
+地址: SuperSymmetry Technologies, 1528 Gumei Road, Xuhui District, Shanghai
+● 早期的模型：BigBang-Neutron Scaling Particle Collision Data Analysis
+● https://arxiv.org/abs/2412.00129 2024
+1. ✨ BigBang-Proton 是一种统一的基于自回归语言序列的架构，通过在跨尺度、跨结构、跨学科的真实世界科学任务上进行预训练，旨在构建一个科学多任务学习器，并引入了理论-实验学习范式、二进制补丁编码和蒙特卡洛注意力机制。
+2. 🎯 该模型在高达50位数的算术加法运算中实现了100%的准确率，在粒子物理喷注标记和原子间势模拟中表现与领先的专用模型相当，显著超越了主流通用大型语言模型。数学、物理、材料、基因序列等。
+3. 🚀 这些结果表明，语言引导的科学计算能够匹配甚至超越任务专用科学模型的性能，同时保持多任务学习能力，为开发普适的物质世界基础模型奠定了关键基础。
+
+## FP16
+Defeating the Training-Inference Mismatch via FP16
+
+https://arxiv.org/abs/2510.26788 SeaAI 2025.10.30
+
+https://github.com/sail-sg/Precision-RL 
+
+## 采样温度
+On the Role of Temperature Sampling in Test-Time Scaling
+
+https://arxiv.org/abs/2510.02611 2025.10.2 斯坦福
+
+1. 🤔 传统上，大语言模型（LLMs）通过测试时扩展（TTS）增加采样数量K来提高推理能力，但研究发现，当K值较大时性能提升趋于停滞，部分难题仍无法解决。
+2. 💡 本文发现不同采样温度能解决不同子集的难题，这表明单一温度采样未能充分发掘模型潜力，因此提出沿温度维度进行扩展以拓宽LLMs的推理边界。
+3. 🚀 该多温度扩展策略在多个模型和基准测试上平均带来7.3点的额外性能提升，使得基础模型无需额外训练即可达到与强化学习（RL）训练模型相当的水平，并设计了高效的多温度投票方法以降低计算开销。
+
