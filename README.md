@@ -729,3 +729,120 @@ https://arxiv.org/abs/2509.23024 McGill University & UC Berkeley, 2025.9.27
 🔄 后训练阶段进一步改变了几何结构：SFT和DPO驱动“entropy-seeking”动态以整合特定指令或偏好数据，提高内部分布性能但降低了分布外（OOD）鲁棒性；而RLVR则诱导“compression-seeking”动态，增强了奖励对齐但减少了生成多样性。
 
 <img width="1436" height="851" alt="image" src="https://github.com/user-attachments/assets/2a1faaa2-b962-47e2-bba4-08568e249d09" />
+
+## HedgeSpec
+Not-a-Bandit: Provably No-Regret Drafter Selection in Speculative Decoding for LLMs
+
+https://arxiv.org/abs/2510.20064v1 2025.10.22 Rice, AWS，UCSD
+
+1. 🧐 该研究提出了HedgeSpec，一个用于大语言模型推测解码中在线选择草稿模型的框架，其核心创新在于能够通过一次目标模型验证获取所有候选草稿模型的“全面信息反馈”，从而将问题从Multi-armed Bandit转化为全信息在线学习。
+2. 🚀 HedgeSpec基于在线学习算法，提供了可证明的“无悔”理论保证，其遗憾值与草稿模型数量呈对数关系，实现了相对于现有基于Bandit方法的指数级性能提升。
+3. ✨ 实验结果表明，HedgeSpec在LLaMA-3.1-8B和Qwen-3-8B/32B等模型及多样化数据集上显著优于EAGLE3和BanditSpec等现有基线，尤其在长推理链场景下表现出色，并展现了对领域分布变化的强大鲁棒性。
+
+## TALE
+TALE: Token-Adaptive Low-Rank KVCache Approximation with Reconstruction Elimination
+https://direct.mit.edu/tacl/article/doi/10.1162/TACL.a.39/133612 2025.10.9
+
+https://github.com/thnkinbtfly/TALE
+
+1. ✨ 本文提出了一种名为TALE的创新型KVCache低秩近似压缩策略，旨在解决大型语言模型在处理长输入序列时KVCache内存需求日益增长的瓶颈。
+2. 💡 TALE通过token自适应地应用不同秩进行压缩、采用惰性近似以保留完整信息，并引入无重建设计以避免代价高昂的重新计算，同时可与多级量化结合使用。
+3. 🚀 实验结果显示，TALE在Llama-3.1-8B模型上实现了9.1倍的KVCache大小缩减，对GSM8K等复杂任务的性能影响微乎其微，并在长上下文场景中将延迟降低了高达2倍。
+
+## CAGE: QAT梯度优化
+CAGE: Curvature-Aware Gradient Estimation For Accurate Quantization-Aware Training
+
+https://arxiv.org/abs/2510.18784
+1. 🌟 本文提出了CAGE（Curvature-Aware Gradient Estimation）方法，通过引入曲率感知校正项增强了直通估计器（STE）的梯度，旨在弥补量化感知训练（QAT）与原生训练之间的精度差距。
+2. 💡 CAGE基于QAT的多目标优化视角，平衡损失最小化与量化约束，定义了量化优化的Pareto最优解，并在平滑非凸设置下提供了强收敛保证。
+3. 🚀 实验表明，CAGE在W4A4等低比特量化场景下，能为Llama模型恢复超过10%的量化损失增量，显著提升了模型有效容量和性能，验证了曲率感知梯度校正在弥合性能差距方面的关键作用。
+CAGE (Curvature-Aware Gradient Estimation) 是一种新颖的量化感知训练 (QAT) 方法，旨在弥补低比特量化训练与全精度训练之间的精度差距。该方法通过引入一个曲率感知校正项来增强标准的 Straight-Through Estimator (STE) 梯度，以抵消量化引起的损失增加。
+
+## Not bits equal
+Not All Bits Are Equal: Scale-Dependent Memory Optimization Strategies for Reasoning Models
+https://arxiv.org/abs/2510.10964 2025.10.13 KraftOn 威斯康辛等
+
+https://github.com/krafton-ai/not-all-bits-are-equal 尚未开源 基于vLLM
+1. 📝 本研究表明，推理模型的内存优化策略并非一概而论，而是高度依赖于模型的有效尺寸（effective size）。
+2. 🚀 对于有效尺寸小于8-bit 4B的模型，将内存优先分配给模型权重以提升容量更为高效，而更大的模型则通过延长生成长度和启用并行推理获得更显著的收益。
+3. 💾 KV Cache压缩对于推理模型至关重要，其中逐出（eviction）策略在有效尺寸小于8-bit 8B的模型上优于量化（quantization），而大模型上两者则表现相当。
+  a. vLLM A100
+本文深入探讨了推理模型在固定内存预算下，如何优化内存分配以最大化准确率的问题。研究发现，传统的4比特量化作为非推理模型和零样本任务的内存最优选择，在推理模型中不再普遍适用，因为其Key-Value (KV) 缓存可能成为主要的内存瓶颈。例如，一个4比特量化的Qwen3-4B模型，其权重占用2.49 GB，但生成32k令牌所需的KV缓存高达4.42 GB，约为权重的1.8倍。本文通过在AIME25和GPQA-Diamond两个基准上进行超过1,700种推理场景的系统实验，揭示了内存优化策略的高度依赖于模型规模（或称为“有效尺寸”，即参数量乘以每权重比特数）。
+
+## QeRL
+QeRL: Beyond Efficiency -- Quantization-enhanced Reinforcement Learning for LLMs
+https://arxiv.org/abs/2510.11696 2025.10.13 NVIDIA, MIT等
+
+https://github.com/NVlabs/QeRL
+
+1. 🚀 QeRL 是一种量化增强的 LLM 强化学习框架，它通过结合 NVFP4 量化与 LoRA 微调，旨在解决 LLM 强化学习中高资源消耗和训练效率低的问题。
+2. 💡 该框架的核心发现是，量化噪声能有效增加策略熵以增强探索，并且通过引入自适应量化噪声 (AQN) 机制，能够动态调整噪声水平以进一步优化探索过程。
+3. ⚡ 实验结果表明，QeRL 在 rollout 阶段实现了超过 1.5 倍的加速，使得在单个 H100 80GB GPU 上训练 32B LLM 成为可能，并获得了比 16-bit LoRA 和 QLoRA 更快的奖励增长及更高的最终准确性，甚至在数学基准测试上匹配了全参数微调的性能。
+
+## ThinKV
+ThinKV: Thought-Adaptive KV Cache Compression for Efficient Reasoning Models
+https://arxiv.org/abs/2510.01290 2025.10.1 NVIDIA
+
+1. 🤔 大型推理模型（LRMs）在生成长输出时，其Key-Value (KV) 缓存会迅速增长并大量消耗GPU内存。
+2. 😮 为解决此问题，ThinKV提出了一个思绪自适应的KV缓存压缩框架，它利用注意力稀疏性将链式思绪分解为推理、执行和转换等不同类型，据重要性进行混合量化与驱逐。
+3. 🚀 ThinKV还设计了Continuous Thinking (CT) 内核以高效复用被驱逐token的内存槽，最终在保留不足原始KV缓存5%内存的同时，实现了近乎无损的准确性，并将推理吞吐量提升高达5.8倍。
+为了实现 ThinKV，该研究设计了一个扩展 PagedAttention 的 kernel，以实现对被驱逐 token 内存槽的有效重用，从而消除了内存整理（compaction）的开销。在 DeepSeek-R1-Distill、GPT-OSS 和 NVIDIA AceReason 等模型上的数学和编程基准测试中，ThinKV 在使用不到原始 KV 缓存 5% 的情况下实现了接近无损的准确性，并相对于 SoTA 基线提高了高达 5.8 倍的推理吞吐量。
+
+## vAttention
+vAttention: Verified Sparse Attention
+
+https://arxiv.org/abs/2510.05688  2025.10.7 UCB等针对LLM 长序列生成的动态稀疏attn，核心是动态组合两大类稀疏方法Top-k类 + 均匀采样，达到1+1>2的精度效果。
+https://github.com/xAlg-ai/sparse-attention-hub  和HF集成
+
+里面有AIME25 但论文里只有AIME24的结果：https://github.com/xAlg-ai/sparse-attention-hub/tree/main/benchmark/AIME2025 
+现有稀疏注意力方法（如近似 top-k、top-p 和基于采样的估计）在近似全注意力方面存在根本局限性：它们无法在不同 attention head 和查询向量之间提供一致的近似效果，最关键的是，它们缺乏对近似质量的理论保证，这限制了其在实际应用中的部署。
+vAttention 的核心洞察在于 Top-k 和随机采样是互补的：当注意力分数由少数几个 token 主导时，top-k 表现良好；而当注意力分数相对均匀时，随机采样能提供更好的估计。
+基于这一观察，并利用采样的统计学保证，vAttention 引入了首个实用的稀疏注意力机制，能够提供用户指定 $(\epsilon, \delta)$ 的近似精度保证（因此得名“verified”，可验证）。通过组合 top-k 和采样，vAttention 的表现优于单独使用两者，实现了卓越的质量-效率权衡。
+
+## FSA
+
+FSA通过“选中注意力（selected attention）”GPU kernel的循环次序互换与配套的内核分解（在线 softmax 统计预计算 + 独立归约 kernel）以及非连续批处理优化，消除了NSA在小 GQA 组时必须做的填充（padding）带来的额外加载与计算，显著降低内存访问与FLOPs，使NSA在主流小 GQA 组配置（g∈{1,2,4}）和现代GPU上获得稳定核级与端到端加速。
+
+## MR-GPTQ W4A4 FP4
+Bridging the Gap Between Promise and Performance for Microscaling FP4 Quantization
+https://arxiv.org/abs/2509.23202 
+
+https://github.com/IST-DASLab/FP-Quant
+
+https://github.com/IST-DASLab/qutlass 
+
+● vLLM PR: https://github.com/vllm-project/vllm/pull/24440 dense-only
+nvfp4的精度最好，mxfp4不如好的int4
+hadmard变换会影响nvfp4，但可以显著提升mxfp4精度(仍然比不上nvfp4)
+5090量化后kernel算力能提升6x，B200能提升3.6x。
+这篇论文深入研究了最近推出的微缩放（microsaling）4比特浮点数格式MXFP4和NVFP4在大型语言模型（LLM）推理后训练量化（Post-Training Quantization, PTQ）中的应用，揭示了其理论潜力与实际性能之间的差距。作者们发现，现有的最先进量化方法在处理FP4格式时面临两个主要问题：(1) NVFP4的小分组大小（group size）使得传统的外点（outlier）缓解技术失效；(2) MXFP4的2次幂尺度量化（power-of-two scale quantization）由于引入了高误差而严重降低了精度。
+为了弥合这一差距，论文提出了一种名为Micro-Rotated-GPTQ（MR-GPTQ）的GPTQ量化算法变体。MR-GPTQ通过采用块级（block-wise）Hadamard变换和针对FP4格式的特定优化，将量化过程调整以适应FP4的独特属性。
+
+## 清华SLA
+SLA: Beyond Sparsity in Diffusion Transformers via Fine-Tunable Sparse-Linear Attention
+
+https://arxiv.org/abs/2509.24006
+
+https://github.com/thu-ml/SLA
+
+新观察：
+- 注意力权重可以分解为高秩的大权重和极低秩的小权重！DiT的attn 分3部分;
+● 少量重要的 高秩-> FA
+● 多数低秩 -> linear attn。计算量很小
+● 其余的不重要的 忽略
+- 仅依靠稀疏注意力或线性注意力单独处理 无法在高质量生成的同时实现高计算效率，而SLA组合可以。
+- 通过少量微调步骤，SLA可以显著加速模型而不损失性能，使其特别适合大规模视频生成任务。Wan2.1-1.3b，5090, attn kernel加速13x(vs. full attn FA2, 精度持平); E2E 加速2.2x
+
+## Expected Attention
+Expected Attention: KV Cache Compression by Estimating Attention from Future Queries Distribution
+
+https://arxiv.org/abs/2510.00636 NVIDIA
+
+https://github.com/NVIDIA/kvpress 
+
+https://huggingface.co/spaces/nvidia/kvpress-leaderboard
+🎯大型语言模型（LLMs）的KV缓存内存消耗是长上下文推理的关键瓶颈，现有压缩方案因无法获取未来注意力分数或完整的注意力矩阵而受限。
+💡为解决此问题，本文提出“Expected Attention”方法，通过预测未来查询将如何关注KV对来估算其重要性，并利用LLM激活的分布特性以封闭形式计算期望注意力分数，实现无需训练的缓存压缩。
+🚀“Expected Attention”在预填充和解码阶段均表现出优于现有基线的效果，可在高达50%的缓存压缩率下保持性能，甚至在高压缩场景中依然出色；作者还发布了KVPress库以支持相关研究。
+
+现有基于注意力分数的方法面临实际限制，因为未来的注意力分数在压缩时不可用，并且像 Flash Attention 这样的现代实现不具体化完整的注意力矩阵，导致无法访问过去的注意力分数。Expected Attention 旨在克服这些挑战，它利用 LLM 激活的分布特性来为每个 KV 对计算闭式形式的预期注意力分数。
