@@ -1,6 +1,69 @@
 # AwesomePaper-for-AI
 Awesome system papers for AI
 
+## 长序列推理压缩技术评测
+easoning-Focused Evaluation of Efficient Long-Context Inference Techniques
+https://openreview.net/pdf?id=uCOMb0EsPq  普林斯顿 chendaiqi等 NIPS25
+
+1.  📝 本研究系统评估了多种高效长上下文推理技术，包括权重量子化（NF4、Int8）和KV缓存token逐出方法，发现在内存和性能的帕累托最优性方面，量子化技术显著优于基线和token逐出方法。
+2.  😮 实验表明，现有高效推理技术在处理需要长输出和高信息分散的任务（对推理至关重要）时表现不佳，特别是token逐出方法因倾向于移除关键token而难以可靠地执行精确字符串检索。
+3.  💡 研究进一步发现，使用推理模型可以部分缓解这些性能下降，即使在较小的缓存尺寸下也能使性能接近完整缓存基线，从而提升了内存效率和长上下文性能的帕累托前沿。
+   
+**核心方法论**
+
+1.  **评估任务维度扩展**：
+    *   现有评估主要关注输入上下文长度。本文在此基础上增加了两个关键维度：**信息分散度 (information dispersion)** 和 **输出生成长度 (output generation length)**。
+    *   任务被分为三类：
+        *   **Easy (Short Output, Low Dispersion)**：例如 NIAH (从文章中检索数字)、JSON KV (在JSON字典中检索键)，主要测试召回能力。
+        *   **Medium (Short Output, High Dispersion)**：例如 HotpotQA (多跳问答)、Natural Questions (事实性问答)、ASQA Cite (引用生成)、MS MARCO (文档重排序)、BANKING77/CLINC150 (上下文学习)、Multi-LexSum (多文档摘要)，测试信息检索、引用和复杂上下文理解。
+        *   **Hard (Long Output, High Dispersion)**：例如 HTML-to-TSV (从HTML提取信息到TSV)、Pseudocode-to-Code (伪代码转C++代码)、Travel Planning (基于约束生成旅行计划)，这些任务需要分散检索、程序生成和长程推理。
+    *   共使用9个HELMET任务（16K和32K上下文长度）和3个LongProc任务（0.5K和2K输出长度）。
+
+2.  **高效推理技术选择**：
+    *   **输入无关 (Input-independent) 方法**：权重量化。
+        *   **NF4 (4-bit NormalFloat)**：一种信息论最优的量化数据类型，适用于正态分布的权重。
+        *   **Int8 (8-bit Integer)**：标准的8位整数权重。
+    *   **输入依赖 (Input-dependent) 方法**：KV cache 压缩/token 驱逐。
+        *   **DuoAttention**：当前最先进的token驱逐方法。
+        *   **SnapKV**：基于注意力机制的KV cache压缩。
+        *   **PyramidKV**：基于金字塔信息漏斗的动态KV cache压缩。
+        *   **StreamingLLM**：通过注意力汇聚 (attention sinks) 实现高效流式处理。
+
+3.  **模型选择**：
+    *   参数规模为8B，以在学术计算资源限制下研究小型推理模型。
+    *   **非推理Instruction模型**：Llama-3.1-8B-Instruct 和 Qwen2.5-7B-Instruct (上下文长度128K)。
+    *   **推理模型**：DeepSeek-R1-Distill-Llama-8B (从Llama-3.1-8B蒸馏) 和 DeepSeek-R1-Distill-Qwen-7B (从Qwen2.5-Math-7B蒸馏)，旨在隔离推理能力对内存和性能的影响。
+
+**实验结果**
+
+1.  **整体性能与内存效率的Pareto最优性**：
+    *   **NF4** 和 **Int8 权重量化** 在内存和性能的Pareto最优性上显著优于基线模型和KV cache token驱逐方法。
+        *   NF4 实现了$-48.46\% \pm 0.91\%$ 的内存节省，性能下降仅为$-2.46\% \pm 5.99\%$。
+        *   Int8 实现了$-23.49\% \pm 3.73\%$ 的内存节省，性能下降为$-4.08\% \pm 6.13\%$。
+    *   **DuoAttention** 接近基线性能 ($-0.71\% \pm 2.82\%$)，但内存节省微乎其微 ($-1.92\% \pm 0.04\%$)。
+    *   **Token驱逐方法 (SnapKV, PyramidKV, StreamingLLM)** 在多种cache配置下，平均表现出显著的内存开销 ($+29.53\% \pm 12.08\%$) 和严重的性能下降 ($-22.85\% \pm 13.80\%$)。小cache (w256, c2048) 导致性能严重下降，而大cache (w2048, c8192) 则大幅增加内存消耗。因此，token驱逐方法未能达到Pareto最优。
+
+    *   基线模型随着任务难度增加 (从Easy到Hard) 性能自然下降。
+    *   **NF4** 和 **Int8** 表现出极小的性能下降，在所有难度级别上保持接近基线的性能。
+    *   **DuoAttention** 作为一个例外，在所有难度级别上都实现了性能提升 ($+10.10\% \pm 4.74\%$)，尤其在Easy任务上表现出色 ($+18.6\%$)。
+    *   **Token驱逐方法** 平均表现出显著的性能下降 ($-25.62\% \pm 3.56\%$)，且随着难度增加，其内部性能下降更加剧烈。
+
+3.  **任务级故障模式分析**：
+    *   **Token驱逐方法** 在需要精确字符串检索的任务 (如 NIAH, Recall, Re-rank) 上表现出最大的性能下降。这表明它们可能在解码过程中丢弃了关键token，导致无法可靠地执行精确检索。例如，在Re-rank任务中，模型输出的文档ID从7位变为3位。
+
+4.  **任务间相关性**：
+    *   低分散性短输出任务 (NIAH, Recall, RAG) 与高分散性短输出任务 (ICL, Cite, Re-rank, Summ) 之间存在一定相关性。
+    *   然而，低分散性任务与长输出高分散性任务 (Pseudocode to Code, HTML to TSV, Travel Planning) 之间没有强相关性。这强调了评估时同时考虑输出长度和信息分散度的重要性。
+
+5.  **案例研究：Re-rank任务中Token驱逐的失败**：
+    *   SnapKV在Re-rank任务中表现出多种失败模式：生成顺序数字、重复ID、异常短ID或被单个ID主导的输出。这表明关键token被驱逐，模型内部的文档表示被破坏，无法正确进行排序。
+
+6.  **案例研究：推理模型缓解Token驱逐的性能下降**：
+    *   在In-Context Learning (ICL) 任务 (BANKING77, CLINC150) 上，**推理模型 DeepSeek-R1-Distill-Llama-8B** 的基线性能优于 Llama-3.1-8B-Instruct。
+    *   **推理模型对Token驱逐技术表现出更强的鲁棒性**。在激进的token驱逐设置下 (SnapKV/PyramidKV)，Llama-Instruct 的性能下降幅度远大于 R1-Distill-Llama。推理模型性能下降的幅度比instruct模型平均少5.9个百分点。
+    *   这表明推理模型可能以更冗余的方式组织上下文信息，使其对token丢失更具抵抗力，从而在较小cache尺寸下也能实现接近全性能，推动了Pareto前沿。
+
+
 ## Seer
 Seer: Online Context Learning for Fast Synchronous LLM Reinforcement Learning
 
