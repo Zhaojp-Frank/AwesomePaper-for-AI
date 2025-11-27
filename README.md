@@ -1,8 +1,13 @@
 # AwesomePaper-for-AI
 Awesome system papers for AI
 
+
 ## Gated Attn for LLM
 https://openreview.net/pdf?id=1b7whO4SfY ali Qwen, NIPS25
+https://mp.weixin.qq.com/s/AYuUHghkLEQezMp5Oq1uGw 
+**门控机制的有效性已经被广泛证实，但其在注意力机制中的有效性及扩展（scaling up）的能力**并未被充分讨论。论文系统性地分析了门控机制对大语言模型的有效性，并通过一系列控制实验**证实了门控机制的有效性来源于增强了注意力机制中的非线性与提供输入相关的稀疏性**。
+此外团队还进一步发现了**门控机制能消除注意力池（Attention Sink）和巨量激活（Massive Activation）等现象，提高了模型的训练稳定性**，**极大程度减少了训练过程中的损失波动（loss spike）。**
+得益于门控机制对注意力的精细控制，模型在**长度外推上相比基线得到了显著的提升**。团队在各个尺寸、架构、训练数据规模上验证了方法的有效性，并最终成功运用到了 Qwen3-Next 模型中。
 
 1. 🕵️‍♀️ 本文系统性地研究了softmax attention中的门控机制，通过对超过30种门控变体的综合实验比较，发现将头特异性Sigmoid门控应用于Scaled Dot-Product Attention (SDPA) 输出能持续提升性能、增强训练稳定性并改善模型的可扩展性。
 2. 💡 研究揭示，该门控机制的有效性主要归因于其在softmax attention的低秩映射中引入了非线性，并应用了查询依赖的稀疏门控分数来调节SDPA输出。
