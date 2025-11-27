@@ -1,6 +1,58 @@
 # AwesomePaper-for-AI
 Awesome system papers for AI
 
+## Gated Attn for LLM
+https://openreview.net/pdf?id=1b7whO4SfY ali Qwen, NIPS25
+
+1. 🕵️‍♀️ 本文系统性地研究了softmax attention中的门控机制，通过对超过30种门控变体的综合实验比较，发现将头特异性Sigmoid门控应用于Scaled Dot-Product Attention (SDPA) 输出能持续提升性能、增强训练稳定性并改善模型的可扩展性。
+2. 💡 研究揭示，该门控机制的有效性主要归因于其在softmax attention的低秩映射中引入了非线性，并应用了查询依赖的稀疏门控分数来调节SDPA输出。
+3. 🚀 这种稀疏门控设计还能有效缓解“massive activation”和“attention sink”现象，并显著增强模型在长上下文场景下的外推表现。
+
+这篇论文深入研究了大型语言模型（LLMs）中门控机制（Gating Mechanisms）在softmax注意力机制中的具体作用和效果。尽管门控机制在从LSTM到现代状态空间模型和注意力机制等多种架构中被广泛采用，但对其特定效果的系统性探究却相对缺乏。
+
+**核心发现与贡献：**
+作者通过在3.5万亿（3.5T）tokens数据集上训练15B MoE模型和1.7B密集模型，对超过30种门控注意力变体进行了全面对比实验。研究核心发现是一个简单但有效的改进：在Scaled Dot-Product Attention (SDPA) 输出后应用一个头部特异性（head-specific）的sigmoid门控，能够持续提升模型性能，增强训练稳定性，允许使用更大的学习率，并改善模型扩展性。
+
+**方法论与技术细节：**
+论文在标准softmax注意力机制中系统性地探索了门控机制的五大方面：
+1.  **门控位置 (Positions)**：如图1所示，作者在自注意力层的不同阶段引入门控：
+    *   G1：在SDPA输出之后。
+    *   G2：在Value投影 $V$ 之后。
+    *   G3：在Key投影 $K$ 之后。
+    *   G4：在Query投影 $Q$ 之后。
+    *   G5：在最终的密集输出层 $O$ 之后。
+    核心结论是G1位置的门控效果最佳。
+2.  **粒度 (Granularity)**：
+    *   **Headwise (头部级别)**：一个单一的标量门控分数调制整个注意力头的输出。
+    *   **Elementwise (元素级别)**：门控分数是与输入 $Y$ 维度相同的向量，实现更细粒度的逐维度调制。
+3.  **头部特异性或共享 (Head Specific or Shared)**：
+    *   **Head-Specific (头部特异性)**：每个注意力头都有其独立的门控分数。
+    *   **Head-Shared (头部共享)**：门控参数 $W_\theta$ 和门控分数在所有注意力头之间共享。研究表明，头部特异性门控至关重要。
+4.  **乘法或加法 (Multiplicative or Additive)**：
+    *   **Multiplicative Gating (乘法门控)**：$Y' = Y \odot \sigma(XW_\theta)$。
+    *   **Additive Gating (加法门控)**：$Y' = Y + \sigma(XW_\theta)$。实验发现乘法门控效果更好。
+5.  **激活函数 (Activation Function)**：主要考察SiLU和sigmoid。默认和最优选择是sigmoid激活函数。
+
+门控机制的通用形式定义为：
+$$ Y' = g(Y, X, W_\theta, \sigma) = Y \odot \sigma(XW_\theta) $$
+其中 $Y$ 是被调制的输入，$X$ 是用于计算门控分数的另一输入（通常是预归一化后的隐藏状态），$W_\theta$ 是门控的可学习参数，$\sigma$ 是激活函数（如sigmoid），$Y'$ 是门控后的输出。
+
+**实验结果总结：**
+*   **MoE模型**：SDPA输出（G1）和Value输出（G2）门控最有效，其中G1效果最佳，PPL可降低0.2，MMLU提升2点。头部特异性门控显著优于头部共享门控。乘法门控优于加法门控，sigmoid激活函数优于SiLU。
+*   **密集模型**：门控在不同模型配置、训练数据量和超参数下均能持续带来收益。它显著提升了训练稳定性，几乎消除了训练过程中的损失尖峰（loss spikes），从而支持使用更大的学习率和批处理大小，促进了模型的可扩展性。
+
+**分析与机制解释：**
+论文将门控的有效性归因于两个关键因素：
+1.  **引入非线性 (Non-Linearity)**：
+    标准softmax注意力中，Value投影 $W_V$ 和最终输出层 $W_O$ 连续的线性变换可以合并为一个低秩线性投影。在G1或G2位置引入非线性门控，能有效增加这种低秩线性变换的表达能力。例如，G2位置的门控对应于 $\text{Non-Linearity-Map}(X_j W_V)$，而G1位置的门控对应于 $\text{Non-Linearity-Map}(\sum_{j=0}^{i} S_{ij}^k \cdot X_j W_V)$。引入RMSNorm或简单的SiLU激活函数也能带来性能提升，进一步支持了非线性假设。
+2.  **引入输入依赖的稀疏性 (Input-Dependent Sparsity)**：
+    有效的门控分数（尤其是在SDPA输出处的门控）表现出强烈的稀疏性，即大量门控分数接近于0。这种查询依赖的稀疏性对SDPA输出进行调制，过滤掉与当前查询token不相关的上下文信息。
+    *   **减少“大规模激活”（Massive Activation）和“注意力汇聚”（Attention Sink）**：研究发现，头部特异性的查询依赖型SDPA输出门控能够显著降低分配给第一个token的注意力分数（“注意力汇聚”现象），并减少模型隐藏状态中的“大规模激活”。这种稀疏性通过降低激活值，可能提高了BF16训练的数值稳定性，从而增强了训练稳定性。
+    *   **促进长上下文外推性能**：无注意力汇聚模式使模型在长上下文场景下表现更优。在上下文长度扩展至128k时，门控模型相比基线模型表现出显著优势。这表明门控可能帮助模型更好地适应上下文长度扩展，因为基线模型可能依赖注意力汇聚来调整注意力分数分布，而门控模型则依赖输入依赖的门控分数控制信息流，使其对RoPE等位置编码的修改更具鲁棒性。
+
+**实际建议：**
+为获得最佳效果，建议在SDPA输出（G1）后应用元素级别（elementwise）门控，并使用适度增加的学习率进行训练。这一机制已应用于Qwen3-Next模型中。
+
 ## 长序列推理压缩技术评测
 easoning-Focused Evaluation of Efficient Long-Context Inference Techniques
 https://openreview.net/pdf?id=uCOMb0EsPq  普林斯顿 chendaiqi等 NIPS25
