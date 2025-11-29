@@ -1,6 +1,89 @@
 # AwesomePaper-for-AI
 Awesome system papers for AI
 
+## Adaptive 投机
+Taming the Long-Tail: Efficient Reasoning RL Training with Adaptive Drafter
+
+https://arxiv.org/pdf/2511.16665 MIT NVIDIA 韩松团队等 2025.11.21
+
+https://github.com/mit-han-lab/fastrl
+ 
+https://mp.weixin.qq.com/s/yJ5C9w3Hdc5g91QCUaID3Q 
+
+1. 📖 大语言模型推理强化学习训练因响应长度的长尾分布而面临严重效率瓶颈，即少数极长响应大幅增加了训练时间和资源消耗。
+2. 💡 为此，本文提出TLT系统，通过集成自适应推测解码来无损加速训练，该系统包含：利用空闲GPU持续训练**轻量级草稿模型的“自适应草稿器”，** 以及**根据输入批次动态选择推测解码策略（基于蚂蚁等lookAhead）**的“自适应Rollout引擎”。
+3. 🚀 实验表明，TLT系统相比现有SOTA verl实现了超过1.7倍的端到端RL训练加速，同时保持了模型精度，并免费生成了高质量的草稿模型。
+<img width="428" height="321" alt="image" src="https://github.com/user-attachments/assets/b68a3031-f648-4cba-b4b8-a4b9a4438b53" />
+
+本文提出了一种名为 TLT（Taming the Long-Tail）的系统，旨在通过集成自适应推测解码（adaptive speculative decoding）无损地加速推理强化学习（Reasoning Reinforcement Learning, RL）训练。推理 LLM 的训练（通常采用 RL）面临关键效率瓶颈：在 RL 训练过程中，响应生成呈现持久的长尾分布，即少数极长的响应占据了大部分执行时间，导致资源浪费和成本增加。
+
+<img width="511" height="337" alt="image" src="https://github.com/user-attachments/assets/c4954f09-ab31-4020-8f9d-f8a3f0cde02d" />
+
+TLT 旨在解决这一问题，其核心设计基于两个洞察：首先，利用 RL rollout 阶段特有的长时间特性，以及随着长尾效应逐渐释放的 GPU 资源（即“rollout bubbles”），将这些资源用于其他任务，如 draft model 训练，而无需额外成本。其次，draft model 的训练可以与完整的 rollout 完成解耦，通过异步处理部分或可用数据，使其计算可以与正在进行的 rollout 有效重叠。
+
+<img width="647" height="310" alt="image" src="https://github.com/user-attachments/assets/6784da40-d3b1-4ee6-8626-32066ff4f3a6" />
+
+
+<img width="847" height="605" alt="image" src="https://github.com/user-attachments/assets/1e87106c-d939-4c83-a91a-d483f29c5594" />
+
+TLT 包含两个协同组件来克服 SD 在 RL 中应用的挑战（动态工作负载、不断演进的目标模型和 draft model 训练开销）：
+
+<img width="1503" height="594" alt="image" src="https://github.com/user-attachments/assets/2f4bfc75-1a13-426e-af72-d30d0fce93e2" />
+
+1.  **Adaptive Drafter（自适应草稿模型）**：
+    *   **Draft Model 架构**：TLT 采用轻量级、单层模型作为 drafter，它复用目标模型（target model）的 Embedding 和 LM Head 层，仅训练一个 Transformer 解码器层。这种设计显著减少了训练和推理开销，并被证明能够紧密匹配目标模型的自回归分布。
+    *   **Spot Trainer（即时训练器）**：为解决目标模型在 RL 训练中不断更新导致的 draft model 过时问题（C1），Spot Trainer 利用 rollout 过程中空闲的 GPU 资源进行机会性（opportunistic）、可抢占的 drafter 更新，从而确保其与不断演进的目标模型保持一致，且不增加额外开销（C2）。
+        *   **Worker Coordinator**：负责协调资源分配，当 rollout 过程中出现空闲 GPU 资源时，将其重新用于 drafter 训练。它通过监控 worker 状态（BUSY, IDLE, TRAINING）来决定何时启动或停止训练。
+        *   **Spot Training with DataBuffer**：drafter 训练不必等待所有 rollout 响应完成。Spot Trainer 利用部分早期完成的响应进行训练，并通过 DataBuffer 缓存推理阶段的 hidden states 和 tokens。DataBuffer 支持“一步偏移采样”（one-step offset sampling），即保留前一步骤的长序列数据，以弥补当前部分数据中长尾数据的稀缺性，从而解决分布不匹配问题。
+        *   **Selective Asynchronous Checkpointing（选择性异步检查点）**：为确保 drafter 训练的可抢占性而不丢失大量训练进度，TLT 采用异步检查点机制，将保存 draft model 状态的任务卸载到后台线程，并仅保存可训练参数，显著减少了检查点延迟。
+        *   **Sequence Packing（序列打包）**：为了最大化 GPU 利用率，Spot Trainer 使用序列打包技术将多个变长序列连接成一个打包序列，消除填充（padding）的计算浪费。
+
+<img width="720" height="674" alt="image" src="https://github.com/user-attachments/assets/72592630-4cfb-4a38-8fb2-12961a765123" />
+
+2.  **Adaptive Rollout Engine（自适应 Rollout 引擎）**：
+    *   **Tree-based Drafting（基于树的草稿生成）**：该引擎采用基于树的推测解码，通过在每个步骤探索 topK 个最可能的选项并分支，构建候选序列树，然后选择最高置信度的 tokens 提交给目标模型进行并行验证，以增加每次验证接受的 tokens 数量。
+    *   **Memory-Efficient CUDAGraph Capture（内存高效的 CUDA 图捕获）**：为了应对动态变化的 batch size（C3）并支持多种 SD 策略，同时避免 CUDA Graph 带来的高内存开销，TLT 提出了分桶式 CUDA Graph 捕获（Bucketed CUDAGraph Capture）。它通过将 batch size 分组到不同桶中、解耦捕获目标模型和草稿模型的 CUDA Graph、以及合并共享相同参数设置的策略的捕获，显著减少了内存占用。
+    *   **Auto-Tune Algorithm (BEG-MAB)**：TLT 使用 Bucketed-Epsilon-Greedy (BEG) MAB 选择器算法来自动化 SD 策略的选择。该算法根据 `Tokens_to_Verify` 将策略分组，并将其动态匹配到 batch size 范围。它采用 $\epsilon$-greedy 策略，以小概率进行探索，大概率利用（选择中位数奖励最高的策略），从而平衡探索和利用，并适应 RL 训练中的非稳态动态。
+    *   **Model-free Drafter（无模型草稿生成器）**：除了基于学习的 drafter，TLT 还集成了一个互补的、非参数化的无模型草稿生成策略。它通过为每个 prompt 动态构建 n-gram 检索数据库，利用序列相似性和重复模式来预测后续 token 序列。该 drafter 在基于学习的 drafter 不可用（例如初始训练步骤）或效率低下时作为备用机制。
+
+
+<img width="601" height="448" alt="image" src="https://github.com/user-attachments/assets/75bb2f3e-a7d7-414d-89d8-0f9260dc539b" />
+
+
+<img width="702" height="424" alt="image" src="https://github.com/user-attachments/assets/9dd1411e-ff6b-47a1-9b97-8ba9e72a0400" />
+
+
+TLT 通过这些协同优化，有效缓解了 RL 训练中固有的长尾问题。实验结果表明，TLT 比最先进的系统实现了超过 1.7 倍的端到端 RL 训练加速，同时保持了模型精度，并免费生成了一个高质量的 draft model，适用于高效部署。
+
+关键技术细节：
+*   **Adaptive Drafter 训练流程**：利用 RL 推理阶段产生的 hidden states 和 token embedding，通过轻量级线性层降维后作为 drafter 单解码器层的输入。训练目标可以是目标模型与 draft model hidden states 之间的 L1 损失，或输出 logits 上的交叉熵损失，或两者结合。
+*   **BEG-MAB 选择器**：
+    *   **输入**：策略集 $S$、Batch 阈值 $T = \{t_1, \dots, t_m\}$、探索率 $\epsilon$、窗口大小 $w$。
+    *   **初始化**：根据 `Tokens_to_Verify` 将策略分组 $S_i$，定义 batch size 桶 $B_i$，并将桶映射到策略组。为每个策略初始化双端队列 $R_s$ (奖励) 和 $A_s$ (接受长度) 记录，大小为 $w$。
+    *   **记录**：在每次生成步骤后，计算接受率 $a = (\sum \text{accept\_lens}) / \text{batch\_size} + 1$，以及奖励 $r_s = a \times \text{batch\_size} / \text{elapsed\_time}$，并将其添加到 $R_s$ 和 $A_s$ 中。
+    *   **选择策略**：根据当前 `batch_size` 确定候选策略集 $V$。如果 $|V|=1$，直接返回该策略。否则，以概率 $\epsilon$ 从 $V$ 中随机选择（探索），以概率 $1-\epsilon$ 选择使 $R_s$ 中位数最大的策略（利用）。
+
+**实现**：基于VeRL，其中Adaptive Drafter基于EAGLE FSDP2；异步检查点，基于PyTorch DCP。采用 SGLang作为 rollout 后端，并按照 [55] 实现 SD 的自适应启用、drafter 权重更新和 BEG-MAB 调优器。使用 [68] 作为model-free drafter。
+**评测**：8台DGX H100=合计64个 GPU，节点间通信NVIDIA Mellanox 400Gb/s InfiniBand 实现。
+**模型**：4个模型，最大70b：Qwen2.5-7b（base），DS-R1-蒸馏-7b，Qwen-32b-base，LLama-3.1-70b-instruct
+**基线**：3个：Open-R1（vllm deepseed，分离式），verl，verl+基本lookahead投机（TLTbase）
+
+
+<img width="1071" height="286" alt="image" src="https://github.com/user-attachments/assets/0e447ebb-45d1-4d8f-a279-3212aea1458f" />
+
+<img width="1074" height="285" alt="image" src="https://github.com/user-attachments/assets/ef42eb45-bf65-4a50-97e5-d680ae08146b" />
+
+<img width="1073" height="291" alt="image" src="https://github.com/user-attachments/assets/4fe933cc-3d64-45ae-8994-14881835a342" />
+
+<img width="1083" height="644" alt="image" src="https://github.com/user-attachments/assets/6af1846f-70ce-4172-a6d1-6e10c0b99d9c" />
+
+
+<img width="1091" height="499" alt="image" src="https://github.com/user-attachments/assets/312e9d1b-0cc7-4288-a6dc-2b5cf0efd116" />
+
+
+
+<img width="716" height="536" alt="image" src="https://github.com/user-attachments/assets/8b99fdc7-51e0-4a80-a734-dc54a60d641b" />
+
 ## C3 压缩
 Context Cascade Compression: Exploring the Upper Limits of Text Compression
 
