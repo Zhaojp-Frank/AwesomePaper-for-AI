@@ -150,6 +150,10 @@ C3架构的核心是一个级联的双LLM设计，包括一个上下文压缩编
 **结论与未来工作：**
 C3通过提出一种更直接的纯文本到潜入路径，并采用级联双LLM架构，实现了高效长上下文压缩。实验证明其在各种压缩比下均显著优于现有的光学压缩方法，并在高压缩比下展示了卓越的信息保真度。C3的成功为LLM生态系统内的未来研究和实际应用开辟了多条途径，包括作为LLM的强大前端压缩器以处理超长上下文（如百万级token），实现多模态级联架构，以及作为下一代生成模型（如Diffusion Language Models和Latent Auto-regressive Models）的基础组件。
 
+## 多轮迷失
+LLMs Get Lost In Multi-Turn Conversation
+https://arxiv.org/abs/2505.06120 2025.5.9 
+https://mp.weixin.qq.com/s/mWqtMjgHtXqI_ho4qQcHOQ
 
 ## ToolOrchestra
 ToolOrchestra: Elevating Intelligence via Efficient Model and Tool Orchestration
