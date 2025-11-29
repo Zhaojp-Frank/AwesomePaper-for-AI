@@ -1,7 +1,68 @@
 # AwesomePaper-for-AI
 Awesome system papers for AI
 
-## Adaptive 投机
+## CDLM
+CDLM: Consistency Diffusion Language Models For Faster Sampling 
+https://arxiv.org/abs/2511.19269 2025.11.24 伯克利 首尔 togetherAI等
+
+https://github.com/SqueezeAILab/CDLM
+
+1.  ✨ 本文提出了CDLM（Consistency Diffusion Language Models），一种基于训练的加速方法，旨在解决**扩散语言模型（DLMs）采样速度慢和无法使用标准KV缓存**两大瓶颈。
+2.  🚀 CDLM通过整合一致性建模实现**多令牌并行确认**，显著减少了所需的采样步骤，并通过在微调时强制使用**块级因果注意力掩码**，使模型完全兼容KV缓存。
+3.  📊 实验结果表明，CDLM在数学和编程任务上实现了**3.6至14.5倍的延迟降低**，并减少了**3.4至7.9倍的精炼步数**，同时保持了有竞争力的准确性，甚至在每秒令牌数上超越了同等大小的自回归大型语言模型。
+
+CDLM (Consistency Diffusion Language Models) 论文提出了一种基于训练的加速方法，旨在解决扩散语言模型 (DLMs) 在推理过程中面临的两个主要瓶颈：迭代步骤过多导致推理缓慢，以及双向注意力机制导致无法使用标准的 KV 缓存。CDLM 通过整合一致性建模 (consistency modeling) 来显著减少所需的采样步骤，并引入多令牌终结化 (multi-token finalization)；同时，在微调过程中强制采用块级因果注意力掩码 (block-wise causal attention mask)，使模型与 KV 缓存完全兼容。
+
+**1. 引言与背景**
+传统的自回归语言模型 (autoregressive LLMs) 虽然训练可并行化，但推理本质上是序列化的，且无法利用双向上下文。DLMs 作为一种有前景的替代方案，通过迭代去噪随机或掩码令牌序列来生成文本，每一步并行更新所有令牌位置，消除了令牌级别的序列依赖。然而，现有开源 DLMs 存在两大挑战：(1) 双向注意力阻碍了 KV 缓存的使用；(2) 高质量生成通常需要大量精炼步骤，导致推理效率低下。
+
+**2. CDLM 方法论**
+CDLM 通过联合优化三个目标来解决上述问题：
+*   **一致性引导蒸馏 (Consistency-guided Distillation)**：定义了一个令牌级解码轨迹，并结合从一个全双向教师模型 (fully bidirectional teacher) 进行蒸馏。
+*   **缓存友好的块级因果性 (Cache-friendly Block Causality)**：通过块级因果注意力掩码进行微调，使模型支持块级 KV 缓存和块边界的提前停止。
+*   **端到端加速 (End-to-end Speedups)**：综合上述两点，实现了推理速度的显著提升。
+
+**2.1. 轨迹收集 (Trajectory Collection)**
+为了训练 CDLM，首先需要从教师 DLM $p_\theta$ 生成解码轨迹。教师模型采用标准 DLM 中的双向注意力掩码，而学生模型 $q_\phi$ 则使用块级因果掩码进行训练。轨迹收集过程如下：
+1.  对于给定的提示 $x$ 和真实文本 $\hat{y}$，教师模型 $p_\theta$ 运行块级解码，步数 $N$ 等于生成长度 $L_g$，每步在当前块内终结一个令牌（置信度最高的令牌 $y_i$）。
+2.  记录令牌级轨迹 $T_x$ 以及在令牌终结时教师模型最后一层的隐藏状态 $H_x \in \mathbb{R}^{L_g \times d}$，以用于后续的 logit 重构。
+3.  为增加数据多样性，每个提示会生成多个不同温度（如 $\{0.0, 0.5\}$）下的轨迹。
+
+**2.2. 训练目标 (Training Objectives)**
+CDLM 的训练目标是联合最小化以下三个损失函数：
+1.  **蒸馏损失 (Distillation Loss) $L_{Distillation}$**：
+    该损失将教师模型的多令牌终结化信号传递给块级因果学生模型。对于轨迹中的中间状态 $y$ 和其块完成状态 $y^\star$，定义 $U_y$ 为在 $y$ 和 $y^\star$ 之间新解除掩码的令牌索引集。蒸馏损失计算学生模型在状态 $y$ 时对这些新解除掩码位置的预测与教师模型对应位置预测之间的 KL 散度：
+    $$L_{Distillation} = \mathbb{E}_{(x,T_x,H_x)\sim\mathcal{D}} \mathbb{E}_{y\sim T_x}\left[\frac{1}{|U_y|}\sum_{i\in U_y} D_{KL}\left(p^{(T)}_i \| q_\phi(\cdot | y, x)_i\right)\right]$$
+    其中 $p^{(T)}_i$ 是通过教师模型在 $H_x$ 中存储的隐藏状态 $h_{x,i}$ 经 $lm\_head$ 重构的分布。
+
+2.  **一致性损失 (Consistency Loss) $L_{Consistency}$**：
+    该损失强制学生模型在同一块内两个不同状态（$y$ 和 $y^\star$）下的预测在未被解除掩码的位置保持一致。定义 $S_y$ 为在 $y^\star$ 时仍被掩码的令牌索引集。一致性损失计算学生模型在状态 $y$ 对 $S_y$ 中令牌的预测与在状态 $y^\star$ 对 $S_y$ 中令牌的预测之间的 KL 散度，其中 $q_\phi^-$ 表示停止梯度的目标：
+    $$L_{Consistency} = \mathbb{E}_{(x,T_x)\sim\mathcal{D}} \mathbb{E}_{y\sim T_x}\left[\frac{1}{|S_y|}\sum_{i\in S_y} D_{KL}\left(q_\phi^-(\cdot | y^\star, x)_i \| q_\phi(\cdot | y, x)_i\right)\right]$$
+    这使得模型能够稳定地跳过多个步骤。
+
+3.  **DLM 损失 (DLM Loss) $L_{DLM}$**：
+    这是一个辅助损失，与标准 DLM 预训练中使用的掩码去噪目标相同，用于保持模型的掩码预测能力。对于输入 $x$ 和真实响应 $\hat{y}$，随机采样掩码比率 $t \sim U[0, 1]$ 生成掩码序列 $\hat{y}_t$，然后计算模型预测与真实标签的交叉熵：
+    $$L_{DLM} = -\mathbb{E}_{(x,\hat{y})\sim\mathcal{D}} \mathbb{E}_t\left[\frac{1}{tL_g}\sum_{i=1}^{L_g}\mathbf{1}_{[\hat{y}_{t,i} = \text{[MASK]}]} \log q_\phi(\hat{y}_i | \hat{y}_t, x)\right]$$
+
+总训练目标为：
+$$L(\phi) = w_{distill} L_{Distillation} + w_{cons} L_{Consistency} + w_{dlm} L_{DLM}$$
+其中 $w_{distill}, w_{cons}, w_{dlm}$ 是对应损失的权重。
+
+**2.3. 推理 (Inference)**
+在推理阶段，CDLM 学生模型在块级因果掩码下进行块级解码，并复用提示和已完成块的 KV 缓存。在每个块内部，采用置信度阈值并行终结化 (confidence-thresholded parallel finalization)：在每一步中，当前块内所有置信度超过阈值 $\tau_{conf}$ 的掩码令牌都会被揭示。此外，模型支持提前停止，一旦当前块内生成 `<endoftext>` 令牌则停止解码。
+
+**3. 实验结果**
+CDLM 在数学推理和代码生成任务（GSM8K, MATH, HumanEval, MBPP）上进行了评估，基准模型包括 Dream-7B-Instruct 和 LLaDA-8B-Instruct。
+
+*   **加速效果**：CDLM 实现了 3.6 倍至 14.5 倍的更低延迟，并减少了 3.4 倍至 7.9 倍的精炼步骤。
+*   **准确性**：在保持有竞争力的准确性的同时，在 MBPP-Instruct 和 HumanEval-Instruct 等任务上甚至有所提升。虽然在某些任务（如 MATH）上可能略有下降，但总体性能优于或媲美现有加速方法。
+*   **吞吐量 (TPS)**：CDLM 在大多数任务上实现了最高的每秒令牌数 (TPS)，与原始 DLMs 相比提升了 3 倍至 21 倍，并且超越了同等规模的自回归 LLMs。
+
+**4. 总结**
+CDLM 是一种将一致性建模引入扩散语言模型的训练方法，通过强制块内时间一致性和微调块级因果学生模型，有效地减少了精炼步骤并实现了自然的 KV 缓存。这使得 DLMs 在数学和编码任务上实现更快的推理速度、更少的步骤、更低的延迟和更高的吞吐量，同时保持了竞争力强的准确性。未来的工作方向包括扩展蒸馏语料库、拓宽领域覆盖以及从更强的教师模型进行蒸馏。
+
+   
+## Adaptive 投机 TLT
 Taming the Long-Tail: Efficient Reasoning RL Training with Adaptive Drafter
 
 https://arxiv.org/pdf/2511.16665 MIT NVIDIA 韩松团队等 2025.11.21 ASPLOS26
