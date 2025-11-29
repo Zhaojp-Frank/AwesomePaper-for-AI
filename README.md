@@ -1,8 +1,69 @@
 # AwesomePaper-for-AI
 Awesome system papers for AI
 
+## Metis-HOME
+Metis-HOME: Hybrid Optimized Mixture-of-Experts for Multimodal Reasoning
+
+https://arxiv.org/abs/2510.20519 美团等 2025.11.25
+
+https://github.com/MM-Thinking/Metis-HOME
+
+1. ✨ 本文提出了 Metis-HOME 框架，这是一种**混合优化专家混合**（MoE）模型，旨在解决多模态推理模型中**复杂推理能力与通用能力之**间的效率低下和能力退化问题。
+2. 🧠 Metis-HOME 引入**“混合思维**”范式，通过**结构化为专门处理复杂多步推理的“思考专家”分支**和**优化快速直接推理的“非思考专家”分支，**并由**轻量级路由器动态**分配查询。
+3. 🚀 实验证明，Metis-HOME 不仅大幅提升了复杂推理能力，还逆转了推理专业化模型普遍存在的通用能力下降趋势并有所提升，有效解决了推理能力与泛化能力之间的固有矛盾。
+
+<img width="780" height="345" alt="image" src="https://github.com/user-attachments/assets/e89b6eb0-794c-4587-864c-ce6b18acfb25" />
+
+本文提出了 Metis-HOME，一个混合优化专家混合 (Hybrid Optimized Mixture-of-Experts, MoE) 框架，旨在解决多模态大推理模型 (MLLMs) 中复杂推理能力与通用能力之间的权衡问题。当前 MLLMs 在复杂任务（如数学问题求解）上表现出色，但存在两大局限：一是即使对于简单查询也倾向于使用计算昂贵的推理（“过度思考”），导致效率低下；二是对专业推理的过度关注往往会损害其更广泛的通用理解能力，从而在复杂推理性能提升的同时，通用视觉问答 (VQA) 和光学字符识别 (OCR) 等基础能力下降。
+
+Metis-HOME 通过构建“混合思维”范式来解决这一困境。其核心方法是将原始的密集模型结构化为两个不同的专家分支：一个“思考分支 (thinking branch)”，专门用于复杂的多步推理任务；另一个“非思考分支 (non-thinking branch)”，则针对通用 VQA 和 OCR 等任务进行优化，以实现快速直接的推理。一个轻量级、可训练的路由器 (router) 动态地将查询分配给最合适的专家。
+
+**核心方法论**
+
+1.  **架构扩展 (Architectural Expansion)**：
+    *   Metis-HOME 基于 Qwen2.5-VL-7B 模型进行实例化。对于原始密集模型中的每个 Transformer 块，其 Feed-Forward Network (FFN) 模块被复制并扩展为两个独立的专家：一个专用于“思考”，另一个专用于“非思考”处理。
+    *   自注意力机制 (self-attention) 和其他组件在专家之间共享，这符合 MoE 架构的常见实践，并认识到思考与非思考模式在上下文关系学习上仍有大量共通之处。
+    *   路由器采用多层感知机 (MLPs) 实现，负责根据输入类型和复杂性动态分配输入到相应的专家。
+    *   MoE 权重初始化时使用经过 RL 训练的“思考”模型，理由是推理能力的形成需要更密集的专业训练，而通用能力可通过少量数据有效恢复。
+
+2.  **训练策略 (Training Strategy)**：
+    训练分为两个主要阶段：
+    *   **第一阶段：强化学习 (Stage-RL)**：
+        *   此阶段旨在显著增强基础密集模型的内在推理能力。
+        *   采用 Metis-RISE [Qiu et al., 2025] 的策略，适配 Group Relative Policy Optimization (GRPO) 算法，并结合 DAPO [Yu et al., 2025] 和 VAPO [Yue et al., 2025] 中的先进优化技术。
+        *   给定从数据池 $D$ 中采样的查询-答案对 $(q, a)$，行为策略模型 $\pi_{\theta_{old}}$ 生成一组 $G$ 个候选轨迹 $\{\tau_i\}_{i=1}^G$。RL 目标函数定义为：
+            $$J_{RL}(\theta) = E_{(q,a)\sim D,\{\tau_i\}_{i=1}^G \sim \pi_{\theta_{old}}(\cdot|q)}\left[\frac{1}{G}\sum_{i=1}^G \frac{1}{|\tau_i|}\sum_{t=1}^{|\tau_i|}\min\left(r_{i,t}(\theta) \hat{A}_{i,t}, \text{clip}\left(r_{i,t}(\theta), 1 - \varepsilon_{low}, 1 + \varepsilon_{high}\right) \hat{A}_{i,t}\right)\right]$$
+            其中，重要性采样比率 (importance ratio) 和优势函数 (advantage) 计算为：
+            $$r_{i,t}(\theta) = \frac{\pi_{\theta} (\tau_{i,t} | q, \tau_{i,<t})}{\pi_{\theta_{old}} (\tau_{i,t} | q, \tau_{i,<t})} , \hat{A}_{i,t} = R_i - \text{mean}(\{R_i\}_{i=1}^G)/\text{std}(\{R_i\}_{i=1}^G)$$
+        *   采用混合奖励机制，结合了格式奖励 (format reward) 和准确性奖励 (accuracy reward)。格式奖励强制模型输出遵循 `<think>` 和 `</think>` 包含推理过程，`<answer>` 和 `</answer>` 包含最终答案的结构。准确性奖励是二元的 (0 或 1)，仅当提取的答案被基于规则的验证器验证为正确时才授予。
+    *   **第二阶段：监督微调 (Stage-SFT)**：
+        *   在此阶段，模型被扩展为 MoE 架构，并使用精心构建的思考型和非思考型混合数据集进行 SFT。
+        *   **思考型 SFT 数据**：收集数学及其他复杂推理领域的提示。对于每个提示，模型生成 $N$ 个响应，计算通过率。通过率为 1 的提示被丢弃；通过率在 0 到 1 之间的，使用模型自身的正确推理轨迹作为监督信号；通过率为 0 的，利用外部专家模型提供参考推理轨迹。数据格式为：“`<think>thinking_content</think><answer>answer_content</answer>`”。
+        *   **非思考型 SFT 数据**：汇编高质量的通用 VQA、OCR 和图像字幕示例，数据量与思考型数据相当。数据格式为：“`<think></think><answer>answer_content</answer>`”。
+        *   训练目标结合了两个交叉熵损失：一个用于最终答案预测 ($L_{prediction}$)，另一个用于路由器的分配决策 ($L_{router}$)。总损失为：
+            $$L_{total} = L_{prediction} + L_{router}$$
+            这两个损失以 1:1 的比例结合。
+
+**实验与结果**
+
+Metis-HOME 在 Qwen2.5-VL-7B 模型上实现。RL 阶段使用约 40K 多模态推理样本训练。SFT 阶段使用约 16K 训练样本（8K 思考型，8K 非思考型）。
+
+*   **推理能力提升**：在六个推理基准测试（MathVista, MathVision, MathVerse, DynaMath, WeMath, LogicVista）上，Metis-HOME 平均得分 46.1%，相比基线 (Qwen2.5-VL-7B) 提升了 6.9%。它超越了专用的推理模型 VL-Rethinker-7B，并与 Metis-RISE-7B 性能相当。
+*   **通用能力保持与提升**：与其他推理专业化模型（如 VL-Rethinker-7B 和 Metis-RISE-7B）在通用能力上表现出显著下降不同，Metis-HOME 不仅避免了性能下降，反而在八个通用基准测试上取得了 0.9% 的整体提升，平均得分 71.2%。这表明 Metis-HOME 成功解决了推理与泛化之间的困境。
+*   **思维比率分析 (Thinking Ratio Analysis)**：
+    *   在推理密集型基准测试（如 WeMath, MathVision）上，“思考”比率显著偏高（78%至98%），表明路由器能有效识别复杂查询并导向思考专家。
+    *   在通用基准测试（如 MMBench, OCRBench）上，“思考”比率显著降低（低至2%–5%），显示出对非思考专家的强烈偏好。
+    *   MMMU 基准测试展现出 50.1% 的综合思考比率，进一步细致分析显示，对于分析性科目（如“图论”、“微积分”）思考比率高达 100%，而对于非推理型科目（如“美国文学”）则降至 0%，验证了路由器在多学科数据集内识别查询复杂度的能力。
+    *   训练过程中，在 MathVerse 上，“思考”比率随训练步数增加而提高，并伴随准确率的同步提升，验证了“在适当问题上更多思考”能显著提升推理能力的假设。
+    *   SFT 训练早期，模型倾向于过度拟合非思考响应模式导致思考比率下降；随着训练进行，模型逐渐学会区分任务，通用基准的思考比率保持低位，而复杂数学推理基准的思考比率则稳步回升并稳定在高水平。
+
+定性分析进一步证实，Metis-HOME 的路由器能成功区分不同认知负荷的查询，动态激活最合适的专家分支，例如将 OCR 任务和图像字幕任务路由到非思考分支，而将复杂的平面几何问题路由到思考分支，生成详细的多步推理过程。
+
+综上所述，Metis-HOME 提出了一个有效的混合 MoE 架构，通过专用的专家分支和动态路由器实现了“混合思维”范式，成功解决了 MLLMs 中复杂推理能力与通用能力之间的固有矛盾，为构建强大而通用的 MLLMs 提供了新范式。
+
 ## CDLM
 CDLM: Consistency Diffusion Language Models For Faster Sampling 
+
 https://arxiv.org/abs/2511.19269 2025.11.24 伯克利 首尔 togetherAI等
 
 https://github.com/SqueezeAILab/CDLM
