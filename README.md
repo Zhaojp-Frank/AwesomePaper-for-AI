@@ -1,6 +1,73 @@
 # AwesomePaper-for-AI
 Awesome system papers for AI
 
+## C3 压缩
+Context Cascade Compression: Exploring the Upper Limits of Text Compression
+
+https://arxiv.org/pdf/2511.15244 2025.11.19
+https://github.com/liufanfanlff/C3-Context-Cascade-Compression
+
+对context输入小模型压缩到latent token（5x～20x），然后大模型decode还原准确率98%！
+https://mp.weixin.qq.com/s/0TfoM48EPlLfceZ6xCyL5Q
+
+1.  📚 本文提出了Context Cascade Compression (C3)方法，旨在探索文本压缩的上限，以应对大型语言模型在处理长上下文时面临的计算和内存挑战。
+2.  💡 C3采用级联的双LLM架构，其中一个小型LLM负责将长文本压缩为一组潜在token，另一个大型LLM则根据这些压缩的上下文执行解码任务。Qwen2.5-1.5b作encoder；Qwen2.5-3b作decoder。
+3.  🚀 实验证明，在20倍压缩比下，C3的解码准确率高达98%，远超DeepSeek-OCR的60%，在40倍压缩比下仍能保持93%的准确率，展示了其在纯文本压缩方面的卓越性能和潜力。
+
+<img width="830" height="319" alt="image" src="https://github.com/user-attachments/assets/e80905be-e1be-4aed-958c-c470e0ff2760" />
+
+大型语言模型（LLMs）在处理百万级别token的长文本输入时面临巨大的计算和内存挑战。受DeepSeek-OCR在“Contexts Optical Compression”方面初步成果的启发，本文提出了一种名为Context Cascade Compression (C3) 的方法，旨在探索文本压缩的极限。C3方法采用两阶段级联架构，利用大小不同的LLM分别执行压缩和解码任务。
+
+<img width="683" height="455" alt="image" src="https://github.com/user-attachments/assets/d4e2d1ee-deec-4f2b-bb5f-77c9bfc41b2b" />
+
+**核心方法论（Core Methodology）：**
+C3架构的核心是一个级联的双LLM设计，包括一个上下文压缩编码器LLM和一个解码器LLM。
+
+<img width="678" height="434" alt="image" src="https://github.com/user-attachments/assets/1b7c099d-a95e-469b-867c-3874fb66d0fa" />
+
+1.  **上下文压缩编码器LLM (Context Compression Encoder LLM):**
+    *   **目标：** 将变长的文本序列压缩成定长的潜入（latent）表示。
+    *   **架构：** 该编码器以一个预训练的Qwen2.5 1.5B模型作为骨干。作者认为**预训练LLM本身就具备高级的信息提取、语义理解和总结能力**，因此直接适配现有LLM而不是从头设计压缩模块。
+    *   **压缩机制：** 引入一组可学习的嵌入，称为“context query”。这个查询是一个可训练的张量 $\mathbf{Q}$，其维度为 $N \times D$，其中 $N$ 是期望输出潜入上下文的固定token数量（例如32、64或100），$D$ 是Qwen2.5 1.5B模型嵌入层的隐藏维度。
+    *   **输入处理：** 编码器的输入序列是原始长文本（text tokens）与context query嵌入的拼接。模型将**这种混合序列统一处理，context query嵌入在模型的自注意力机制中被视为标准文本token。**无需引入跨注意力层等架构修改，整个前向传播完全依赖模型原生的因果注意力机制。
+    *   **输出：** 在前向传播完成后，**提取对应于context query token位置的最后一层输出的隐藏状态。这个形状为 $N \times D$ 的张量构成了高效且密集的原始文本表示，**即“latent context”，并被传递给下游的解码器。
+
+2.  **解码器LLM (Decoder LLM):**
+    *   **目标：** 解释编码器提供的密集、压缩的latent context，并生成满足特定下游任务的连贯文本输出。
+    *   **架构：** 本文使用一个更大的LLM，即Qwen2.5 3B，作为解码器。
+    *   **任务：** 在本文的研究范围内，解码器主要执行文本重建任务，以此作为评估C3压缩架构信息保真度的直接且严格的基准。通过让模型从其压缩表示中完美重建原始输入文本，可以量化压缩-解压缩周期中保留的信息量。
+    *   **输入：** 解码器的输入是latent context与任务特定提示（prompt）的拼接。对于重建任务，使用的显式指令是"repeat the text: "。
+    *   **训练：** 解码器被训练以自回归方式生成与原始真实文本相同的token序列，以此证明输入文本的语义完整性已在latent context中成功维持。
+
+与DeepSeek-OCR等光学压缩方法不同，C3采用更简洁的纯文本管道，忽略了布局、颜色和视觉编码器造成的信息损失等因素。这种直接的文本到潜入（text-to-latent）压缩范式避免了视觉模态固有的信息瓶颈和潜在伪影（例如图像分辨率限制、布局复杂性）。
+
+**主要贡献：**
+*   提出了Context Cascade Compression (C3)，一种实现长上下文高效压缩的新颖架构。
+*   实现了远超光学字符压缩的性能。在40倍压缩比（文本token数量是潜入token数量的40倍）下，模型仍保持93%的解码准确率，而DeepSeek-OCR约为10倍压缩比。
+*   分析了C3的遗忘模式，发现其表现出序列性信息损失，错误倾向于集中在文本末尾，这与人类记忆衰减过程高度相似。
+
+**实验设置与结果：**
+*   **数据：** 使用从互联网收集的100万页OCR数据进行训练，主要包含英文和中文文档。
+*   **训练：** 在8块NVIDIA H800 GPU上进行，全局批次大小为256，使用AdamW优化器，峰值学习率为1e-5，采用余弦学习率调度器，总训练步数为40,000步。
+*   **评估：** 采用Fox基准测试的英文文档部分，选择token数量在600到1300之间的文档。在32、64和100个latent token的不同压缩级别下进行性能评估，任务是文本重建。
+
+<img width="692" height="699" alt="image" src="https://github.com/user-attachments/assets/71d954d4-09c1-4c68-ac18-404b553b371e" />
+
+**定量结果：**
+*   **在64个latent token的设置下，当压缩比接近20倍（1200-1300个文本token压缩为64个latent token）时，C3仍保持98.4%的重建精度，** 而DeepSeek-OCR在类似条件下精度骤降至59.1%。
+*   在更极端的32个latent token设置下，即使压缩比接近**40倍**（1200-1300个文本token压缩为32个latent token），C3仍能保持93.3%的惊人精度。
+*   总体而言，C3在所有测试条件下都显著优于光学压缩方法，在相似压缩率下展现出卓越的信息保存能力，尤其在高压缩比下性能差距更为显著。
+
+**定性结果：**
+*   模型在标准英文散文、古典中文、掺杂随机字符的英文段落以**及结构混乱的中文段落上，即使在极高的压缩级别（32个latent token）下，也能实现近乎完美的重建**。
+*   C3的错误**模式表现为序列性信息损失，即文本开头部分的信息保真度通常完美，而错误逐渐出现在文本末尾。这**与光学压缩中信息在整个文本上均匀模糊的降级方式形成对比，更类似于人类记忆衰减的过程。
+
+<img width="773" height="611" alt="image" src="https://github.com/user-attachments/assets/3160d1d5-e54c-4b9d-9ae2-a06f9a062d5b" />
+
+**结论与未来工作：**
+C3通过提出一种更直接的纯文本到潜入路径，并采用级联双LLM架构，实现了高效长上下文压缩。实验证明其在各种压缩比下均显著优于现有的光学压缩方法，并在高压缩比下展示了卓越的信息保真度。C3的成功为LLM生态系统内的未来研究和实际应用开辟了多条途径，包括作为LLM的强大前端压缩器以处理超长上下文（如百万级token），实现多模态级联架构，以及作为下一代生成模型（如Diffusion Language Models和Latent Auto-regressive Models）的基础组件。
+
+
 ## ToolOrchestra
 ToolOrchestra: Elevating Intelligence via Efficient Model and Tool Orchestration
 
