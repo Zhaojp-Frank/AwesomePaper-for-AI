@@ -4,9 +4,9 @@ Awesome system papers for AI
 ## Adaptive 投机
 Taming the Long-Tail: Efficient Reasoning RL Training with Adaptive Drafter
 
-https://arxiv.org/pdf/2511.16665 MIT NVIDIA 韩松团队等 2025.11.21
+https://arxiv.org/pdf/2511.16665 MIT NVIDIA 韩松团队等 2025.11.21 ASPLOS26
 
-https://github.com/mit-han-lab/fastrl
+https://github.com/mit-han-lab/fastrl 基于verl（fsdp+sglang）
  
 https://mp.weixin.qq.com/s/yJ5C9w3Hdc5g91QCUaID3Q 
 
