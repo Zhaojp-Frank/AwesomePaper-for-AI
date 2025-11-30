@@ -1,6 +1,39 @@
 # AwesomePaper-for-AI
 Awesome system papers for AI
 
+## AdvancedIF
+AdvancedIF: Rubric-Based Benchmarking and Reinforcement Learning for Advancing LLM Instruction Following 
+
+https://arxiv.org/abs/2511.10507 Meta 超级智能lab等 2025.11.26
+
+https://huggingface.co/datasets/meta-llama/AdvancedIF
+https://github.com/facebookresearch/AdvancedIF
+
+1. 📚 本文推出了AdvancedIF，一个包含1,600多个提示和专家策划的rubrics的**综合基准**，旨在**评估大型语言模型（LLMs）遵循复杂、多轮和系统级指令的能力**。
+2. 🛠️ 为解决训练挑战，研究者提出了RIFL（**Rubric-based Instruction-Following Learning**），一个新颖的后训练流程，通过**rubric生成、微调的rubric验证器和奖励塑形**（reward shaping）实现指令遵循的有效强化学习。
+3. 🚀 广泛实验表明，RIFL显著提**升了LLMs的指令遵循能力**，在AdvancedIF基准上取得了6.7%的绝对增益，并在公共基准上表现出色，确立了rubrics在LLMs高级指令遵循训练和评估中的强大作用。
+
+大型语言模型（LLMs）在多项任务中展现了卓越的性能，然而，对于复杂、多轮和系统提示的指令遵循（Instruction Following, IF）能力仍是一个重大挑战。当前缺乏高质量的人工标注基准和可靠、可解释的奖励信号，阻碍了对这些能力的严格评估和有效训练。
+<img width="761" height="392" alt="image" src="https://github.com/user-attachments/assets/7104a67c-b5ef-4184-9c6d-d8913c7c15dd" />
+
+<img width="749" height="404" alt="image" src="https://github.com/user-attachments/assets/e5ad9c49-213b-420e-a2f2-c500dc468efc" />
+
+为解决这些问题，本文引入了 **AdvancedIF**，一个全面的基准测试，包含超过1,600个提示和由专家精心策划的评估准则（rubrics），旨在评估LLMs遵循复杂、多轮和系统级指令的能力。AdvancedIF还开源了其评估脚本。该基准的独特性在于，其所有提示和评估准则均由人类专家编写，涵盖了三个核心方面：**显式和复杂用户指令遵循 (Explicit and Complex User Instruction Following)**（单个提示包含6条以上指令，涉及语气、格式、风格、结构、长度、负面约束、拼写和条件指令等）、**多轮承载上下文指令遵循 (Multi-Turn Carried Context Instruction Following)**（模型需遵循对话历史中延续的指令）以及 **系统提示可控性 (System Prompt Steerability)**（模型遵循系统提示中关于响应风格、安全性、产品上下文设置等约束）。AdvancedIF的数据集统计显示，其平均每个对话包含7.44（复杂IF）、6.08（多轮IF）和9.81（系统提示）个评估准则，平均轮次分别为1.00、7.69和11.21。对现有最先进LLMs（如GPT-5、Gemini 3 Pro）的基准测试表明，其表现最佳也仅约75%，显示AdvancedIF是一个极具挑战性的基准。
+<img width="676" height="305" alt="image" src="https://github.com/user-attachments/assets/a23e5c0a-115a-40ab-9709-bae736b395d7" />
+
+此外，本文提出 **RIFL (Rubric-based Instruction-Following Learning)**，一个新颖的后训练（post-training）流程，通过利用评估准则生成、微调评估准则验证器和奖励塑形（reward shaping）技术，实现对指令遵循能力的有效强化学习。RIFL将指令遵循问题建模为一个强化学习问题，其目标是最大化以下期望回报：
+$$J (\pi_\theta) = E_{(q,r)\sim D}\left[E_{o\sim\pi_\theta (\cdot|q)}[R(q, o, r)] - \beta D_{KL}[\pi_\theta (\cdot|q)\|\pi_{ref}(\cdot|q)]\right]$$
+其中，$\pi_\theta$ 是训练中的LLM策略，$\pi_{ref}$ 是参考策略，$q$ 是提示，$o$ 是模型响应，$r = \{r_i\}_{i=1}^d$ 是与提示 $q$ 对应的评估准则集合，$R(q, o, r)$ 是基于评估准则的奖励信号。RIFL主要包含三个核心组件：
+
+1.  **评估准则生成器 (Rubric Generator)**：为了大规模生成高质量的提示和评估准则，作者基于少量专家编写的数据训练了一个评估准则生成器。该生成器是一个经过SFT微调的Llama 4 Maverick模型，使用数千条人工标注的提示-评估准则对进行训练，F1分数从0.639显著提升至0.790。
+
+2.  **评估准则验证器 (Rubric Verifier)**：为了构建一个可靠的验证器，RIFL采用了一个两阶段微调流程来训练LLM作为评估准则验证器。首先进行 **SFT阶段**，使用人类专家标注的评估数据Dgolden来冷启动模型，使其能够像人类专家一样评估响应。接着进行 **RL阶段**，在更广泛的数据集上进一步提升验证器的泛化能力。在此阶段，验证器对每个评估准则进行判断并提供理由，然后将其判断结果与人类专家的二元标签进行比较，以两者之间的一致性比例作为奖励信号进行强化学习。实验结果表明，经过两阶段训练的评估准则验证器（F1分数0.728）相比于原始LLM（F1分数0.515）和仅SFT的模型（F1分数0.656）实现了显著更高的与人类判断的一致性，且与强大的o3-mini模型（F1分数0.723）相当。
+
+3.  **奖励设计与塑形 (Reward Design and Shaping)**：对于每个提示-响应-评估准则对 $(q, o, r = \{r_i\}_{i=1}^d)$，评估准则验证器 $V$ 输出一个 $d$ 维二元标签 $v = \{v_i\}_{i=1}^d$，其中 $v_i$ 表示响应 $o$ 是否满足评估准则 $r_i$。本文采用最直接的奖励函数 $R(q, o, r) = I [V (q, o, r) = 1]$，即只有当模型满足所有评估准则时才获得奖励1，否则为0（all-or-nothing reward）。为了解决早期实验中观察到的奖励作弊（reward hacking）问题，RIFL引入了额外的评估准则作为奖励塑形技术，例如检查模型响应是否包含误导性伪影或是否完整，以促使模型生成更干净、更完整的响应。
+<img width="573" height="326" alt="image" src="https://github.com/user-attachments/assets/b879279d-4bf4-42ed-b368-f5632e22fd42" />
+
+广泛的实验表明，RIFL显著提升了LLMs的指令遵循能力，在AdvancedIF基准上取得了6.7%的绝对增益，并在MultiChallenge和IFEval等公共基准上取得了强劲结果。具体而言，RIFL使Llama 4 Maverick在AdvancedIF上的平均得分从51.4%提升至58.1%。消融研究证实了RIFL中每个组件的有效性，包括微调评估准则验证器优于普通LLM判官，以及“all-or-nothing”奖励设计和奖励塑形技术在缓解奖励作弊问题上的有效性。这项工作确立了评估准则在LLMs高级IF训练和评估中的强大作用，为开发更强大、更可靠的AI系统铺平了道路。
+
 ## RGR-GRPO
 Reward and Guidance through Rubrics: Promoting Exploration to Improve Multi-Domain Reasoning
 https://arxiv.org/abs/2511.12344 中科院计算所等，2025.11.18
