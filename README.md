@@ -1,6 +1,71 @@
 # AwesomePaper-for-AI
 Awesome system papers for AI
 
+## Scaling Up RL: Unlocking Diverse Reasoning in LLMs via Prolonged Training
+NVIDIA, 2025.7.16
+
+1.  📚 本研究深入探讨了对小型语言模型进行长时间强化学习以解锁多样化推理能力的方法，并强调了可验证奖励、改进的GRPO算法以及训练稳定性技术的重要性。
+2.  ⚙️ 论文提出了多项关键技术，包括**解耦裁剪、动态采样、受控KL正则化和周期性参考策略重置**，以有效应对熵崩溃和训练停滞问题，从而实现性能的持续提升。
+3.  🚀 实验结果表明，该方法在数学、编码、逻辑谜题等多个推理领域取得了显著进展，相比基线模型分别提升了14.7%、13.9%和54.8%，并且研究团队已公开发布了Nemotron-Research-Reasoning-Qwen-**1.5B模型**。
+
+本论文深入探讨了如何通过延长强化学习（RL）训练来提升小型语言模型（LLMs）在多样化推理任务上的能力。通过可验证的奖励任务、改进的Group Relative Policy Optimization (GRPO)算法以及提升训练稳定性和泛化性的实用技术，即使是小规模模型也能在不依赖更大计算架构的情况下实现显著的推理能力提升。
+<img width="1114" height="413" alt="image" src="https://github.com/user-attachments/assets/32854abb-5e3e-4da4-8fbe-f23794765884" />
+
+**1. 引言与背景**
+
+**2. 多样化训练数据**
+为了促使模型泛化并学习鲁棒的决策策略，本研究在多种具有可验证奖励信号的任务上进行训练，涵盖了：
+*   **数学 (Math):** 使用来自DeepScaleR数据集的4万个数学问题，采用二元奖励（1表示正确，0表示错误）。
+*   **代码 (Code):** 使用Eurus-2-RL数据集的2.4万个编程问题，采用连续奖励，基于通过测试用例的比例。
+*   **STEM:** 使用SCP-116K数据集（经过GPT-4o筛选）的2.5万个科学问题，采用二元奖励。
+*   **逻辑谜题 (Logical Puzzles):** 使用Reasoning Gym项目生成的3.7万个合成训练样本，采用连续奖励。
+*   **指令遵循 (Instruction Following):** 使用Llama-Nemotron的1万个合成生成数据，采用连续奖励。
+为了应对复杂性和多样性，研究采用了沙盒奖励服务器架构，以隔离执行环境、确保安全性和容错性，并通过多进程和分布式服务器高效地扩展奖励评估。
+
+**3. 核心方法**
+研究基于Group Relative Policy Optimization (GRPO)算法，并整合了DAPO中的技术，同时引入了KL散度惩罚和周期性参考策略重置，以实现长时间的稳定训练。
+
+**3.1. GRPO背景**
+**3.2. 缓解熵坍缩**
+为解决长时间策略优化中的熵坍缩问题（模型输出分布过早集中，限制探索），本研究采用了以下策略：
+*   **高采样温度 (High Sampling Temperature):** 在rollout阶段使用较高的采样温度（例如1.2）以促进探索，但仅能延迟熵坍缩。
+
+**3.3. 解耦裁剪和动态采样策略优化 (DAPO)**
+为了进一步解决熵坍缩并维持探索和输出多样性，本研究采纳了DAPO [4] 的组件：
+*   **解耦裁剪 (Decoupled Clipping):** 将PPO目标中的上下裁剪边界 \(\epsilon_{low}\) 和 \(\epsilon_{high}\) 作为独立超参数：
+    \[ \text{clip}(r_\theta(\tau), 1 - \epsilon_{low}, 1 + \epsilon_{high}) \]
+    通过设置更高的 \(\epsilon_{high}\) 值（例如0.4），鼓励“向上裁剪”，提升之前不太可能出现的token的概率，从而促进更广泛的探索。
+*   **动态采样 (Dynamic Sampling):** 过滤掉模型持续成功或失败（准确率1或0）的prompt，因为这些prompt无法提供学习信号，从而使训练更聚焦于中等难度的样本，维持多样化和稳定的学习信号。
+
+**3.4. KL正则化和参考策略重置**
+虽然DAPO和温度调整有助于减缓熵坍缩，但显式的KL散度惩罚提供了更强大、更稳定的解决方案。
+*   **KL惩罚 (KL Penalty):** 在GRPO损失中加入当前策略 \(\pi_\theta\) 和参考策略 \(\pi_{ref}\) 之间的KL散度惩罚：
+    \[ \mathcal{L}_{\text{KL-RL}}(\theta) = \mathcal{L}_{\text{GRPO}}(\theta) - \beta D_{\text{KL}}(\pi_\theta || \pi_{ref}) \]
+    其中，无偏估计量通常为：
+    \[ D_{\text{KL}}(\pi_\theta || \pi_{ref}) = \mathbb{E}_{\tau \sim \pi_{\text{ref}}} \left[ \frac{\pi_\theta(\tau)}{\pi_{\text{ref}}(\tau)} - \log \frac{\pi_\theta(\tau)}{\pi_{\text{ref}}(\tau)} - 1 \right] \]
+    这个惩罚不仅有助于维持熵，还作为正则化项防止在线策略漂离稳定参考，从而稳定学习并减轻对虚假奖励信号的过拟合。与近期一些工作主张移除KL惩罚不同，本研究认为从一个已具备CoT输出能力的强预训练模型（如DeepSeek-R1-Distill-Qwen-1.5B）开始训练时，保留KL惩罚对稳定性和熵维持仍有益。
+*   **参考策略重置 (Reference Policy Reset):** 周期性地将参考策略 \(\pi_{ref}\) 硬重置为在线策略 \(\pi_\theta\) 的最新快照，并重新初始化优化器状态。这使得模型能在保持KL正则化益处的同时持续改进，避免过早收敛并鼓励长时间训练。
+
+<img width="975" height="684" alt="image" src="https://github.com/user-attachments/assets/27c376ec-9d21-4ac0-9a27-68c3e8248efb" />
+
+**4. 实验结果**
+研究采用分阶段训练策略，包括多个顺序运行，以迭代优化模型行为、整合额外数据、调整超参数和重置训练动态。
+*   **训练设置:** 使用开源框架verl [16] 进行RL训练，DAPO增强（\(\epsilon_{low}=0.2, \epsilon_{high}=0.4\)），KL散度惩罚系数 \(\beta=0.0001\)。rollout采样16个响应，上下文窗口8096，采样温度1.2。批大小256，mini-batch大小64。AdamW优化器，学习率 \(2 \times 10^{-6}\)。初始模型为DeepSeek-R1-Distill-Qwen-1.5B。总训练时长约1.6万GPU小时。
+*   **训练过程:** 经历了多个运行阶段，包括初始训练、硬重置、引入指令遵循数据、奖励塑形（惩罚未正确终止的响应）、增加rollout计数以及扩展上下文窗口至16k等。
+*   **评估基准:** 在数学（AIME2024/2025, AMC, MATH, Minerva Math, Olympiad Bench）、编码（PRIME, HumanevalPlus, LiveCodeBench）、逻辑谜题（Reasoning Gym）、STEM推理（GPQA Diamond）和指令遵循（IFEval）等多样化任务上进行评估。
+*   **主要发现:**
+    *   与DeepSeek-R1-Distill-Qwen-1.5B相比，本模型Nemotron-Research-Reasoning-Qwen-1.5B在数学上平均提升15.7%，编码上表现优异，STEM推理和指令遵循分别提升25.9%和22.0%。在逻辑谜题上也取得了显著进步，尤其是在克服初始格式错误后。
+    *   与领域专用模型（DeepScaleR-1.5B、DeepCoder-1.5B）相比，本模型在广泛领域数据上训练后，仍能在数学和代码基准上达到竞争性性能，展现出强大的泛化能力。
+
+**5. 消融研究**
+*   **Rollout采样温度:** **在早期和后期训练中，较高的采样温度（例如1.2**）都能带来更稳定的训练和更好的性能，能防止模式坍缩并支持持续进步。
+*   **解耦裁剪和动态采样:** 设置 \(\epsilon_{low}=0.2\) 和 \(\epsilon_{high}=0.4\) 取得了最佳验证性能，缓解了熵坍缩。动态采样通过过滤无优势的prompt，提高了每批次的奖励信号密度，从而提升了样本效率。
+*   **重置参考策略:** 当训练性能下降或停滞时，**硬重置参考策略和优化器状态能恢复稳定性**并实现进一步的有效训练。
+*   **缓解熵坍缩:** 比较了多种策略（GRPO-KL=0, GRPO-KL=1e-4, DAPO, AdaptiveEntropy），发现DAPO和KL惩罚的组合提供了一种保守而鲁棒的解决方案，既有助于熵保持，又通过防止模型偏离参考策略来提高训练稳定性。
+<img width="1114" height="413" alt="image" src="https://github.com/user-attachments/assets/e5a4bdc4-1a7e-4bdf-a83b-9e791c0df466" />
+<img width="1110" height="540" alt="image" src="https://github.com/user-attachments/assets/4e5ff27c-5fc9-4123-b6c8-e3a24d4c4782" />
+
+
 ## Metis-HOME
 Metis-HOME: Hybrid Optimized Mixture-of-Experts for Multimodal Reasoning
 
