@@ -1,6 +1,79 @@
 # AwesomePaper-for-AI
 Awesome system papers for AI
 
+## RGR-GRPO
+Reward and Guidance through Rubrics: Promoting Exploration to Improve Multi-Domain Reasoning
+https://arxiv.org/abs/2511.12344 中科院计算所等，2025.11.18
+
+1. 🌐 针对现有大型语言模型（LLM）强化学习在单领域可验证奖励和受限探索空间上的局限性，本文提出了RGR-GRPO框架，旨在通过**评价标准（rubrics）提供细粒度奖励和离线指导**以提升多领域推理能力。
+2. 💡 RGR-GRPO通过构**建跨领域的问题特定评价标准**，提供包含**事实性和过程性**两类指标的密集奖励，并利用这些评价标准指导模型对**次优轨迹进行自修正**，以实现离策略探索。
+3. 📈 实验证明，RGR-GRPO在14个多领域基准测试上持续优于现有RL方法，在数学、物理、化学和通用推理任务中**平均性能提升显著**，并展现出**稳定的探索动态和优越的pass@k**表现。
+<img width="525" height="353" alt="image" src="https://github.com/user-attachments/assets/83a88c95-7859-4b7f-81d7-8154c9c12071" />
+
+大型语言模型（LLMs）在强化学习（RL）的推动下，在复杂推理能力方面取得了显著进步。然而，**现有方法主要集中于单一领域（如数学）且奖励可验证（RLVR）的任务**，并且其纯在线RL框架限制了探索空间，从而制约了推理性能。为解决这些局限性，本文提出了RGR-GRPO（Reward and Guidance through Rubrics）框架，一个由评分标准（rubrics）驱动的RL框架，用于多领域推理。RGR-GRPO利用评分标准提供细粒度的奖励信号和离线指导，使LLMs能够接收密集且信息丰富的奖励，并在GRPO训练期间探索更大的解决方案空间。
+
+**核心方法论**
+
+RGR-GRPO框架包含两个关键组件：Rubric-based fine-grained rewards（**基于评分标准的细粒度奖励**）和Rubric-guided offline exploration（**基于评分标准的离线探索**）。
+<img width="1048" height="575" alt="image" src="https://github.com/user-attachments/assets/4f77785b-fa2d-45be-aa5e-78da3b752560" />
+
+**1. 基于评分标准的细粒度奖励 (Rubric-based Fine-Grained Rewards)**
+为了克服单一领域训练和稀疏奖励信号的限制，RGR-GRPO构建了跨多个领域的、针对特定问题的评分标准。每个评分标准包含两种互补的评估类型：Factual Criteria（事实性标准）和Process Criteria（过程性标准），每种类型都分配一个反映其相对重要性的自适应权重$w_k$。
+*   **Factual Criteria**：用于验证中间和最终结果的准确性。
+*   **Process Criteria**：衡量推理路径的逻辑健全性。
+
+评分标准的生成采用两阶段过程：首先，对于每个问题$q$，使用专家LLM（如OpenAI O3）生成一个高质量的参考答案$a_{ref}$。然后，在$q$和$a_{ref}$的条件下，指示专家LLM生成细粒度的评分标准集$C = \{c_k\}_{k=1}^{|C|}$，其中每个标准$c_k = (d_k, w_k)$包含描述性规范$d_k$和自适应权重$w_k$。
+
+对于模型生成的输出$o_i$和每个标准$c_k \in C$，采用一个判断模型（LLM-as-Judge）来生成二元验证分数$s_k(q, o_i) \in \{0, 1\}$，表示输出是否满足该标准：
+$s_k(q,o_i) = \begin{cases} 1, & \text{if response } o_i \text{ satisfies } d_k \text{ given prompt } q \\ 0, & \text{otherwise} \end{cases}$
+然后，所有评分标准分数及其对应权重被聚合成一个归一化的标量奖励：
+$R(q,o_i) = \frac{\sum_{k=1}^{|C|} w_k \cdot s_k(q,o_i)}{\sum_{k=1}^{|C|} w_k}$
+为了允许模型在推理过程偏离预定义评分标准时仍能生成正确答案，最终奖励$r_i$的计算如下：如果所有事实性标准$C_{fact_i}$都被验证通过，则奖励为1；否则，奖励为$R(q,o_i)$。
+$r_i = \begin{cases} 1, & \text{if } \sum_{k=1}^{|C_{fact_i}|} s_k(q,o_i) = |C_{fact_i}| \text{ where } c_k \in C_{fact_i} \\ R(q,o_i), & \text{otherwise} \end{cases}$
+这种设计提供了可靠且密集的奖励信号，平衡了缓解奖励欺骗和减少组内方差的需求。
+
+**2. 基于评分标准的离线探索 (Rubric-Guided Offline Exploration)**
+为了打破纯在线方法的探索瓶颈，RGR-GRPO将基于评分标准的信号集成到离策略指导机制中。该过程分为三个步骤：
+
+*   **步骤1：探索评估 (Exploration Assessment, EA)**
+    在每个GRPO训练迭代中，首先从旧策略$\pi_{\theta_{old}}$采样$G-1$个初始响应$\{o_i\}_{i=1}^{G-1}$。每个响应通过基于评分标准的奖励函数（第2.2节）进行评估，得到聚合奖励和详细的标准判断。然后确定性能最佳的响应$o_{best} = \arg\max_{o_i \in \{o_1,...,o_{G-1}\}} r_i$。如果$o_{best}$满足所有评分标准（即$\sum_{k=1}^{|C_{best}|} s_k(q,o_{best}) = |C_{best}|$），则认为当前在策略探索已足够，生成最后一个响应$o_G$并使用在线GRPO更新策略。否则，即策略未能达到完美解决方案时，将应用后续的混合策略细化。探索评估机制通过判断当前探索上限是否足够来决定是否需要离策略指导，有效避免了不必要的离策略更新和熵爆炸的风险。
+
+*   **步骤2：基于评分标准的自细化 (Rubric-Based Self-Refinement)**
+    为了提高当前探索组的上限，通过明确以$o_{best}$未满足的评分项$C_{failed} = \{c_k | s_k(q,o_{best}) = 0\}$为条件，对$o_{best}$进行细化。策略模型以三元组$(q, o_{best}, C_{failed})$为提示，生成一个细化后的响应$o_G \sim \pi_{\theta_{old}}(\cdot | q, o_{best}, C_{failed})$，并计算其奖励$r_G$。
+
+*   **步骤3：混合策略GRPO (Mix-Policy GRPO)**
+    最后，将离策略细化的轨迹$o_G$与初始的在策略轨迹$\{o_i\}_{i=1}^{G-1}$合并，共同更新策略。优势估计仍遵循GRPO的公式（1）。模型在以下混合策略目标下进行优化：
+    $J_{\text{RGR-GRPO}}(\theta) = \mathbb{E}_{q \sim \mathcal{D}, \{o_i\}_{i=1}^{G-1} \sim \pi_{old}, o_G \sim \pi_{old}(\cdot|q,o_{best},C_{failed})} \frac{1}{G} \left[ \sum_{i=1}^{G-1} \sum_{t=1}^{|o_i|} r^{(i)}_t(\theta) \hat{A}_i + \sum_{t=1}^{|o_G|} f_{shaper}(G)_t(\theta) \hat{A}_G \right]$
+    其中，$r^{(i)}_t(\theta) = \frac{\pi_{\theta}(o_i|q,o_{(<t)}^{(i)})}{\pi_{\theta_{old}}(o_i|q,o_{(<t)}^{(i)})}$是正常的重要性采样比率。离策略细化项通过一个塑形函数$f(\cdot)$进行调制，以调整离策略细化响应$o_G$中每个token的贡献：
+    $f_{shaper}(G)_t(\theta) = \frac{\pi_{\theta}(o_G | q,o_{(<t)}^{(G)})}{\pi_{\theta_{old}}(o_G | q,o_{(<t)}^{(G)}) + \gamma}$
+    其中$0 < \gamma < 1$。塑形函数通过赋予细化轨迹中低概率token更高的重要性来重新加权梯度，鼓励模型从成功但分布外（out-of-distribution）的行为中学习，同时减轻失败细化的影响。
+
+**实验设置**
+
+*   **数据集**：训练集基于WebInstruct-Verify，一个大规模、多领域、可验证的数据集，包含约1万个样本。评估数据集涵盖特定主题（数学：Sci-Math, MATH, MATH500；物理：PIQA, Sci-Physics；化学：ChemBench, Sci-Chemistry）和通用推理（MMLU, MMLU-Pro, GPQA, GPQA*, OlympicArena）任务。
+*   **模型**：Qwen2.5-3B和Qwen2.5-7B。
+*   **基线**：
+    *   **在线GRPO方法**：Outcome-GRPO（基于最终答案二元验证奖励）、Likert-GRPO（通过与参考答案比较提供密集奖励）、Rubric-GRPO（基于聚合评分标准验证结果的奖励）。
+    *   **离线指导方法**：LUFFY（直接混合离线监督响应）、Critique-GRPO（利用基于真值的critique指导策略细化）。
+*   **RL实现**：使用Verl框架，训练400步，批大小96，学习率$1 \times 10^{-6}$，采样温度1.0，每次提示采样8个轨迹。引入长度惩罚。移除GRPO中的裁剪函数和KL散度约束（设置$\beta=0$），以允许更灵活的策略更新。
+![Uploading image.png…]()
+
+**实验结果**
+
+*   **主要结果**：RGR-GRPO在所有基准测试中始终优于所有基线。在7B模型上，RGR-GRPO比Outcome-GRPO在数学、物理、化学和通用推理任务上分别平均提高了+7.0%、+5.4%、+8.4%和+6.6%。与最佳在线方法Rubric-GRPO相比，RGR-GRPO也取得了3.7%的平均提升。
+*   **分布外（OOD）性能**：在MedMCQA和CS-Bench数据集上，RGR-GRPO展示了最佳的OOD性能，表明其强大的泛化潜力。
+*   **Pass@k曲线分析**：在SciBench的物理、化学和数学子集上，RGR-GRPO在不同$k$值下持续表现出优越的Pass@k性能，并随着$k$的增加，其性能提升更稳定，表明其在促进有效策略探索和推理多样性方面的强大能力。
+*   **策略探索分析**：RGR-GRPO在训练过程中保持了更平滑、更渐进的熵下降，表明持续的探索和持续学习。零奖励响应的比例稳步下降，离策略数据混合比例逐渐下降，同时重要性采样概率保持稳定，表明策略混合策略平衡且稳定。
+*   **消融研究**：消融实验证实了不同评分标准类别（Factual, Process）以及离策略塑形和探索评估（EA）配置对整体性能的关键贡献。
+
+**评分标准在奖励丰富和自细化中的作用**
+
+*   **基于评分标准的密集有效奖励**：与稀疏的Outcome奖励和嘈杂的Likert奖励相比，基于评分标准的奖励将评估分解为明确的标准，使得判断模型可以对每个方面进行可靠的二元决策并聚合为密集且可解释的奖励，从而实现稳定且有效的强化学习。
+*   **基于评分标准的测试时自细化**：在不同RL训练阶段，基于评分标准的自细化持续带来显著改进。即使模型内在推理能力提高，评分标准指导带来的收益也保持稳定，凸显了评分标准作为离线指导在整个强化学习过程中持续的益处。
+
+**结论**
+
+RGR-GRPO通过结合细粒度的评分标准奖励和基于评分标准的离线自细化，有效解决了多领域推理中奖励稀疏和探索受限的问题。在多个基准测试上的广泛实验证明，RGR-GRPO持续超越现有RL基线，并在训练过程中保持稳定的熵波动，实现卓越的pass@k性能，展示了持续的探索和有效突破现有性能瓶颈的能力。
 
 ## RuscaRL: Breaking the exploration bottleneck
 https://arxiv.org/abs/2508.16949 浙大 理想等 2025.10.22
