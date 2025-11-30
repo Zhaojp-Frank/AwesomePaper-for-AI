@@ -1,6 +1,56 @@
 # AwesomePaper-for-AI
 Awesome system papers for AI
 
+
+## RuscaRL: Breaking the exploration bottleneck
+https://arxiv.org/abs/2508.16949 浙大 理想等 2025.10.22
+
+https://github.com/IANNXANG/RuscaRL
+
+1. ✨ 针对大型语言模型（LLM）强化学习中探索**高质量样本的瓶颈**，该研究提出了Rubric-Scaffolded Reinforcement Learning (**RuscaRL**) 框架，旨在打破LLM通用推理的探索限制。
+2. 💡 RuscaRL通过在**生成响应时提供清单式评分标准作为显式引导**，并**逐步衰减此引导以促使模型内化推理模式**；同时，它利用这些**评分标准**作为可验证奖励来指导模型训练，即使在开放式任务中也能有效学习。
+3. 🚀 实验结果显示，RuscaRL在多项基准测试中显著优于现有方法，有效拓宽了LLM的推理边界，并在HealthBench-500等任务上超越了领先的LLM，证明了其优越性和广泛适用性。
+
+<img width="837" height="402" alt="image" src="https://github.com/user-attachments/assets/ceae50f2-59f2-4bb6-997b-0b4fcee09ae3" />
+
+该论文提出了一种名为 Rubric-Scaffolded Reinforcement Learning (RuscaRL) 的新型教学支架（instructional scaffolding）框架，旨在解决大型语言模型（LLM）在通用推理任务中面临的“探索瓶颈”（exploration bottleneck）问题。
+
+**背景与问题**
+尽管可验证奖励强化学习（RLVR）在推动 LLM 推理能力方面取得了显著进展，但其有效性主要局限于具有客观可验证答案的领域（如数学证明和代码生成）。对于医疗咨询、创意写作等开放式、需要多维度评估且缺乏单一事实真相的任务，传统的 RLVR 难以提供稳定可靠的奖励信号。此外，LLM 的强化学习过程普遍存在探索瓶颈：模型倾向于收敛到有限的推理轨迹，导致策略熵（policy entropy）坍塌，难以发现多样化和高质量的解决方案，从而限制了其推理能力的拓展。
+<img width="837" height="473" alt="image" src="https://github.com/user-attachments/assets/e645f021-78a5-4976-90fe-101cfb794d6f" />
+
+**RuscaRL 方法论**
+RuscaRL 通过将清单式（checklist-style）的评估标准（即 rubrics）融入强化学习过程，以两种互补的方式解决了上述挑战：
+
+1.  **用于探索的显式支架（Explicit Scaffolding for Exploration）**
+    在策略模型生成响应（rollout generation）阶段，RuscaRL **利用 rubrics 作为外部指导**。具体机制包括：
+    *   **组内支架差异化（Intra-Group Scaffolding Differentiation）**：为了促进生成响应的多样性，RuscaRL 在每个采样组（group）内**为不同的候选响应提供不同程度的 rubric 支架。**通过一个线性的组级比率向量 $\lambda_{\text{group}} = [\lambda_1, \lambda_2, \ldots, \lambda_G]$，其中 $\lambda_i = \frac{G-i}{G-1}$，确保部分样本获得更强的指导，而另一些则暴露于较弱的指导下，从而增强组内多样性。
+    *   **跨步支架衰减（Inter-Step Scaffolding Decay）**：受到教学心理学中支架理论的启发，RuscaRL 采用一个 sigmoid 函数 $\lambda_{\text{step}}(t) = \frac{1}{1+e^{\alpha(t-t_0)}}$ 随着训练进程 $t$（$t \in [0, 1]$）逐渐减少支架强度。其中，$t_0$ 是衰减中点，$\alpha$ 控制衰减的陡峭程度。这鼓励模型逐步内化潜在的推理模式，避免对外部指导的过度依赖。
+    *   **集成支架机制**：最终的支架比率 $\lambda_S$ 由组内差异化和跨步衰减共同决定，即 $\lambda_S = \lambda_{\text{step}}(t) \times \lambda_{\text{group}} = \left[\frac{1}{1+e^{\alpha(t-t_0)}} \times \frac{G-1}{G-1}, \ldots, \frac{1}{1+e^{\alpha(t-t_0)}} \times \frac{G-G}{G-1}\right]$。
+
+2.  **用于利用的可验证奖励（Verifiable Rewards for Exploitation）**
+    在模型训练阶段，RuscaRL 使用 rubrics 获取鲁棒的奖励信号。
+    *   **Rubric-Based Evaluation System**：一个 rubric $R = \{c_1, c_2, \ldots, c_N\}$ 定义为一组 $N$ 个可验证的标准，每个标准 $c_i$ 都有描述和相应的点数 $p_i$。对于给定的指令 $q$、响应 $o$ 和 rubric $R$，一个作为“评分员”（Grader）的 LLM 对每个标准 $c_i$ 进行二元评估 $b_i = G(q, o, c_i) \in \{0, 1\}$（满足或不满足）。
+    *   **加权聚合奖励**：所有标准的评估结果形成二元指示向量 $b = [b_1, b_2, \ldots, b_N]$。通过元素乘法 $s = b \odot p = [b_1p_1, b_2p_2, \ldots, b_Np_N]$ 获得精细的得分向量。最终的标量奖励 $r_i = S = \frac{\sum_{j=1}^N s_j}{S_{\text{total}}}$ 通过所有标准得分的总和除以所有正向标准可能获得的总分 $S_{\text{total}}$ 得到。
+
+RuscaRL 采用 Group Relative Policy Optimization (GRPO) 作为核心 RL 算法。GRPO 通过组内优势估计（group-based advantage estimation）替代了价值模型。组相对优势（group-relative advantage）计算为 $\hat{A}_i = \frac{r_i - \text{mean}\{r_j\}_{j=1}^G}{\text{std}\{r_j\}_{j=1}^G}$，其中 $r_i$ 是响应 $o_i$ 的奖励。在计算对数概率时，模型基于 $\pi_\theta(o_{i,t}|q, o_{i,<t})$ 而非 $\pi_\theta(o_{i,t}|q, R_S, o_{i,<t})$ 进行，以鼓励模型内化推理模式，减少对支架的显式依赖。
+
+**实验结果**
+广泛的实验表明，RuscaRL 在医疗、写作、指令遵循和 STEM 等多个基准测试中优于现有 SOTA 方法。
+*   在 HealthBench-500 上，RuscaRL 将 Qwen2.5-7B-Instruct 的性能从 23.6 提升至 50.3，超越了 GPT-4.1。
+*   使用 Qwen3-30B-A3B-Instruct 进行微调后，在 HealthBench-500 上达到了 61.1 分，超越了包括 OpenAI-o3 在内的领先 LLM。
+*   RuscaRL 显著提高了模型的采样效率（Best-of-N 曲线更陡峭）和推理边界，生成了初始模型几乎无法生成的高度新颖的响应。
+*   在训练动态分析中，RuscaRL 展现了良好的探索-利用平衡，策略熵先上升后下降，验证准确率在整个训练过程中保持最佳。
+*   消融实验验证了组内支架差异化和跨步支架衰减机制的有效性，其中线性差异化策略和 Sigmoid 衰减函数表现最佳。
+<img width="854" height="409" alt="image" src="https://github.com/user-attachments/assets/f099e78e-e280-49ba-a7c0-f7084bd53dba" />
+<img width="825" height="343" alt="image" src="https://github.com/user-attachments/assets/c86a749a-f144-44ba-9e6e-6f70c1071e2d" />
+<img width="825" height="343" alt="image" src="https://github.com/user-attachments/assets/d2b40331-896b-4043-9275-f52caf7c8243" />
+![Uploading image.png…]()
+
+
+**结论与展望**
+RuscaRL 成功地将教学支架理论应用于 LLM 的强化学习，通过提供逐步衰减的外部指导和鲁棒的奖励函数，打破了通用 LLM 推理的探索瓶颈。未来研究方向包括开发高质量 rubric 数据生成管道、探索基于 rubric 的自然语言反馈策略，以及将方法应用于多模态任务和 Agent 系统。
+
 ## FAPO: FLAWED-AWARE POLICY OPTIMIZATION FOR EFFICIENT AND RELIABLE REASONING
 
 https://arxiv.org/pdf/2510.22543 
