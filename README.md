@@ -1,6 +1,70 @@
 # AwesomePaper-for-AI
 Awesome system papers for AI
 
+## FAPO: FLAWED-AWARE POLICY OPTIMIZATION FOR EFFICIENT AND RELIABLE REASONING
+
+https://arxiv.org/pdf/2510.22543 
+https://fapo-rl.github.io 字节等 2025.10.26
+1. 💡 大型语言模型 (LLM) 在可验证奖励强化学习 (RLVR) 中，存在“**有缺陷的正面输出”（flawed-positive rollouts），即模型通过不可靠的推理路径达到正确答案**，这在**早期训练中能加速能力提升，但后期却阻碍了**可靠推理能力的建立。
+2. 🚀 为解决此问题，本文提出了**缺陷感知策略优化** (FAPO) 算法，通过**对有缺陷的正面输出施加无参数的惩罚**，使其在初期作为有用捷径，**后期则逐步引导模型进行可靠推理**，并引入生成式奖励模型 (GenRM) 以精确检测并定位推理错误。
+3. ✅ 实验结果表明，FAPO 在不增加token预算的情况下，显著提高了LLM的最终答案正确性、推理过程可靠性及训练稳定性。
+
+提出了一种名为 Flawed-Aware Policy Optimization (FAPO) 的算法，旨在提高大型语言模型 (LLM) 在可验证奖励强化学习 (RLVR) 中的**推理效率和可靠性。**
+
+**1. 背景与问题**
+在 RLVR 范式中，LLMs 通过探索推理轨迹并利用最终答案正确的 rollout 作为策略优化的积极信号。然而，这些被标记为“正确”的 rollout 可能包含缺陷模式，例如“**答案猜测** (answer-guessing)”或“**跳步推理** (jump-in-reasoning)”。这些被称为“缺陷正向 (flawed-positive)”的 rollout 获得了与完全正确 rollout 相同的奖励，导致策略模型内化这些不可靠的推理模式，最终**限制了模型的性能上限**。
+<img width="869" height="301" alt="image" src="https://github.com/user-attachments/assets/2127fed2-c08e-4405-99b9-700ec5cdbfbb" />
+
+**2. 缺陷正向的初步分析**
+论文首先对 RL 训练过程中缺陷正向 rollout 的分布和影响进行了系统研究。
+- **普遍性：** 在初始阶段，缺陷正向在各种 LLM 中**普遍存在，占正确 rollout 的 20%-40%。**
+- **学习阶段的作用：** 在模型学习的早期阶段，当模型尚不能生成完全正确的 rollout 时，缺陷正向充当达到正确答案的“捷径”，**加速了能力提升**。
+- **持续性和双重影响：** 缺陷正向在整个训练过程中持续存在。虽然它们在早期是“垫脚石”，但一旦模型能够生成完全正确的 rollout，这些缺陷正向可能会通过强化不可靠的推理模式来阻碍进一步的学习。对缺陷正向进行惩罚的初步实验显示出显著的性能提升，尤其是在后期训练中。
+
+**3. FAPO 核心方法**
+基于以上洞察，FAPO 旨在利用缺陷正向在热身阶段作为有用的捷径，同时在后期细化阶段逐步将优化重心转向可靠推理。FAPO 包含两个主要组成部分：缺陷正向检测和缺陷正向惩罚。
+
+**3.1. 缺陷正向检测**
+为了准确且全面地检测缺陷正向，论文引入了一个生成式奖励模型 (Generative Reward Model, GenRM)。
+- **现有模型不足：** 现有的 LLM 在检测缺陷正向方面存在问题，例如“过度批评 (over-critic)”现象（高召回但低精度）或推理效率低下。
+- **逐步 RL 优化：** 为了增强检测能力，FAPO 采用逐步 RL 奖励公式来训练 GenRM：
+    $R_{\text{FAPO-GenRM}} = R_{\text{Outcome}} + R_{\text{Process}}$
+    其中，$R_{\text{Outcome}} = \begin{cases} 1, & \text{If } \hat{y}_\theta = y^* \\ -1, & \text{Otherwise} \end{cases}$。
+    $R_{\text{Process}} = \begin{cases} - \frac{|\hat{t}_\theta - t^*|}{n}, & \text{If } \hat{y}_\theta = y^* = \text{FP} \\ 0, & \text{Otherwise} \end{cases}$
+    这里，$\hat{y}_\theta$ 是模型预测是否为缺陷正向，$y^*$ 是真实标签。$\hat{t}_\theta$ 和 $t^*$ 分别是预测和真实的错误步骤索引，$n$ 是总步骤数。$R_{\text{Process}}$ 在缺陷正向情况下提供距离敏感的惩罚，引导模型精确地定位错误，而非仅仅猜测。这种奖励设计自然地实现了早期强调预测正确性，后期转向过程优化的学习转移。
+- **训练数据：** 构建了一个名为 FAPO-Critic-85K 的缺陷正向数据集，通过多个模型生成响应，并使用强大的 LLM (Qwen3-32B) 识别步骤级错误位置。
+
+**3.2. 缺陷正向惩罚**
+检测到缺陷正向后，FAPO 通过对缺陷正向 rollout 施加无参数的奖励惩罚来调整其在最终 RL 优化中的作用。
+- **奖励函数：** FAPO 修改了标准 RLVR 奖励 $R_{\text{RLVR}}$，引入了一个惩罚项 $R_\Delta$：
+    $R_{\text{FAPO}}(o, a^*|\theta) = R_{\text{RLVR}}(o, a^*) + R_\Delta(o, a^*|\theta)$
+    其中，$R_\Delta(o, a^*|\theta) = \begin{cases} -\lambda, & \text{If } I(o, a^*) \text{ and } \hat{y}_\theta(o, a^*) = \text{FP} \\ 0, & \text{Otherwise} \end{cases}$
+    $I(o, a^*)$ 是指示函数，表示最终答案是否正确。$\lambda$ 控制惩罚强度。
+- **优势估计：** 采用 group-relative 优势估计：$\hat{A}_{i,t} = \left[ r_i - \text{mean}(\{R_i\}^G_{i=1}) \right] / \text{std}(\{R_i\}^G_{i=1})$。
+- **理论分析：** 论文提供了理论分析，解释了 FAPO 如何实现优化方向的自然转移和训练过程的稳定性。当当前 rollout 包含 $\alpha$ 比例的正样本和 $\beta$ 比例的负样本时，学习进程 $\rho = \alpha / \beta$ 达到 $2\lambda - 1$ 时，优化从热身阶段转向细化阶段。当 $\rho > 4\lambda - 1$ 时，正样本的优势估计会被下调，使优化更稳定。
+- **$\lambda$ 的确定：** 采用“多数指导策略 (majority-guided strategy)”，即优化方向由正样本或负样本的主导决定。这导致 $\rho_{\text{shift}} = 1$，从而确定 $\lambda = 1$ 作为默认设置。这使得在负样本占多数的早期阶段，缺陷正向仍能提供积极信号；当完全正确 rollout 成为多数时，优化自然转向强化可靠性。
+<img width="867" height="528" alt="image" src="https://github.com/user-attachments/assets/7fb19be8-b42c-44f5-8d07-a7c1f4e559af" />
+
+<img width="867" height="528" alt="image" src="https://github.com/user-attachments/assets/aa38483b-7e45-4346-8745-a329f5fc6769" />
+
+<img width="427" height="403" alt="image" src="https://github.com/user-attachments/assets/dd24e3e9-8ef5-4f94-8871-be6497ab6b4d" />
+
+**4. 实验结果**
+- **FAPO-GenRM 性能：** 训练的 FAPO-GenRM-4B 在 FlawedPositiveBench 和 ProcessBench 上取得了显著提升，甚至优于其教师模型 Qwen3-32B 和判别式 SOTA 模型 Qwen2.5-Math-PRM-72B。
+- **FAPO-Reasoning 性能：** Qwen2.57b/32b模型 500steps
+    - **结果正确性：** 在 AIME24、AIME25 和 GPQA-Diamond 等数学和通用领域任务上，FAPO 始终优于基线模型。
+    - **过程可靠性：** FAPO 生成的响应显著降低了缺陷正向比例，经过 LLM-as-a-judge 和人工验证均得到证实。
+    - **训练稳定性：** FAPO 缓解了缺陷正向的影响，使学习曲线更平滑，且在训练后期没有出现显著的性能下降。
+    - **Token 预算：** FAPO 的改进不依赖于增加响应长度，实现了更高效的推理。
+- **消融研究：** 验证了 FAPO-GenRM 方法的有效性，更强的检测能力能转化为最终 RL 性能的提升。还分析了自校正能力的影响，FAPO 在早期利用自校正，后期转向更短、更高效的完全正确 rollout。
+- **讨论：**
+    - **算法挑战 (奖励劫持)：** 细粒度奖励信号容易导致策略利用信号缺陷而非真正执行任务。FAPO 通过其可解释的框架和理论分析，在对抗奖励劫持方面表现出鲁棒性。
+    - **基础设施挑战 (长尾问题)：** GenRM 引入了额外的生成阶段。为解决效率问题，FAPO 采用异步设计，将 GenRM 从 rollout 推理和 Actor 训练中解耦，减少 GPU 空闲时间，使训练时间增加不到 20%。
+<img width="1013" height="474" alt="image" src="https://github.com/user-attachments/assets/810839ab-1b1c-47e8-af29-b02faf9af5f8" />
+
+**5. 结论**
+FAPO 算法通过揭示缺陷正向 rollout 的双重作用（早期加速能力提升，后期限制推理质量），并提出了一种参数无关的奖励调整机制来调和这一权衡。它利用 GenRM 准确检测和定位推理错误。实验和理论分析均证明了 FAPO 在提高 LLM RL 效率和可靠性方面的有效性。
+
 ## Scaling Up RL: Unlocking Diverse Reasoning in LLMs via Prolonged Training
 NVIDIA, 2025.7.16
 
