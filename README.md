@@ -5,6 +5,8 @@ Awesome system papers for AI
 gLLM: Global Balanced Pipeline Parallelism System for Distributed LLM Serving with Token Throttling
 
 https://arxiv.org/pdf/2504.14775 中山大学 卢宇彤团队，SC2025
+https://github.com/gty111/gLLM
+
 
 1.  ✨ 针对分布式LLM服务中管道并行（pipeline parallelism）因预填充（prefill）和解码（decode）阶段计算不平衡导致管道**气泡（pipeline bubbles）和GPU利用率低**的问题，现有方法未能有效解决。
 2.  💡 本文提出了gLLM系统，引入了Token Throttling机制，该机制基于**全局系统信息（如待处理token和KV缓存利用率）独立调控预填充和解码token的数量**，结合异步运行时架构，实现了批次间计算的全局平衡。
