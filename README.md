@@ -1,6 +1,54 @@
 # AwesomePaper-for-AI
 Awesome system papers for AI
 
+## MXBlas
+MXBLAS: Accelerating 8-bit Deep Learning with a Unified Micro-Scaled GEMM Library
+
+https://dl.acm.org/doi/pdf/10.1145/3712285.3759809 武汉大学 程大钊；NV等
+
+https://github.com/yatorho/MXBLAS 
+
+<img width="617" height="311" alt="image" src="https://github.com/user-attachments/assets/f5085d7a-a5ed-4675-995d-fb719ddacb68" />
+
+1. 🌐 现有的8位微缩放通用矩阵乘法（MX-GEMM）实现因其模型导向性，在处理多样的MX格式时面临紧耦合、推广操作效率低下和量化开销被忽视等局限。
+2. 🚀 MXBLAS提出了一个统一的MX-GEMM库，通过模板化设计支持不同推广模式、自适应运行时内核生成和计算-存储协同优化（将量化融合到内核尾声），以克服这些限制。
+3. ⚡ 实验证明，MXBLAS的性能比现有库平均提高33%，并且首次全面实现了8位广义计算在所有MX格式变体中的性能优势，展现了其卓越的效率、稳定性和通用性。
+
+MXBLAS是一项旨在加速8位深度学习的统一微尺度通用矩阵乘法（MX-GEMM）库。MX-GEMM利用8位微尺度格式（MX-format）输入，是深度学习工作负载加速的重要进展。MX-format空间多样，包含多种缩放模式和粒度。然而，当前的MX-GEMM实现通常采用面向模型的方法，即格式定制是针对单个模型量身定制的。这导致了三个关键限制：刚性的问题-内核耦合、低效的Promotion操作以及被忽视的量化开销。
+
+现有的MX-GEMM实现存在以下问题。首先是**问题-内核刚性**：内核通常针对特定MX-format进行专门化，降低了可扩展性；支持新的MX-format往往需要完全重新设计，导致高昂的内核开发成本。其次是**次优的Promotion操作**：这些实现通常考虑缩放模式但忽视缩放粒度的变化。这种不匹配可能导致GEMM内核的Tile大小与缩放因子（SFs）的步幅之间对齐不佳。为了弥补这一点，当前实践强制缩放因子符合内核结构，导致Promotion阶段（在缩放之后）效率低下。最后是**被忽视的量化开销**：量化通常被视为一个外部步骤，使MX-GEMM与下游操作（例如FlashAttention-3）隔离，后者直接消耗FP8输入。这种分离需要昂贵的类型转换并增加了不可忽略的量化开销。现有的MX-GEMM库（如DeepGEMM、COAT、FB_GEMM、SGLang、CUTLASS）对MX-format的支持是碎片化的，仅支持有限的缩放模式和粒度，且对Procedural Arguments $P_r$和Parametric Arguments $P_a$存在限制，无法实现MX-GEMM的全部潜力。
+
+<img width="521" height="412" alt="image" src="https://github.com/user-attachments/assets/33e6c75a-85f9-4a87-948b-ec88ac7e229a" />
+
+MXBLAS通过三项关键创新解决了上述限制。首先，它采用**模板化设计**，在统一框架下支持多样化的Promotion模式。MXBLAS将内核设计抽象为两个维度：“何时执行Promotion”和“如何执行Promotion”。
+1.  **何时执行Promotion？** 基于Promotion操作发生的阶段，将内核分为Main-loop M类型和Epilogue E类型，以适应沿$K$维度的缩放粒度$S_K$。M类型内核在主循环中执行Promotion，需要额外的寄存器文件进行累积，从而限制了Tile大小；而E类型内核仅在Epilogue中应用缩放，实现in-place操作并减少寄存器文件使用，允许更大的Tile。
+2.  **如何执行Promotion？** 基于累加器$M$或$N$维度是否共享单个A或B的SF，分为Full-broadcast F类型和Partial-broadcast P类型。F类型表示CTA内所有线程仅使用CTA级别信息即可确定SF地址；P类型则需要额外的线程ID和累加器布局信息。
+这两个语义维度是正交的，因此可以将所有MX-GEMM内核抽象为四种模板$T = \langle P, O \rangle$，其中$P \in \{M, E\}$，$O \in \{F, P\}$。这种解耦设计将原始$O(N^6)$的参数空间复杂度降低到$O(2^2 \cdot N^3)$。在此基础上，MXBLAS提出了两种与$P_a$无关的模板内核优化器：
+*   **K-loop splitting**：针对M类型内核，将K-loop拆分为$k_s$和$k$两层循环，将冗余的SF加载操作提升到$k_s$循环中，消除了对动态循环变量$k$依赖的SF地址计算，减少了冗余内存访问和CUDA Core同步开销。
+*   **SF block loading**：利用GPU共享内存的未利用空间，将多轮SF加载合并为一次更大的SF块加载，通过矢量化内存操作提高带宽效率，并考虑了阶段数$Q$和SF块大小$V$来扩展$P_r$的搜索空间。
+
+<img width="521" height="592" alt="image" src="https://github.com/user-attachments/assets/e697a70c-f45c-4034-9015-4e0624946fe3" />
+
+<img width="724" height="349" alt="image" src="https://github.com/user-attachments/assets/a599e49b-d2d2-4f70-8b67-680559e96d72" />
+
+<img width="555" height="334" alt="image" src="https://github.com/user-attachments/assets/f3163e50-0681-4d8a-b056-ade747b5c9cd" />
+
+
+其次，MXBLAS利用**自适应运行时内核生成**——结合模板匹配、引导式搜索空间剪枝和自动调优——动态选择最佳内核配置。
+1.  **多模板匹配机制**：与现有库直接在固定模板内调优$P_r$不同，MXBLAS首先将$P_a$与多个模板类型匹配。这扩大了内核类型和搜索空间的范围，从而发现更优的性能潜力。
+2.  **快速启发式Procedural Parameters自动调优**：MXBLAS采用全JIT编译框架，通过定制策略定义可调优的$P_r$搜索空间。为提高调优效率，MXBLAS引入了三条指导规则来构建搜索空间：优先与高性能指令对齐、最大化硬件资源利用、以及扩展搜索空间维度以释放潜在性能。它通过经验剪枝提前过滤次优$P_r$候选，并根据指导规则对候选进行评分，优先搜索高分内核，结合early-stop策略显著减少调优时间。
+
+最后，MXBLAS引入**计算-存储协同优化策略**，将量化融合到内核的Epilogue中，以减少开销并提高执行效率。
+1.  **Post-reduce scaling策略**：在Epilogue阶段，传统的Pre-reduce scaling策略需要$N$次浮点乘法和$N+1$次浮点除法操作。MXBLAS引入Post-reduce scaling，利用$\sum_i (ISF \times \text{Accum}_i) = ISF \times \sum_i \text{Accum}_i$的数学性质，将缩放操作推迟到amax-reduction之后，从而将浮点乘法次数从$N$减少到1次。此外，静态逆模块在编译时预计算$ISF$的倒数，用乘法替代昂贵的浮点除法，将量化成本从$C_{pre-reduce} = N \times C_{fmul} + (N+1) \times C_{fdiv}$优化为$C_{post-reduce} = (N+2) \times C_{fmul} + 1 \times C_{fdiv}$，显著减少Epilogue延迟。
+2.  **Thread-wise register rearrangement**：针对8位输出场景中共享内存bank冲突和带宽利用率低的问题，MXBLAS提出线程级寄存器重排策略。通过在相邻线程$T_{2i}$和$T_{2i+1}$之间交换寄存器，使每个线程能够聚合互补数据，一次操作写入整个bank，消除bank冲突。同时，偶数线程写入当前阶段的bank，奇数线程写入下一阶段的bank，并利用`__shfl_xor_sync`指令进行16位聚合操作，从而将共享内存效率提高一倍并减少所需指令。
+
+
+<img width="1080" height="474" alt="image" src="https://github.com/user-attachments/assets/61b6debb-edf3-4bc2-8eab-3e226a39c8a6" />
+
+<img width="1080" height="474" alt="image" src="https://github.com/user-attachments/assets/521bf82c-f49d-48d2-a3df-e9ac1af15ab3" />
+
+实验结果表明，MXBLAS在H100 PCIe GPU上平均性能超越现有MX-GEMM库33%，具体而言，比COAT快19%，比FB_GEMM快29%，比SGLang快35%，比DeepGEMM快26%，比CUTLASS快42%。MXBLAS是首个全面支持所有MX-format变体的库，能够充分发挥广义8位计算的性能优势。其在M类型内核（如$B \times B$和$G \times B$）上表现尤为突出，相较于CUTLASS、FB_GEMM、DeepGEMM和SGLang，吞吐量分别提升38.9%、37.3%、26.3%和49.6%。在E类型内核（如$C \times C$和$T \times T$）上，相较于FB_GEMM、SGLang、COAT和CUTLASS，性能分别提升21.2%、21.1%、19.3%和47.5%，并能与cuBLASLt持平。在量化性能方面，MXBLAS比COAT平均提升11.8%，且随着量化粒度$Q_N$的增加，性能提升更为显著。在LLaMA2-70B模型单层解码器上的评估显示，MXBLAS相较于FlashAttention、Transformer Engine和COAT，分别实现了40.3%、4.4%和12.3%的加速。
+
 ## KAMI
 KAMI: Communication-Avoiding General Matrix Multiplication within a Single GPU
 
