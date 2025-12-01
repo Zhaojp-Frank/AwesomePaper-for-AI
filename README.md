@@ -14,21 +14,27 @@ https://arxiv.org/pdf/2504.14775 中山大学 卢宇彤团队，SC2025
 
 **研究问题与现有方法不足：**
 现有方法，如Sarathi-Serve，试图通过混合调度分块（chunked）的预填充（prefill）和解码（decode）令牌，并使用固定的令牌预算来解决此问题。然而，此类方法可能因预填充令牌不足或解码令牌分布不均而导致显著波动，最终造成计算不平衡。此外，预填充与解码阶段的计算特性截然不同：预填充通常能充分利用GPU容量，而解码操作的GPU利用率显著较低。一些研究提出了预填充-解码分离架构来缓解干扰，但仍面临各阶段内部批次计算不平衡以及GPU资源分配动态调整的挑战。
+<img width="576" height="494" alt="image" src="https://github.com/user-attachments/assets/3b5bb8e1-ed13-4127-a4c2-540b2476c4d1" />
+<img width="576" height="364" alt="image" src="https://github.com/user-attachments/assets/97c10884-2e00-46f4-8cee-acbba744764e" />
+<img width="573" height="263" alt="image" src="https://github.com/user-attachments/assets/f2697bac-30e3-49cd-aed1-14372f595bf1" />
 
 **gLLM的核心贡献与方法：**
 为了克服这些低效率问题，gLLM提出了一种全局均衡的流水线并行系统，其核心是**Token Throttling**机制，以有效缓解流水线气泡。
 1.  **Token Throttling机制**：这是一种细粒度的调度策略，能够独立调节预填充和解码令牌的数量，从而通过利用推理系统的全局信息实现均衡计算。
-    *   **解码令牌调度**：gLLM在处理批次间保持近乎一致的解码令牌数量。具体计算方式为：
-        $$ \#D = \frac{\#RD}{\#PP_{depth}} $$
-        其中，$\#D$ 为当前批次调度的解码令牌数量，$\#RD$ 为所有正在解码中的令牌总数，$\#PP_{depth}$ 为流水线深度（即并发的micro-batch数量上限）。
-    *   **预填充令牌调度**：gLLM根据总待处理令牌数和键值缓存（KV cache）的内存利用率动态调整批次大小。综合考虑待预填充令牌数（WT）、KV缓存空闲率（UT）以及KV缓存空闲阈值（$KV_{thresh}$），预填充令牌数（$\#P$）的计算公式为：
-        $$ \#P = \max \left( \min \left( \frac{\#WP}{\#T}, \frac{\#MaxP \times KV_{free} - KV_{thresh}}{1 - KV_{thresh}} \right), \#MinP \right) $$
-        其中，$\#WP$ 是等待预填充的令牌总数，$\#T$ 是处理所有待预填充令牌所需的迭代次数，$\#MinP$ 和 $\#MaxP$ 分别是预填充批次的最小和最大令牌数，$KV_{free}$ 是KV缓存的空闲率。此机制确保在KV缓存接近满载时减少预填充速率，避免请求抢占；在待处理请求多或KV缓存充足时提高预填充速率，以最大化吞吐量。
+<img width="962" height="311" alt="image" src="https://github.com/user-attachments/assets/0ec8c32f-9379-467a-b830-1054f9d4c2eb" />
+
 2.  **异步执行和消息传递架构**：gLLM运行时采用针对流水线并行特性优化的异步执行和消息传递架构，以降低数据依赖性和CPU开销。
     *   系统采用多进程架构，每个流水线阶段分配一个专用工作进程，并有一个独立的后端（frontend）进程处理用户交互。工作进程分为驱动工作进程和普通工作进程。
     *   驱动工作进程负责接收请求、调度micro-batch、广播元数据以及将输出流式传输回前端。
     *   所有工作进程专注于模型执行，接收上一阶段的激活、执行前向计算并发送激活到下一阶段。
     *   异步特性通过三项设计原则实现：非阻塞的流水线操作、解耦的前后端处理、以及抢占式元数据调度（元数据和激活数据分离传输，实现数据准备与计算的重叠）。
+<img width="570" height="562" alt="image" src="https://github.com/user-attachments/assets/27728589-f21c-43a2-a73a-77aec06824a4" />
+
+<img width="1129" height="562" alt="image" src="https://github.com/user-attachments/assets/ba9601d6-0251-4da8-a7e7-dff978b6eba3" />
+
+<img width="571" height="519" alt="image" src="https://github.com/user-attachments/assets/6b18e638-eb2e-49c2-b595-aa4746daffd0" />
+<img width="1133" height="573" alt="image" src="https://github.com/user-attachments/assets/d2f2bbcc-1017-48ad-a4fe-0dcca2dd5d6b" />
+
 
 **实验评估：**
 gLLM在Qwen2.5系列（14B和32B）和Llama-3.1-100B等代表性LLM上进行了实验评估。实验结果表明，gLLM相比最先进的流水线或张量并行系统（如vLLM和SGLang）取得了显著的性能提升，最大吞吐量提高了11%至398%，同时保持了更低的延迟。gLLM在不同请求速率下通常比其他系统能支持2-6倍更高的请求速率转折点，并具有更低的端到端延迟（E2EL）增长斜率。在扩展性研究中，gLLM随着GPU数量增加表现出近乎线性的扩展效率，尤其在跨节点部署中，其性能优势更为显著。在服务水平目标（SLO）达成率方面，gLLM比vLLM高出64%，能在80%SLO达成率下支持79%更高的请求速率。消融研究（ablation study）证实了Token Throttling中各组件（WT和UT）以及gLLM运行时本身对性能提升的关键作用。系统代码已开源。
