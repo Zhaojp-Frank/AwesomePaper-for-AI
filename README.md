@@ -1,13 +1,60 @@
 # AwesomePaper-for-AI
 Awesome system papers for AI
 
+## HyTiS
+HyTiS: Hybrid Tile Scheduling for GPU GEMM with Enhanced Wave Utilization and Cache Locality
+
+https://dl.acm.org/doi/pdf/10.1145/3712285.3759771 武汉大学 程大钊；NV等，SC2025
+https://zenodo.org/records/16674739 开源
+
+1. 💥 针对GPU通用矩阵乘法（GEMM）中因波量化导致的硬件利用率低下和性能下降问题，本文提出了HyTiS混合瓦片调度框架。
+2. 🚀 HyTiS结合了两级瓦片调度（全波优化吞吐量，部分波降低延迟）和自适应瓦片布局选择（通过分析模型优化L2缓存），并利用离线性能画像生成高效的微核以减小运行时搜索空间。
+3. 📈 在NVIDIA H100和A100 GPU上的广泛评估表明，HyTiS相较于cuBLAS等基线实现了显著加速，最高可达**1.95倍和2.08倍**，并有效缓解了波量化问题并提升了L2缓存亲和性。
+m需要>=1000 ?
+
+<img width="981" height="720" alt="image" src="https://github.com/user-attachments/assets/83676a1b-401b-4b72-9487-f5143ec24f1d" />
+
+本文提出了HyTiS（Hybrid Tile Scheduling），一个针对GPU通用矩阵乘法（GEMM）的混合瓦片调度框架，旨在增强波（wave）利用率和缓存局部性。GEMM作为深度学习和科学计算中的基础操作，在GPU上进行加速已成为常态。然而，随着现代GPU核心数量的增加和更大瓦片尺寸的采用，由部分填充波引起的波量化（wave quantization）问题日益严重，导致硬件利用率降低和性能显著下降。现有解决方案往往执行效率低下或引入额外的同步开销。
+
+为解决这些挑战，HyTiS提出了一个结合了两级瓦片调度和自适应瓦片布局选择的框架。
+1.  **两级瓦片调度（Two-level Tile Scheduling）**：
+    *   **第一级调度**：旨在最大化满波（full waves）的吞吐量，通常采用较大的瓦片尺寸以提高计算效率，充分利用硬件资源。
+    *   **第二级调度**：针对部分波（partial waves），通过细粒度瓦片（fine-grained tiling）来最小化延迟，以提高硬件利用率。
+    *   **离线微核生成与搜索空间优化**：为避免在两个调度级别上进行详尽搜索（可能导致 $10^4$ 级别的巨大设计空间），HyTiS引入了离线分析阶段。在此阶段，系统会识别出代表性的吞吐量优化型（throughput-oriented）和延迟优化型（latency-oriented）微核（micro-kernels），从而构建一个显著缩小且更易处理的运行时搜索空间。
+        *   **吞吐量优化型微核（Throughput-Oriented Micro-Kernels, $S_{TO}$）**：通过经验吞吐量分析构建。候选微核需满足资源限制（如共享内存和寄存器不溢出）、指令集限制（如H100上$b_M$需是64的倍数），并采用“每个SM一个瓦片”的调度策略以最大化共享内存利用率。最终选出吞吐量最佳的微核$K_{TO}^{opt}$，并保留吞吐量下降在阈值$l_1$内的其他候选微核。
+            *   吞吐量定义：$T(K_i) = (M_i \times N_i) / (n_0 \times t(K_i))$
+            *   资源约束：$SMEM(K_{TO}) \le SMEM_0$, $REG_{spill}(K_{TO}) == 0$
+            *   利用率约束：$\forall K' | K'.x \ge K.x, x \in \{b_M, b_N, b_K\}, K' \ne K_{TO}, SMEM(K') \le SMEM_0$
+            *   最优选择：$K_{TO}^{opt} = \arg\max_{K_i}(T(K_i))$
+            *   候选集：$S_{TO} = \{K_{TO}^i | diff(T(K_{TO}^i), T(K_{TO}^{opt})) < l_1\}$
+        *   **延迟优化型微核（Latency-Oriented Micro-Kernels, $S_{LO}$）**：从$S_{TO}$中采样更小的瓦片配置来构建。选择每波延迟最低的微核$K_{LO}^{opt}$，并保留延迟偏差在阈值$l_2$内的其他候选微核。
+            *   最优选择：$K_{LO}^{opt} = \arg\min_{K_i}(t(K_i)/n_0)$
+            *   候选集：$S_{LO} = \{K_{LO}^i | diff(t(K_{LO}^i), t(K_{LO}^{opt})) < l_2\}$
+        *   **分层瓦片调度**：第一级调度使用$S_{TO}$中的微核处理满波，计算剩余负载。第二级调度使用$S_{LO}$中的微核处理剩余负载。如果第二级所需的瓦片数超过可用SM数，则该调度方案无效。这种分层方法避免了贪婪选择可能导致的次优解。
+        *   **自适应自动调优**：HyTiS的搜索空间是根据GPU架构和工作负载特性自适应确定的，而不是固定预定义的。超参数$l_1$和$l_2$允许根据问题规模动态调整搜索空间。
+
+2.  **自适应瓦片布局选择（Adaptive Tile Layout Selection）**：
+    *   **问题观察**：瓦片布局显著影响GEMM性能，不同布局会导致L2缓存数据局部性差异，进而影响从全局内存到L2缓存的数据传输量。
+    *   **分析模型**：HyTiS引入了一个分析模型，旨在最小化波粒度下从全局内存到L2缓存的数据传输量。模型考虑了单波内部和多波之间的数据重用。
+    *   **布局策略**：支持Group-M ($G_M$) 和Group-N ($G_N$) 两种瓦片布局模式，其行主序和列主序是特例。通过最小化第一波的数据传输量$V_1$来确定最优组大小$s_{opt}$，然后使用所有波的总数据传输量$V_{tol} = \sum_i V_i$作为度量标准，选择$G_M$和$G_N$中$V_{tol}$较小者作为最优瓦片布局$(tl_{opt}, s_{opt})$。该优化仅在第一级调度（多波）中应用，第二级调度（单波）采用固定的列主序。
+
+HyTiS基于Triton实现，利用Triton的编译框架进行瓦片内优化，HyTiS则专注于瓦片调度层面。内核设计上，实现了两级调度的GEMM内核，由$L_oad$、$C_ompute$、$S_tore$和地址偏移函数$offset\_fn$构成。在NVIDIA Hopper架构上，利用持久化内核（persistent kernel）和TMA指令；在Ampere架构上，采用传统数据并行启动策略。
+
+在NVIDIA H100和A100 GPU上的广泛评估表明，HyTiS实现了显著的加速：
+*   相较于cuBLAS，在H100上最高加速1.95倍，在A100上最高加速2.08倍。
+*   相较于Split-K、Stream-K和Inductor-Triton，也有显著性能提升。
+*   详细的系统级分析证实了HyTiS在缓解波量化问题、改善SM工作负载平衡和L2缓存亲和性方面的有效性。
+
+HyTiS的开销包括离线分析（设备和数据布局一次性成本，H100约19分钟，A100约36分钟）和自动调优（H100平均搜索空间14，最大66；A100平均16，最大77），这些开销在显著的性能提升面前被认为是可接受的。
+
 ## MXBlas
 MXBLAS: Accelerating 8-bit Deep Learning with a Unified Micro-Scaled GEMM Library
 
-https://dl.acm.org/doi/pdf/10.1145/3712285.3759809 武汉大学 程大钊；NV等
+https://dl.acm.org/doi/pdf/10.1145/3712285.3759809 武汉大学 程大钊；NV等，SC2025
+
 
 https://github.com/yatorho/MXBLAS 
-
+m需要 >= 128??
 <img width="617" height="311" alt="image" src="https://github.com/user-attachments/assets/f5085d7a-a5ed-4675-995d-fb719ddacb68" />
 
 1. 🌐 现有的8位微缩放通用矩阵乘法（MX-GEMM）实现因其模型导向性，在处理多样的MX格式时面临紧耦合、推广操作效率低下和量化开销被忽视等局限。
