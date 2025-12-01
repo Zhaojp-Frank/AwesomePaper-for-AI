@@ -1,6 +1,96 @@
 # AwesomePaper-for-AI
 Awesome system papers for AI
 
+## KAMI
+KAMI: Communication-Avoiding General Matrix Multiplication within a Single GPU
+
+https://www.ssslab.cn/assets/papers/2025-wang-KAMI.pdf 北邮 SC2025
+
+https://zenodo.org/records/16947669/files/KAMI.zip
+
+<img width="936" height="253" alt="image" src="https://github.com/user-attachments/assets/066bebe7-be7c-4ab0-b6a3-2acc35fc7294" />
+
+
+1. 🚀 KAMI 提出了一套新颖的 1D、2D 和 3D 通信规避（CA）GEMM 算法，旨在通过利用 GPU 内部的寄存器作为本地存储、共享内存作为通信介质以及张量核作为计算单元，来优化单个 GPU 上的小规模和批处理矩阵乘法。
+2. 💡 该研究首次将分布式 CA 理论应用于单个 GPU 内存层次结构，并引入了一种基于 GPU 时钟周期的理论分析模型，以更精确地评估算法的计算与通信开销。
+3. 📈 实验结果显示，KAMI 在 NVIDIA、AMD 和 Intel GPU 上对通用、低秩、批处理和稀疏矩阵乘法均实现了显著的性能提升，相较于现有库获得了最高达数百倍的加速。
+
+KAMI论文提出了一套名为KAMI的1D、2D和3D通用矩阵乘法（GEMM）算法，旨在将通信规避（communication-avoiding, CA）理论扩展到单个GPU内部，以解决小规模和批处理GEMM操作效率低下的问题。该研究指出，虽然大规模GEMM已接近GPU的浮点峰值性能，但小规模和批处理GEMM往往受限于内存访问，未能充分利用现代处理器的计算能力。
+
+**核心问题与动机**
+传统上，CA算法主要应用于分布式计算环境，旨在减少节点间的数据传输。本文作者观察到，GPU内部的内存层次结构（寄存器、共享内存、全局内存）与分布式系统的内存层次结构（本地DRAM、网络通信）在延迟和带宽差异上具有相似性。例如，NVIDIA Hopper GPU上寄存器的访问速度比片上共享内存快约20倍，带宽快4倍。这促使作者思考，是否可以将分布式CA算法的原理应用于单个GPU内部，通过优化GPU片上内存层次（尤其是寄存器和共享内存）的使用来加速小规模GEMM。
+
+**KAMI方法学**
+KAMI将GPU的片上组件重新组织为：
+*   **计算单元（Computational Units）**: Tensor Cores。
+*   **本地存储（Local Memory）**: 低延迟的线程寄存器，用于存储矩阵A、B和C的数据。
+*   **通信介质（Communication Medium）**: 高延迟的片上共享内存，用于计算单元（即warp之间）传递子矩阵。
+
+KAMI实现了三种通信规避算法：1D、2D和3D。这些算法在warp级别并行执行，每个warp负责处理矩阵的一部分。与传统方法不同，KAMI不使用执行时间，而是采用GPU时钟周期作为理论分析的单位，以更精细地评估计算和通信开销。
+
+1.  **数据布局（Data Layout）**:
+    *   **1D算法**: 矩阵A、B和C沿行方向划分为$p$个子矩阵，每个warp处理对应部分。矩阵B的子矩阵在warp之间通过共享内存进行通信。
+    *   **2D算法**: 矩阵A、B和C划分为$\sqrt{p} \times \sqrt{p}$的二维子矩阵网格。每个warp处理其对应的子矩阵。A的子矩阵在同一行warps之间通信，B的子矩阵在同一列warps之间通信。
+    *   **3D算法**: 矩阵A和B被进一步细分为$\sqrt[3]{p} \times \sqrt[3]{p} \times \sqrt[3]{p}$的三维子矩阵，C矩阵保持$\sqrt[3]{p} \times \sqrt[3]{p}$的二维划分。通信模式类似于2D算法，但发生在三维warp立方体中。
+
+2.  **算法流程与成本分析**: 每种算法都包含通信阶段和计算阶段，并在多个阶段迭代执行。
+
+    *   **1D算法**:
+        *   **通信（Communication）**: 每个阶段，一个warp将其持有的B子矩阵（BSend）写入共享内存（SmB），然后所有其他warp从共享内存读取（BRecv）。该warp也会将其BSend复制到自己的寄存器作为BRecv。
+        *   **通信量 $V_{cm}$**: $k n \times s_e$。
+        *   **通信成本 $T_{cm}$**: $L_{sm} + \frac{kn \times s_e}{\theta_w p B_{sm}} + \frac{(p-1)kn \times s_e}{\theta_r p B_{sm}}$。
+        *   **计算成本 $T_{cp}$**: $\frac{2 \times \frac{m}{p} \times \frac{k}{p} \times n}{O_{tc}} = \frac{2mnk}{p^2 O_{tc}}$。
+        *   **总成本 $T_{all}$**: $p \times (T_{cm} + \frac{p}{n_{tc}} T_{cp}) = L_{sm}p + \frac{kn \times s_e}{\theta_w B_{sm}} + \frac{(p-1)kn \times s_e}{\theta_r B_{sm}} + \frac{2mnk}{n_{tc}O_{tc}}$。
+
+    *   **2D算法**:
+        *   **通信**: 每个阶段，位于当前列的warp将A子矩阵（ASend）写入共享内存，位于当前行的warp将B子矩阵（BSend）写入共享内存。同行的其他warp读取ASend，同列的其他warp读取BSend。
+        *   **通信量 $V_{cm}$**: $(mk + kn) \times s_e$。
+        *   **通信成本 $T_{cm}$**: $L_{sm} + \frac{(mk+nk) \times s_e}{\theta_w \sqrt{p} B_{sm}} + \frac{(\sqrt{p}-1)(mk+nk) \times s_e}{\theta_r \sqrt{p} B_{sm}}$。
+        *   **计算成本 $T_{cp}$**: $\frac{2 \times \frac{m}{\sqrt{p}} \times \frac{k}{\sqrt{p}} \times \frac{n}{\sqrt{p}}}{O_{tc}} = \frac{2mnk}{p^{\frac{3}{2}} O_{tc}}$。
+        *   **总成本 $T_{all}$**: $\sqrt{p} \times (T_{cm} + \frac{p}{n_{tc}} T_{cp}) = L_{sm}\sqrt{p} + \frac{(mk+nk) \times s_e}{\theta_w B_{sm}} + \frac{(\sqrt{p}-1)(mk+nk) \times s_e}{\theta_r B_{sm}} + \frac{2mnk}{n_{tc}O_{tc}}$。
+
+    *   **3D算法**:
+        *   **通信**: 每个阶段，位于当前“层”的特定列和行的warp分别广播A和B子矩阵。
+        *   **通信量 $V_{cm}$**: $(mk + kn) \times s_e$。
+        *   **通信成本 $T_{cm}$**: $L_{sm} + \frac{(mk+nk) \times s_e}{\theta_w \sqrt[3]{p} B_{sm}} + \frac{(\sqrt[3]{p}-1)(mk+nk) \times s_e}{\theta_r \sqrt[3]{p} B_{sm}}$。
+        *   **计算成本 $T_{cp}$**: $\frac{2 \times \frac{m}{\sqrt[3]{p}} \times \frac{k}{\sqrt[3]{p^2}} \times \frac{n}{\sqrt[3]{p}}}{O_{tc}} = \frac{2mnk}{p^{\frac{4}{3}} O_{tc}}$。
+        *   **总成本 $T_{all}$**: $\sqrt[3]{p} \times (T_{cm} + \frac{p}{n_{tc}} T_{cp}) = L_{sm}\sqrt[3]{p} + \frac{(mk+nk) \times s_e}{\theta_w B_{sm}} + \frac{(\sqrt[3]{p}-1)(mk+nk) \times s_e}{\theta_r B_{sm}} + \frac{2mnk}{n_{tc}O_{tc}}$。
+
+    其中，$s_e$ 为单个矩阵元素的字节大小，$L_{sm}$ 为寄存器到共享内存的延迟，$B_{sm}$ 为共享内存带宽，$\theta_r, \theta_w$ 为读写银行冲突因子，$O_{tc}$ 为每个Tensor Core每周期算术操作数，$n_{tc}$ 为每个SM的Tensor Core数量，$p$ 为并行执行的warps数量。
+
+3.  **稀疏扩展（Sparse Extension）**: KAMI支持稀疏-稠密矩阵乘法（SpMM）和稀疏通用矩阵乘法（SpGEMM）。稀疏矩阵以用户可配置大小（默认16x16）的稠密块形式存储，并采用Z-Morton顺序进行多级索引。通信时，除了数值数组（Val），还需要传输索引数组（RowPtr和ColBlkIdx）。SpGEMM需要一个符号阶段来预计算非零块数量和分配内存。
+
+4.  **实现细节（Implementation Details）**: 针对寄存器和共享内存容量限制，KAMI采用沿$k$维度切片（slicing）的策略，将不活跃的子矩阵卸载到共享内存。切片比例是一个可调参数。作者指出，CUDA warp调度和底层GPU硬件可以有效地交错数据传输和计算，因此未强制执行显式的重叠策略。
+
+**实验评估**
+KAMI在NVIDIA GH200、RTX 5090、AMD 7900 XTX和Intel Max 1100四种GPU上进行了广泛评估，并与cuBLASDx、CUTLASS、cuBLAS、MAGMA和SYCL-Bench等现有库进行比较。
+
+*   **块级方阵GEMM**:
+    *   在NVIDIA GPU上，KAMI-1D/2D/3D相较于cuBLASDx和CUTLASS展现出显著加速，例如在GH200上FP64 GEMM平均加速比最高达4.02x（KAMI-1D）和3.65x（KAMI-1D）。在RTX 5090上FP16 GEMM，KAMI-1D相对于cuBLASDx和CUTLASS平均加速比最高达2.46x和19.98x，峰值可达3.38x和74.36x。
+    *   在AMD GPU上，KAMI在矩阵阶数超过48时性能下降。
+    *   在Intel GPU上，KAMI-1D/2D/3D相较于SYCL-Bench平均加速比最高达4.97x，峰值可达14.48x。
+    *   KAMI-1D通常优于KAMI-2D/3D，原因在于后两者控制流更复杂，增加了更多的nop指令。
+
+*   **块大小影响**: KAMI-1D在不同块大小下性能稳定，而KAMI-2D/3D在块大小较大时（如超过256）表现更佳，表明KAMI-1D更适合严格的块大小限制。
+
+*   **共享内存与寄存器协作**: 对于小矩阵（32-64），仅使用寄存器即可；对于中等大小矩阵，适度使用共享内存（例如50%的数据临时存储在共享内存中）可将性能提高1.34倍；过度使用共享内存会导致性能下降。
+
+*   **低秩GEMM**: KAMI在低秩GEMM中表现出更显著的优势，相较于cuBLASDx和CUTLASS，平均加速比最高达3.66x和4.89x，峰值可达6.11x和11.61x。这归因于KAMI直接将数据加载到寄存器，并使用共享内存进行通信，更符合低秩GEMM的模式。
+
+*   **批处理GEMM**: KAMI在批处理GEMM中实现了极高的加速比，相对于MAGMA和cuBLAS，批处理大小为1000时平均加速31.60x和340.37x，批处理大小为10000时平均加速10.23x和96.17x。
+
+*   **SpMM和SpGEMM**: SpMM的性能趋势与稠密GEMM相似，因为B和C是稠密矩阵。而SpGEMM由于两输入矩阵的稀疏结构不同，导致索引复杂性增加和内存访问模式不可预测，吞吐量较低。
+
+*   **理论分析**:
+    *   **寄存器分配**: 实际寄存器使用量低于理论预测（KAMI-1D为76.86%，KAMI-2D为73.14%，KAMI-3D为65.67%），这归因于编译器优化。KAMI的片上内存使用（2-8 KB共享内存）远低于cuBLASDx和CUTLASS。
+    *   **周期分解**: 实验测量的通信和计算周期与理论模型基本一致，计算周期上的差异可能源于Hopper架构上MMA指令执行效率的限制（约62%）。
+
+**贡献总结**
+1.  提出了KAMI，将CA算法扩展到单个GPU内部以加速小规模矩阵乘法。
+2.  提出了一种新的基于GPU时钟周期的通信和计算理论分析方案。
+3.  利用块状Z-Morton存储格式，在CA方法中支持SpMM和SpGEMM。
+4.  在NVIDIA、AMD和Intel GPU上实现了KAMI，并展示了优于现有SOTA工作的性能。
+
 ## AdvancedIF
 AdvancedIF: Rubric-Based Benchmarking and Reinforcement Learning for Advancing LLM Instruction Following 
 
