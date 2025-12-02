@@ -1,6 +1,18 @@
 # AwesomePaper-for-AI
 Awesome system papers for AI
 
+
+## Stabilizing Reinforcement Learning with LLMs:Formulation and Practices
+
+https://arxiv.org/pdf/2512.01374 Qwen团队 2025.12.1
+
+基于Qwen3-30b-a3b 数学类，FP8推理 BF16训练。数十万卡时
+结论：
+on policy 1200step：TIS类的比较重要，route replay能稳定 但模型上限不高；
+off olicy时（>=2400 step），TIS + 必须route replay
+
+解读：https://mp.weixin.qq.com/s/rUIN-oaBdX91BnqwKSFANg 
+
 ## gLLM
 gLLM: Global Balanced Pipeline Parallelism System for Distributed LLM Serving with Token Throttling
 
