@@ -1,6 +1,29 @@
 # AwesomePaper-for-AI
 Awesome system papers for AI
 
+## Countdown分析RL能力
+How Does RL Post-training Induce Skill Composition? A Case Study on Countdown
+
+https://arxiv.org/abs/2512.01775 普林斯顿等 2025.12.1
+中文解读：https://mp.weixin.qq.com/s/YVnHN9o7LZnLPBNwEPIWwQ
+
+任务很简单：给定个数字和一个目标值，你需要用这些数字和四则运算（）构造一个表达式，使其结果等于目标值。
+
+这个任务的巧妙之处在于，任何一个解（比如 ）都可以被唯一地解析成一棵“表达式树”。通过规范化处理，这棵树可以对应到一个唯一的、抽象的计算模式（Canonical Pattern），如下图所示。
+
+<img width="847" height="188" alt="image" src="https://github.com/user-attachments/assets/ab07b3bb-20a1-44a4-bf3f-c60f518d5a31" />
+
+图1：从模型生成的表达式到唯一的“计算模式”。这使得研究者可以精确分析模型采用的推理结构。
+
+有了这个框架，我们就能清晰地区分两种泛化能力：
+
+• 长度泛化（Length Generalization）：模型能解决比训练数据更长的问题（例如，用更多的数字）。
+• 组合泛化（Compositional Generalization）：模型能用已知技能，组合出训练中从未见过的全新“模式树”。
+
+1. 结构为王：决定推理难度的不是问题长度，而是其内在的“计算模式”结构。
+2. 前瞻瓶颈：“先易后难”的右重结构是自回归模型的一个根本性弱点，限制了其组合能力。
+3. RL激发创造：RL能够引导模型超越模仿，学会“无中生有”地组合技能，实现真正的组合泛化。
+   
 ## SparseSpec
 Accelerating Large-Scale Reasoning Model Inference with Sparse Self-Speculative Decoding
 
