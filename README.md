@@ -13,18 +13,16 @@ https://github.com/lmsdss/LayerNorm-Scaling
 3. 🏆 实验证明，LNS在多种LLM模型尺寸上显著提升**了预训练性能并改善了下游任务的微调效果**，同时在Vision Transformer中也展现出稳定方差和提升性能的潜力，验证了其普适性和有效性。
 
 该论文引入了“深度诅咒”（Curse of Depth, **CoD**）这一概念，旨在揭示、解释并解决现代大型语言模型（LLMs）中**近半数深层**（Transformer blocks）不如预期有效的问题。作者首先在Llama、Mistral、**DeepSeek和Qwen等主流LLM家族中**广泛证实了CoD现象的存在，通过层剪枝实验（layer pruning experiments）和角度距离（angular distance）分析发现，深层模块对模型性能贡献甚微，且其表征（representations）高度相似，这表明它们未能执行有意义的转换。
+<img width="832" height="382" alt="image" src="https://github.com/user-attachments/assets/f312881c-739e-41d6-9a61-996caea408a7" />
 
 论文从理论和实证两方面指出，CoD的根本原因在于广泛使用的预层归一化（Pre-Layer Normalization, Pre-LN）。Pre-LN虽然稳定了Transformer LLMs的训练，但其输出方差（output variance）会随模型深度呈指数级增长。具体而言，对于第\(\ell\)层的输入\(x_\ell\)和中间输出\(x'_\ell\)，其方差增长趋势可表示为：
-\[
-\sigma^2_{x_\ell} = \sigma^2_{x_1} \Theta\left(\prod_{k=1}^{\ell-1} \left(1 + \frac{1}{\sigma_{x_k}}\right)\right)
-\]
-其中\(\sigma^2_{x_k}\)表示第\(k\)层的方差。当\(\sigma^2_{x_\ell}\)呈指数增长（即其上界为\(\Theta(\exp(\ell))\)）时，模型的梯度范数\(\left\|\frac{\partial y_L}{\partial x_1}\right\|^2\)会收敛到一个常数\(M\)，这意味着深层模块的导数趋近于一个单位矩阵（identity matrix），从而几乎不参与训练。这种行为限制了模型的表达能力，阻碍了其学习有意义的转换。
+<img width="1354" height="382" alt="image" src="https://github.com/user-attachments/assets/ab981c35-77b3-4b01-94e5-d7d80440ff21" />
+<img width="967" height="271" alt="image" src="https://github.com/user-attachments/assets/f082d129-af34-4abc-8b87-3fd85e833fb8" />
 
-为解决这一训练缺陷，论文提出了层归一化缩放（LayerNorm Scaling, LNS）方法。LNS通过将LayerNorm的输出与其层索引\(\ell\)的平方根成反比进行缩放，即：
-\[
-h^{(\ell)} = \text{LayerNorm}(h^{(\ell)}) \times \frac{1}{\sqrt{\ell}}
-\]
-这一简单修改有效抑制了深层Transformer模块的输出方差爆炸。经过LNS处理后，方差的增长速率显著减缓，其上界从指数增长变为多项式增长，具体为\(\Theta(\ell^{(2-\epsilon)})\)，其中\(\epsilon\)是一个小的正数。相应的，梯度范数\(\left\|\frac{\partial y_L}{\partial x_1}\right\|^2\)不再收敛到常数，而是缓慢增长（\(\omega(1)\)），表明更深的层也能有效发挥作用。
+<img width="1019" height="375" alt="image" src="https://github.com/user-attachments/assets/28b6d3e1-1ba0-4bbc-9a5f-96b6cbf76856" />
+
+<img width="615" height="375" alt="image" src="https://github.com/user-attachments/assets/a0c3dcfc-eea5-49f4-b671-fa1ee0439b2d" />
+
 
 实验结果表明，LNS在130M到**7B等多种模型规模上**，始终**优于以往的归一化和缩放技术**，显著提升了LLM的预训练性能（降低了困惑度Perplexity），并将这种改进无缝地传递到监督微调（Supervised Fine-tuning,** SFT）阶段**。具体表现为：
 1.  在不同LLaMA模型尺寸上，LNS均取得了最低的困惑度，且训练过程稳定，而DeepNorm和Mix-LN等方法在较大模型上表现出不稳定性。
