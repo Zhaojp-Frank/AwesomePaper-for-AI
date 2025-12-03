@@ -1,6 +1,53 @@
 # AwesomePaper-for-AI
 Awesome system papers for AI
 
+## ZIP-RC
+ZIP-RC: Zero-overhead Inference-time Prediction of Reward and Cost for Adaptive and Interpretable Generation
+
+https://arxiv.org/abs/2512.01457 伯克利 MIT LiquidAI等 2025.12.1
+
+1. 💡 本文提出了ZIP-RC，一个零开销（zero-overhead）的自省推理框架，它通过重用大型语言模型（LLM）的**输出logits来实时预测最终奖励和剩余生成长度的联合分布**，解决了LL**M缺乏内省能力导致的推理效率**低下问题。
+2. ⚙️ ZIP-RC利用预测的联合分布计算采样效用，并通过优化元动作（meta-actions）来最大化预期最大奖励、总计算量和延迟的线性组合，从而在**推理过程中自适应地分配计算资源**。
+3. 📈 在**混合难度的数学基准测试中，ZIP-RC在相同或更低的平均成本下将准确率提高了多达12%**，并展示了在质量、计算和延迟之间平滑的Pareto frontiers，**显著优于Best-of-N**等现有基线方法。
+
+<img width="736" height="642" alt="image" src="https://github.com/user-attachments/assets/53ec7f43-1670-4b0b-9198-a4a21129cba6" />
+
+本文提出了一种名为 ZIP-RC（Zero-overhead Inference-time Prediction of Reward and Cost）的自适应推理方法，旨在赋予大型语言模型（LLMs）在推理时预测自身成功（奖励）和所需计算（成本）的能力，且不引入额外的推理开销。传统方法如 Best-of-N (BoN) 采样虽然能提升性能，**但其固定采样预算导致计算效率低下，尤其是在处理难度不一的任务时**；而现有的一些早期停止或剪枝方法通常**依赖于简单的标量信号或启发式规则，无法充分捕捉**奖励-成本之间的权衡，也无法量化增加样本的边际效益。ZIP-RC 通过在每次生成过程中预测一个完整的奖励和剩余长度联合分布，有效解决了这些局限性。
+
+### 核心方法论：ZIP-RC
+
+#### 1. Zero-overhead Inference-time Prediction (ZIP)
+ZIP 是 ZIP-RC 的基础机制，其核心思想是**重用**语言模型输出头中**保留或未使用的 logits**，以在与下一个 token 预测相同的正向传播中实现辅助预测，而无需引入额外的模型、修改模型架构或增加推理开销。
+<img width="1020" height="264" alt="image" src="https://github.com/user-attachments/assets/b4b9f817-ba6c-436e-afbc-4f8a71a9d74a" />
+
+
+**为何预测联合分布而非标量**：标量值难以捕捉奖励-成本之间的权衡。例如，低置信度的轨迹可能因为接近完成而有价值，而高置信度的轨迹可能因预示着高昂且漫长的继续生成而变得不切实际。联合分布可以提供更丰富的信息，例如允许进行序统计计算 (order-statistic calculations) 来量化继续部分样本或生成额外样本的边际效益。
+
+**为何预测期望奖励而非实际奖励**：预测期望值 $\hat{V}(s_T)$（通常由评估器给出）而非实际奖励 $R(s_T)$，能够更好地与 BoN 采样中的实际选择目标对齐，并允许在计算序统计期望时进行闭式（closed-form）推导，因为期望值 $V(s_T)$ 可以假定是独立的。
+
+#### 3. ZIP-RC 采样（Test-time Compute）
+ZIP-RC 采样将测试时间搜索建模为一个**元 MDP**（Meta-MDP）上的决策问题。
+*   **元状态 (Meta-states)**：时间步 $t$ 的元状态是一个以提示 $x$ 为根的**前缀树（trie）** $S_t$，它编码了所有已处理或生成的token前缀。
+*   **元动作 (Meta-actions)**：时间步 $t$ 的元动作是选择一个有限的多重集的前缀（节点） $A_t \subseteq \mathcal{M}(N_t)$ 来继续采样。多重性表示分支，例如，如果前缀 $s$ 在 $A_t$ 中出现 $r$ 次，则 $s$ 会独立地采样 $r$ 次。
+*   **元奖励 (Meta-reward)**：在每个步骤中，会产生一个成本 $C(S_t, A_t) = \beta \alpha |\text{supp}(A_t)| + (1-\alpha) \max_{s \in A_t} L^\pi(s)$，其中 $|\text{supp}(A_t)|$ 是 $A_t$ 中不同前缀的数量（每次独立前向传播的成本），第二项是最大延迟成本（最长轨迹的步数）。$ \alpha \in [0, 1]$ 平衡计算和延迟，$\beta > 0$ 平衡奖励和成本。在最终时间步 $T$ 选定一个完成的生成 $s^*_T$，奖励为基础 MDP 奖励 $R(s^*_T)$。
+
+ZIP-RC 采样的目标是选择能最大化采样效用（sampling utility）的元动作 $A_t$。采样效用 $U(S_t, A_t)$ 被定义为在预定义策略类别 $M_t$ 中，某个策略的元 Q 函数的最大值，这个 Q 函数近似了一个“带剪枝的 rollouts”策略的价值。这个 Q 函数的计算利用了 ZIP-RC 预测的联合分布：
+$$ Q_{Rollouts}(S_t, A_t) = E[\max_{s \in A_t} Z^\pi(s)] - \beta \left( \alpha \sum_{s \in A_t} E[L^\pi(s)] + (1-\alpha) E[\max_{s \in A_t} L^\pi(s)] \right) $$
+关键在于，为了实现基于剪枝的自适应，ZIP-RC 定义了一个**截断联合分布** $p_\theta(b, \ell | s; h_s)$。它将超过给定 horizon $h_s$ 的所有概率质量折叠到一个指定的“截断”状态中，同时将奖励成分折叠到一个指定的基础 bin $b_0$ 中，以反映因剪枝而放弃的奖励。这使得能够在形式上计算出在不同剪枝策略下，价值和剩余长度的期望值。
+最终，ZIP-RC 采样定义为在每个元状态 $S_t$ 下，选择最大化采样效用 $U(S_t, A_t)$ 的元动作 $A_t$ 的策略。由于 ZIP-RC 采样在每个时间步重新优化 $A_t$，它能根据前缀树的随机演化进行在线自适应：如果当前轨迹预计成本高昂或价值低下，它可以立即将计算重定向到其他地方。
+
+### 实验与结果
+作者在混合难度的数学基准测试（AIME 2024, AMC 2023, MATH-500, GSM8K）上对 ZIP-RC 进行了评估，使用了 Qwen3-1.7B、LFM2-1.2B Math 和 LFM2-350M Math 三个不同规模的模型。
+<img width="820" height="269" alt="image" src="https://github.com/user-attachments/assets/47e07e9d-0b23-41ad-9949-99a51c52fce2" />
+
+主要发现包括：
+1.  **ZIP-RC 预测准确性高**：ZIP-RC 预测的奖励-成本联合分布能够很好地校准并准确预测其自身 rollouts 的结果（表1，图2）。
+2.  **平滑的质量-计算-延迟 Pareto 前沿**：通过调整效用函数中的参数 $\alpha$（平衡计算与延迟）和 $\beta$（平衡奖励与成本），ZIP-RC 采样能够描绘出平滑的 Pareto 前沿，在质量、计算和延迟之间实现可控的权衡。在计算限制（$\alpha=1.0$）和延迟限制（$\alpha=0.0$）两种设置下，ZIP-RC 均显著优于多数投票（Majority Voting, MV）等基线方法（图3）。
+3.  **自适应推理能力**：在匹配生成成本的配置下，ZIP-RC 采样在所有模型和基准测试上均提升了准确性。在 AIME 2024 等更难的数据集上，准确率提升高达 12%（表2）。ZIP-RC 能够根据难度自适应地分配计算资源，对更困难的实例或能力较弱的模型分配更多样本，而在容易的问题上则积极剪枝。
+
+### 结论
+ZIP-RC 提供了一种零开销的内省推理框架，通过重用现有 logits 来预测未来的奖励和成本，从而实现了原则性的实时解码搜索。它能够在更低的平均成本下，比强大的 Best-of-N 基线模型提升高达 12% 的绝对准确率，并在质量、计算和延迟之间描绘出平滑的 Pareto 前沿。ZIP-RC 标志着从僵化、基于启发式的扩展到基于效用的自适应推理的转变，使得模型能够预测自身的成功和计算成本，是构建更自主、可靠和高效 LLM 的关键一步。
+   
 ## Countdown分析RL能力
 How Does RL Post-training Induce Skill Composition? A Case Study on Countdown
 
