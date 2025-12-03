@@ -1,6 +1,64 @@
 # AwesomePaper-for-AI
 Awesome system papers for AI
 
+## CAT:稀疏压缩token
+Attention and Compression is all you need for Controllably Efficient Language Models
+
+https://arxiv.org/abs/2511.05313 纽约大学 2025.12.1
+
+https://github.com/rajesh-lab/cat-transformer
+
+1. 🎯 针对现有高效Transformer模型在提高效率时常牺牲上下文召回性能、且缺乏灵活性的问题，本文提出了一种名为Compress & Attend Transformer (CAT) 的新架构，它**结合了密集注意力机制和序列压缩技术**。
+2. 💡 CAT通过**并行压缩历史令牌块**并让解码器关注这些压缩表示来生成当前令牌块，其独特之处在于**可在训练时支持多种块大小，从而实现测试阶段在不重新训练的情况下动态调整质量与计算效率的权衡**。
+3. 🚀 最大1B模型，单个自适应CAT模型在语言建模、常识推理和长上下文理解等任务上全面超越了许多现有高效基线，并能以1.4-3倍的速度和2-9倍的内存效率，达到与密集Transformer相当甚至更优的性能。
+
+这篇论文提出了一种名为 Compress & Attend Transformer (CAT) 的语言模型架构，旨在解决现有Transformer模型中注意力机制的二次计算成本和线性内存成本问题，同时避免现有高效方法在质量、计算-内存权衡灵活性和架构设计复杂性方面的缺陷。
+<img width="659" height="269" alt="image" src="https://github.com/user-attachments/assets/1dc54b5b-a4cf-44d5-9d19-f9c9794d5ada" />
+
+<img width="611" height="587" alt="image" src="https://github.com/user-attachments/assets/9c29df7b-0f4d-446e-9abd-764e63e34009" />
+<img width="997" height="551" alt="image" src="https://github.com/user-attachments/assets/e12a1dd9-49db-422f-990b-7ff424099622" />
+
+**核心问题与现有方法的局限性：**
+标准Transformer模型中的自注意力机制导致其计算成本与序列长度呈二次关系，内存成本呈线性关系，这使得大型语言模型（LLMs）的部署变得昂贵。为了提高效率，出现了多种方法：
+1.  **稀疏注意力与滑动窗口注意力（Sparse and Sliding Window Attention）**：通过启发式地限制注意力范围来减少计算量，但通常会牺牲模型质量，尤其是在上下文召回（in-context recall）性能上。
+2.  **线性注意力（Linear Attention）**：依赖固定大小的循环状态，实现了恒定的计算和内存成本，但在管理长序列信息时表现不佳，同样损害上下文召回性能。
+3.  **递归压缩（Recursive Compression）**：虽然可以避免固定内存瓶颈和启发式限制，但其序列计算特性导致训练缓慢且优化困难。
+4.  **混合架构（Hybrid Architectures）**：为了提升性能，上述方法常需要与密集注意力层精心组合，这使得架构设计过程复杂，难以规模化。
+此外，现有方法在训练前就固定了计算-内存预算，无法在测试时根据不同任务需求灵活调整，导致次优性能或需要训练多个模型，成本高昂。
+
+**CAT 架构的核心思想与方法：**
+CAT 架构概念简单，仅包含两个基本组成部分：密集注意力和压缩。其核心思想是通过对序列的过去部分进行压缩表示，然后解码当前token块。
+
+**1. 压缩与解码（Compression and Decoding）：**
+*   **分块（Chunking）**：给定一个包含 $N$ 个token的序列 $x = (x_1, x_2, \dots, x_N)$，CAT 首先将其分割成 $N/C$ 个块，每个块 $c_i = (x_{C \cdot i+1}, \dots, x_{C \cdot i+C})$ 包含 $C$ 个token。
+*   **压缩（Compression）**：CAT 使用一个“压缩器”（compressor）$f_\theta$ 对每个token块 $c_i$ 进行并行压缩，生成一个固定维度的块表示 $f_\theta(c_i) \in \mathbb{R}^{D_g}$。压缩器 $f_\theta$ 本身是一个密集双向Transformer，具有隐藏层大小 $D_f$，并通过线性投影输出 $D_g$ 维度的表示。
+*   **解码（Decoding）**：压缩后，CAT 使用一个“解码器”（decoder）$g_\theta$ 从这些压缩的块表示 $\{f_\theta(c_1), \dots, f_\theta(c_{N/C})\}$ 中解码原始序列 $x$。解码器 $g_\theta$ 是一个因果密集Transformer，其隐藏层大小为 $D_g$。解码器以自回归方式解码每个块，即解码块 $c_i$ 中的每个token $x_{i,j}$ 时，它会将当前块中已解码的token $\{x_{i,j-1}, \dots, x_{i,1}\}$ 以及所有过去的压缩块表示 $\{f_\theta(c_1), \dots, f_\theta(c_{i-1})\}$ 作为输入。形式上，token $x_{i,j}$ 的预测分布定义为：
+    $p_\theta (c_i | c_{i-1} \dots c_1) = \prod_{j=1}^{C} g_\theta (x_{i,j} | x_{i,j-1}, \dots, x_{i,1}, f_\theta(c_{i-1}), \dots, f_\theta(c_1))$
+    这种通过压缩块表示进行解码的方式，有效减少了所需的计算和内存。块大小 $C$ 越大，效率提升越显著。
+
+**2. 训练与测试时控制（Training for Test-Time Control）：**
+*   **块大小作为控制旋钮**：CAT 中的块大小 $C$ 是一个关键参数，它直接权衡了模型质量与计算效率。
+*   **自适应训练**：为了实现测试时的灵活控制，CAT 可以同时使用多个块大小进行训练。在每个训练迭代中，模型会均匀采样一个块大小 $C$，并通过一个可学习的指示token告知CAT当前操作的块大小。训练完成后，同一个CAT模型无需再训练，只需改变指示token，即可在测试时以不同的计算/内存预算运行，从而实现质量-效率的自适应调整。
+
+**3. 高效与可扩展的实现（Fast and Scalable Implementation）：**
+*   **并行压缩**：块的压缩是高效且并行的，例如可以使用 `torch.vmap` 对所有块进行操作，其自注意力计算成本为 $O(\frac{N}{C} \cdot C^2) = O(NC)$，远低于 $O(N^2)$。
+*   **可扩展训练**：为了解决解码器训练中的并行化难题（每个块需要关注的过去压缩块数量不同导致形状可变），CAT 提出了一种巧妙的解决方案：在原始序列中，每个块 $c_i$ 之后插入其压缩表示 $f_\theta(c_i)$，形成序列 $\{c_1, f_\theta(c_1), c_2, f_\theta(c_2), \dots\}$。然后将此序列输入解码器，并使用一个自定义注意力掩码（custom attention mask）。这个掩码允许块 $c_i$ 中的token只关注当前块内的先前token以及所有过去的压缩块表示 $\{f_\theta(c_1), \dots, f_\theta(c_{i-1})\}$，但不关注当前块之外的原始token。这种设计使得解码器能够并行计算所有块的 logits，并复用已计算的压缩块表示的 Key-Value 向量，从而将训练时的自注意力操作成本降低到 $O(\frac{N^2}{C})$，比标准Transformer的 $O(N^2)$ 提高了 $C$ 倍。
+*   **高效推理（Generation）**：推理时，CAT 只保留过去压缩块的表示在 KV 缓存中，而丢弃原始token块。这使得 KV 缓存大小减少了 $C$ 倍，显著降低了内存占用和内存访问成本。解码器在生成时最多关注 $\frac{N}{C} + C$ 个token，大大减少了自注意力所需的计算量。CAT 的纯 PyTorch 实现就能与使用自定义 CUDA/Triton 核的高效架构媲美。生成过程是：并行计算所有 $f_\theta(c_i)$ 并预填充 KV 缓存，然后逐块自回归生成，每生成完一个块就将其压缩表示加入 KV 缓存。
+<img width="905" height="633" alt="image" src="https://github.com/user-attachments/assets/71ae95f5-762a-42bf-a820-0ab5c4805758" />
+
+**关键优势：**
+*   **无需启发式选择或复杂规则**：CAT 直接基于密集Transformer抽象构建，不依赖于启发式注意力掩码、复杂的循环状态更新规则或层间混合。
+*   **灵活且高效的内存使用**：通过压缩，CAT 的内存使用随序列长度线性增长，但增长速度显著放缓，解决了固定内存瓶颈，实现了优越的上下文召回性能。
+*   **可扩展训练**：压缩和解码可以在训练过程中并行进行。
+*   **测试时自适应**：训练单个模型即可在测试时根据需求调整质量-效率权衡，无需重新训练，降低了部署成本和复杂性。
+*   **性能优越**：在语言建模、常识推理、上下文召回和长文本理解等任务上，单个自适应CAT模型在不同计算-内存预算下均优于多种现有高效基线（包括混合架构），在某些设置下甚至超越了密集Transformer，同时显著更快且内存效率更高。例如，CAT在语言建模方面与密集Transformer性能匹配，但速度快 1.4-3 倍，总内存使用量低 2-9 倍。
+
+**模型实例化细节：**
+为了与深度为 $L$、隐藏层大小为 $D$ 的密集Transformer竞争，CAT 采用了一个深度为 $L$、隐藏层大小为 $2D$ 的解码器，以及一个深度为 $L/4$、隐藏层大小为 $D$ 的压缩器。尽管这增加了参数数量（CAT模型参数量接近 1B，而基线约 300M），但由于压缩机制，CAT 在推理时依然能实现显著的速度和内存效率提升。论文训练的CAT模型同时支持 $C = \{4, 8, 16, 32\}$ 四种块大小。
+
+**未来工作展望：**
+CAT架构具有通用性，可以整合其他序列混合器（如线性注意力作为压缩器）。未来可以探索数据依赖的自适应性，例如通过强化学习让CAT模型根据上下文和任务自动分配计算预算。此外，CAT也可以被实例化为层级组件，与其他注意力层混合构成新的混合架构。
+
 ## ZIP-RC
 ZIP-RC: Zero-overhead Inference-time Prediction of Reward and Cost for Adaptive and Interpretable Generation
 
