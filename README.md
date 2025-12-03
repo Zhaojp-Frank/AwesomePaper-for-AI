@@ -1,6 +1,40 @@
 # AwesomePaper-for-AI
 Awesome system papers for AI
 
+## layerNorm scaling
+The Curse of Depth in Large Language Models 西湖大学等，NIPS2025 
+
+https://arxiv.org/pdf/2502.05795 
+
+https://github.com/lmsdss/LayerNorm-Scaling 
+
+1. 🎯 该研究提出了大语言模型（LLM）中存在的“深度诅咒”现象，即广泛使用的Pre-Layer Normalization (Pre-LN) **导致深层网络输出方差呈指数级增长**，使得**深层Transformer模块对训练的贡献降低**。
+2. 💡 为解决此问题，作者提出了LayerNorm Scaling (LNS) 方法，通过将**层归一化输出按其深度平方根的倒数进行缩放**，有效抑制了深层方差的爆炸，从而增强了深层模型的贡献。
+3. 🏆 实验证明，LNS在多种LLM模型尺寸上显著提升**了预训练性能并改善了下游任务的微调效果**，同时在Vision Transformer中也展现出稳定方差和提升性能的潜力，验证了其普适性和有效性。
+
+该论文引入了“深度诅咒”（Curse of Depth, **CoD**）这一概念，旨在揭示、解释并解决现代大型语言模型（LLMs）中**近半数深层**（Transformer blocks）不如预期有效的问题。作者首先在Llama、Mistral、**DeepSeek和Qwen等主流LLM家族中**广泛证实了CoD现象的存在，通过层剪枝实验（layer pruning experiments）和角度距离（angular distance）分析发现，深层模块对模型性能贡献甚微，且其表征（representations）高度相似，这表明它们未能执行有意义的转换。
+
+论文从理论和实证两方面指出，CoD的根本原因在于广泛使用的预层归一化（Pre-Layer Normalization, Pre-LN）。Pre-LN虽然稳定了Transformer LLMs的训练，但其输出方差（output variance）会随模型深度呈指数级增长。具体而言，对于第\(\ell\)层的输入\(x_\ell\)和中间输出\(x'_\ell\)，其方差增长趋势可表示为：
+\[
+\sigma^2_{x_\ell} = \sigma^2_{x_1} \Theta\left(\prod_{k=1}^{\ell-1} \left(1 + \frac{1}{\sigma_{x_k}}\right)\right)
+\]
+其中\(\sigma^2_{x_k}\)表示第\(k\)层的方差。当\(\sigma^2_{x_\ell}\)呈指数增长（即其上界为\(\Theta(\exp(\ell))\)）时，模型的梯度范数\(\left\|\frac{\partial y_L}{\partial x_1}\right\|^2\)会收敛到一个常数\(M\)，这意味着深层模块的导数趋近于一个单位矩阵（identity matrix），从而几乎不参与训练。这种行为限制了模型的表达能力，阻碍了其学习有意义的转换。
+
+为解决这一训练缺陷，论文提出了层归一化缩放（LayerNorm Scaling, LNS）方法。LNS通过将LayerNorm的输出与其层索引\(\ell\)的平方根成反比进行缩放，即：
+\[
+h^{(\ell)} = \text{LayerNorm}(h^{(\ell)}) \times \frac{1}{\sqrt{\ell}}
+\]
+这一简单修改有效抑制了深层Transformer模块的输出方差爆炸。经过LNS处理后，方差的增长速率显著减缓，其上界从指数增长变为多项式增长，具体为\(\Theta(\ell^{(2-\epsilon)})\)，其中\(\epsilon\)是一个小的正数。相应的，梯度范数\(\left\|\frac{\partial y_L}{\partial x_1}\right\|^2\)不再收敛到常数，而是缓慢增长（\(\omega(1)\)），表明更深的层也能有效发挥作用。
+
+实验结果表明，LNS在130M到**7B等多种模型规模上**，始终**优于以往的归一化和缩放技术**，显著提升了LLM的预训练性能（降低了困惑度Perplexity），并将这种改进无缝地传递到监督微调（Supervised Fine-tuning,** SFT）阶段**。具体表现为：
+1.  在不同LLaMA模型尺寸上，LNS均取得了最低的困惑度，且训练过程稳定，而DeepNorm和Mix-LN等方法在较大模型上表现出不稳定性。
+2.  在SFT任务中，LNS模型在Commonsense170K数据集的**八个下游任务上性能一致超越其他归一化技术**，提升了深层特征表示的质量。
+3.  在OLMo和**Qwen2.5等先进架构上进行大规模训练**时，LNS同样展现出强大的可扩展性和有效性，甚至超越了OLMo的Scaled Initialization策略。
+4.  机制分析证实，LNS有**效控制了输出方差的增长**，并**促使深层模块学习到更具多样性的特征**（通过更高的角度距离和更均匀的性能下降来体现）。
+5.  初步实验还表明，LNS机制（在不同插入位置）对Vision Transformer（ViT）也有效，展现了其在不同架构上的泛化能力。
+6.  消融研究（Ablation Study）表明，LNS优于其他缩放方法和LayerNorm变体，且最佳的插入位置是LayerNorm之后。
+
+总之，LNS作为一种简单、无需超参数调优且不引入额外参数的方法，有效解决了LLM中的深度诅咒问题，提升了模型的训练效率和最终性能。
 
 ## Stabilizing Reinforcement Learning with LLMs:Formulation and Practices
 
