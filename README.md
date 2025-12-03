@@ -10,6 +10,7 @@ https://github.com/dandingsky/GPAS
 1. 🧮 论文指出，Pre-LayerNorm (Pre-LN) Transformer在预训练过程中存在激活方差指数级增长的问题，这限制了深层网络的学习能力并导致收敛速度变慢。
 2. 💡 为解决此问题，作者提出了**Gradient-Preserving Activation Scaling** (GPAS)，该方法通过缩放中间激活来降低方差，同时利用stop gradient机制保留梯度幅值以避免梯度消失。
 3. 🚀 实验结果表明，GPAS能显著加速LLM预训练的收敛并提升下游任务性能，其在从71M到1B的多种模型尺寸和包括Pre-LN、DeepNorm等不同架构上均展现出一致的有效性。
+可以用在西湖大学等LNScaling（LNS）上。实验结果中LNS表现已经非常不错。
 
 <img width="857" height="323" alt="image" src="https://github.com/user-attachments/assets/16b00113-ffd4-46f3-ac85-aed6df7942e6" />
 <img width="857" height="288" alt="image" src="https://github.com/user-attachments/assets/c8958696-4643-4ef9-a6b7-999f59e84631" />
