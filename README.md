@@ -1,6 +1,82 @@
 # AwesomePaper-for-AI
 Awesome system papers for AI
 
+## SparseSpec
+Accelerating Large-Scale Reasoning Model Inference with Sparse Self-Speculative Decoding
+
+https://arxiv.org/pdf/2512.01278 MIT 伯克利 NV 韩松，清华等，2025.12.1
+
+http://github.com/sspec-project/SparseSpec
+
+1.  ✨ SparseSpec 提出了一种无损且**无需训练的**自推测解码框架，用于加速推理语言模型 (RLMs) 的推理，旨在解决**长生成过程**中 KV-Cache 内存访问带来的性能瓶颈。
+2.  💡 该框架的核心是 **PillarAttn 稀疏注意力机制**，它通过**重用验证阶段的注意力分数来动态选择关键 token 进行草稿生成 加速attn部分**，并结合了**统一批调度器、延迟验证和动态 KV-Cache **管理等系统级优化。
+3.  🚀 实验结果表明，SparseSpec 在各种模型和数据集上均表现出色，吞**吐量相比现有最先进的解决方案提升高达 2.13** 倍，同时保持了**高接受率和高效的资源利用**。
+<img width="760" height="155" alt="image" src="https://github.com/user-attachments/assets/ac07d2fc-cad8-4ef0-9382-e88f958d6271" />
+
+`SparseSpec` 是一种用于加速大规模推理语言模型 (RLM) 推理的无损且免训练的框架。该研究指出，由于RLM会生成冗长的 `chain-of-thought` 解决方案，推理瓶颈已从 `compute-bound` 转移到 `memory-bound`。具体而言，每个令牌的生成都需要对所有先前生成的 `Key-Value` (KV) 向量应用完整的注意力机制，导致对 `KV-Cache` 的**内存访问需求随生成长度的增加而急剧上升**，从而**对内存带宽造成巨大压力**。例如，在 NVIDIA H100 GPU 上，对于 Qwen3-8B 模型，在生成 8192 个令牌时，`KV-Cache` 加载平均占用端到端延迟的 70% 以上。
+<img width="913" height="278" alt="image" src="https://github.com/user-attachments/assets/684380ae-3154-4fe5-9ccf-53fe7480b640" />
+
+提出了一种名为 SparseSpec 的加速推理框架，专门针对大规模推理语言模型（RLMs）在长序列生成场景下的内存瓶颈。RLMs（如 OpenAI-o1）在复杂任务中通过生成详细的思维链（chain-of-thought, CoT）解决方案展现了强大的能力。然而，这种冗长的生成过程将推理瓶颈从计算密集型（compute-bound）转移到内存密集型（memory-bound），因为模型在生成每个 token 时都需要对所有先前生成的 token 应用完全注意力机制，这要求访问越来越大的 KV-Cache。随着生成长度的增加，每一步的内存访问需求也随之增加，对内存带宽造成巨大压力。
+<img width="920" height="332" alt="image" src="https://github.com/user-attachments/assets/4fc97824-4ff2-4266-afc1-c6d5dcf5ea43" />
+
+为了解决这一问题，SparseSpec 引入了一种自推测解码（self-speculative decoding）框架，它将同一个模型同时用作草稿模型（draft model）和目标模型（target model）。SparseSpec 的核心是一个新颖的稀疏注意力机制——PillarAttn，它通过巧妙地重用验证阶段的信息来准确选择关键 token 作为草稿模型。此外，SparseSpec 还与三项系统优化共同设计：
+1.  **统一调度器（Unified Scheduler）**：批处理草稿阶段和验证阶段，以最大化并行性并缓解工作负载波动。
+2.  **延迟验证（Delayed Verification）**：将验证操作延迟一个迭代，实现 CPU/GPU 重叠，将 CPU 密集型任务从关键路径中移除。
+3.  **动态 KV-Cache 管理（Dynamic KV-Cache Management）**：支持将 KV-Cache 卸载到主机内存，以最大限度地提高 GPU 内存利用率。
+
+通过这些优化，SparseSpec 在各种模型和数据集上都优于现有解决方案，吞吐量最高可提升 2.13 倍。
+
+### 核心方法与技术细节
+
+**1. PillarAttn：专为自推测解码设计的动态稀疏注意力**
+
+RLMs 的推理生成通常涉及动态变化的上下文，导致关键 token 的注意力模式随时间显著变化。现有的稀疏注意力方法（如滑动窗口或基于规则的启发式方法）无法适应这种动态性，导致草稿 token 预测不准确，接受率较低。PillarAttn 通过以下方式解决此问题：
+
+*   **动态稀疏模式（Dynamic Sparsity Pattern）**：PillarAttn 周期性地重新识别和更新草稿阶段使用的稀疏模式。它假设上下文语义具有空间局部性，因此在一个小步长（stride）内保持稀疏模式固定。这个步长与推测步长 $k$（即每次推测生成的候选 token 数量）相同。
+*   **零开销识别（Overhead-free Identification）**：每次进行 $k$ 个草稿步后，会执行一个带有完全注意力机制的验证步。在此验证步中，模型会计算所有 KV-Cache 中 token 的注意力分数。PillarAttn 利用定制的注意力核在验证阶段“即时（on-the-fly）”地导出这些注意力分数。为了避免额外的计算和存储开销，PillarAttn 直接重用这些已导出的注意力分数。具体而言，它对这些分数应用 Top-K 采样，以识别出最重要的 token 作为稀疏模式。如果采用了分组查询注意力（Group Query Attention），这些分数会先在 $k$ 个草稿 token 和查询头（在同一组内）之间进行平均。这种方法确保了稀疏模式的识别几乎没有额外开销，并且能够根据推理过程中的实际注意力分布自适应地调整。
+
+**2. 统一批调度器（Unified Batch Scheduler）**
+<img width="1058" height="432" alt="image" src="https://github.com/user-attachments/assets/7c33b063-5541-475b-bc5a-8d5d117ee300" />
+
+传统的推测解码调度器倾向于将草稿阶段和验证阶段分开处理，导致硬件利用率低下和工作负载波动，因为这两个阶段的资源需求（特别是 GEMM 操作的输入大小）存在显著差异。SparseSpec 的统一批调度器通过以下方式解决这个问题：
+
+*   **统一抽象（Uniform Abstraction）**：由于自推测解码中草稿模型和目标模型共享相同的权重，GPU 上的数据和控制流是相同的，仅在注意力类型（稀疏或完全）上有所不同。PagedAttention 本质上是一种按页粒度的稀疏注意力实现。通过将页大小设置为 1，PillarAttn 能够将稀疏注意力（用于草稿）和完全注意力（用于验证）统一到一个流水线中，从而简化系统设计并提高调度灵活性。
+*   **工作负载感知调度（Workload-aware Scheduling）**：SparseSpec 在每个生成步中均匀地混合来自草稿阶段和验证阶段的请求。它维护 $k$ 个桶来跟踪每个草稿阶段的请求数量，并将新的传入请求分配到负载最低的桶中，从而实现工作负载的均匀分布，避免了批处理大小的剧烈波动，确保了 GEMM 操作的输入批大小保持稳定，从而提高了硬件利用率。
+*   **融合稀疏与完全注意力核（Fused Sparse and Full Attention Kernel）**：为了进一步提高硬件效率，SparseSpec 引入了一个融合注意力核。该核采用持久化核（persistent-kernel style）的方式，能够根据草稿和验证阶段的不同注意力类型（稀疏与完全）在芯片上动态调度其最佳的核配置（如 tile size 和 MMA 指令），而不是启动两个独立的核。这使得在稀疏和完全注意力之间实现最佳性能，避免了由于注意力操作异构性导致的低硬件利用率。
+
+**3. 延迟验证（Delayed Verification）**
+
+推测解码范式要求 CPU 在 GPU 完成验证后进行同步，以处理被拒绝的 token 并更新元数据。这种显式同步会使 CPU 操作成为关键路径上的瓶颈。SparseSpec 的延迟验证机制通过以下方式解决了这一问题：
+
+*   **异步 CPU-GPU 执行**：SparseSpec 观察到，这种同步主要影响处于验证阶段的请求，这些请求只占整个批处理的一小部分（约 $1/(k+1)$）。因此，SparseSpec 允许非验证请求的元数据准备在 CPU 上直接进行，无需等待 GPU 的验证结果。只有验证请求（前一个迭代的）会被暂停，并从当前迭代中取出。在从 GPU 获得验证结果后，这些请求会在下一个迭代（例如 $i+1$ 迭代）中被重新提交到 GPU 执行。这样，CPU 的验证工作可以与 GPU 的计算重叠，从而减少了关键路径上的延迟。
+
+**4. 动态 KV-Cache 管理（Dynamic KV-Cache Management）**
+
+RLMs 输出长度的巨大方差使得 KV-Cache 管理变得复杂，难以在不发生重新计算（recomputation）的情况下实现高利用率。SparseSpec 采取了以下策略：
+
+*   **激进的 CPU 卸载（Aggressive CPU Offloading）**：SparseSpec 倾向于激进地增加请求并发度以充分利用 KV-Cache 容量。当 GPU 内存接近不足时，KV-Cache 会被异步、分块（chunk-by-chunk）地卸载到主机内存，以避免重新计算。这种卸载操作的开销可忽略不计，因为每步生成的 KV-Cache 数据量相对较小，所需的带宽远低于 PCIe 带宽限制。
+*   **FIFO 调度与内存优先（FIFO with Memory Prioritization）**：卸载和加载操作遵循 FIFO 顺序，确保公平性并避免饥饿。SparseSpec 会优先调度已被卸载的请求，一旦 GPU 内存可用，这些请求就会被加载回来。
+
+### 实验结果
+- Qwen3 1.5b/7b/14b：分别H100 TP1/2/4。最大长度17k（AIME23？），**2048个batch**（有点太大）只测吞吐
+
+<img width="1061" height="646" alt="image" src="https://github.com/user-attachments/assets/f90e2763-6226-433c-82b5-dcda1f852571" />
+
+SparseSpec 在 Qwen3-1.7B/8B/14B 等模型上，并在 AIME、OlympiadBench 和 LiveCodeBench 等真实世界推理工作负载上进行了评估。结果显示：
+*   相较于最先进的服务框架 vLLM，SparseSpec 实现了高达 **2.13 倍** 的吞吐量提升。
+*   相较于现有无训练方法（vLLM-NGram、MagicDec 和 TriForce），SparseSpec 分别实现了高达 **1.56 倍、1.36 倍和 1.76 倍** 的吞吐量提升。
+*   即使与需要额外训练的基于草稿模型的方法 EAGLE3 相比，SparseSpec 仍能实现更好或相似的吞吐量，且无需额外训练成本。
+*   **接受率**：PillarAttn 在草稿 8 个 token 时，平均接受 token 长度为 6.16，远超其他草稿方法（NGram 和 EAGLE3 接受率低于 2）。
+*   **消融研究**：各项设计组件的贡献显著，统一批调度器、动态 KV-Cache 管理和延迟验证分别带来了 1.23 倍、1.61 倍和 1.12 倍的性能提升，总计提升了 2.22 倍。
+*   **GEMM 批大小和计算利用率**：统一批处理使得 GEMM 输入批大小在迭代中保持稳定，避免了传统调度的波动和硬件利用率不足。
+*   **融合注意力核性能**：融合核相较于顺序执行和简单批处理分别实现了 1.3 倍和 1.8 倍的加速。
+*   **内存利用率**：SparseSpec 几乎完全利用了可用的 GPU 内存，且没有引入重新计算的开销，卸载操作仅导致平均 0.5% 的周期时间延长。
+
+### 总结
+
+SparseSpec 针对推理语言模型长序列生成中的内存瓶颈，提出了一种创新性的无损、无训练加速框架。它通过 PillarAttn 动态稀疏注意力机制，结合统一批调度、延迟验证和动态 KV-Cache 管理等系统级优化，显著提升了 RLMs 的推理吞吐量。其核心在于算法与系统协同设计，既提升了推测解码的准确性（高接受率），又解决了实际部署中的系统效率问题，为大规模 RLMs 推理提供了高效的解决方案。
+
+
 ## layerNorm scaling
 The Curse of Depth in Large Language Models 西湖大学等，NIPS2025 
 
