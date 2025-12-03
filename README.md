@@ -1,6 +1,92 @@
 # AwesomePaper-for-AI
 Awesome system papers for AI
 
+## GPAS pre-LN
+https://arxiv.org/abs/2506.22049 港科大等 2025.7
+https://github.com/dandingsky/GPAS
+
+
+<img width="1199" height="269" alt="image" src="https://github.com/user-attachments/assets/5d4d28a8-8b23-4669-97c3-31ee73b6e9d2" />
+1. 🧮 论文指出，Pre-LayerNorm (Pre-LN) Transformer在预训练过程中存在激活方差指数级增长的问题，这限制了深层网络的学习能力并导致收敛速度变慢。
+2. 💡 为解决此问题，作者提出了**Gradient-Preserving Activation Scaling** (GPAS)，该方法通过缩放中间激活来降低方差，同时利用stop gradient机制保留梯度幅值以避免梯度消失。
+3. 🚀 实验结果表明，GPAS能显著加速LLM预训练的收敛并提升下游任务性能，其在从71M到1B的多种模型尺寸和包括Pre-LN、DeepNorm等不同架构上均展现出一致的有效性。
+
+<img width="857" height="323" alt="image" src="https://github.com/user-attachments/assets/16b00113-ffd4-46f3-ac85-aed6df7942e6" />
+<img width="857" height="288" alt="image" src="https://github.com/user-attachments/assets/c8958696-4643-4ef9-a6b7-999f59e84631" />
+
+## Multi-token attn
+https://arxiv.org/abs/2504.00927 Facebook Research, 2025.7
+
+https://github.com/facebookresearch/RAM/tree/main/projects/mta 
+
+1. 现有的LLM注意力机制受限于仅依据单个查询和键token的相似性来决定权重，这限制了其利用丰富上下文信息的能力，尤其在长文本处理中易受瓶颈影响。
+2. 🏆 为解决此问题，论文提出多token注意力（MTA），它通过对查询、键和注意力头应用卷积操作，使得注意力权重能够同时考虑多个向量信息，从而实现更精细的上下文定位。
+3. 🚀 广泛的实验表明，MTA在标准语言建模任务和长上下文信息检索任务上均显著优于Transformer基线模型，证明了其利用更丰富信息提升性能的有效性。
+
+该论文提出了一种名为Multi-Token Attention (MTA) 的新型注意力机制，旨在解决现有LLM中“单Token注意力”的瓶颈问题。传统的注意力机制（如Transformer中使用的）通过计算单个查询Token和单个键Token向量之间的相似性来确定注意力权重。这种方法在需要模型基于多个Token的信息来识别相关上下文时，会限制其捕捉更丰富、更细微信息的能力。例如，若需定位同时提及“Alice”和“rabbit”的句子，单个查询Token难以有效编码这两种信息，即使使用不同的注意力头也无法直接组合这些注意力图。
+<img width="982" height="430" alt="image" src="https://github.com/user-attachments/assets/385deffb-f01c-47b0-a54f-fae33d19b8e1" />
+
+MTA通过对查询、键和注意力头应用卷积操作，允许注意力权重同时依赖于多个相邻的查询和键向量，以及不同注意力头之间的信息。这使得MTA能够利用更丰富的上下文信息，从而实现更精确的注意力聚焦。
+
+**核心方法 (Core Methodology)**
+
+MTA是在标准多头注意力机制的基础上进行修改的。标准多头注意力（Multi-head Attention）的计算如下：
+给定隐藏状态 $H \in \mathbb{R}^{T \times D}$，
+<img width="905" height="356" alt="image" src="https://github.com/user-attachments/assets/76b53b5d-ce0c-4bd8-9fa3-4cbb84b7a071" />
+
+其中，Softmax在键维度上操作，并且应用了因果掩码。
+
+MTA引入了三个主要组件：
+
+1.  **键-查询卷积 (Key-query convolution)**
+    MTA在注意力对数（$\hat{A}$）或注意力权重（$A$）上应用卷积操作，以整合来自多个查询和键Token的信息。
+    *   **Pre-softmax 卷积：** 在Softmax之前对注意力对数进行卷积。
+        $$ A = \text{Softmax}(\text{Conv2d}_\theta(\text{Mask}_0(\hat{A}))) $$
+        其中 $\text{Conv2d}_\theta$ 是一个2D卷积操作，其核权重为 $\theta$，核大小为 $(c_q, c_k)$。卷积在键和查询的长度维度上进行。为了保持因果性，只使用过去的查询Token，并在键维度上通过掩码1$_{i \ge j-j'}$（或简化为两次因果掩码）来避免信息泄露。
+    *   **Post-softmax 卷积：** 在Softmax之后对注意力权重进行卷积。
+        $$ A = \text{Mask}_0(\text{Conv2d}_\theta(\text{Softmax}(\text{Mask}_{-\infty}(\hat{A})))) $$
+    每个注意力头都拥有独立的 $\theta$ 参数，使得它们可以执行不同的卷积操作。核维度 $c_q$ 和 $c_k$ 决定了可以组合的Token的距离范围。
+
+2.  **头部混合卷积 (Head mixing convolution)**
+    为了在不同注意力头之间共享知识并混合注意力权重，MTA引入了头部卷积。它将所有注意力头分为 $M/c_h$ 组，并在每组内应用一个非重叠的卷积操作（实际上是一个全连接操作，因为核大小 $c_h$ 与组大小相同）。
+    *   **Post-softmax 头部混合：** 假设 $A^1$ 和 $A^2$ 是两个头的注意力权重，新的注意力权重可以表示为：
+        $$ A^1_{\text{new}} = w_{11}A^1 + w_{12}A^2, \quad A^2_{\text{new}} = w_{21}A^1 + w_{22}A^2 $$
+        其中 $w$ 是核权重。
+    *   **Pre-softmax 头部混合：** 同样，可以在Softmax之前混合对数：
+        $$ \hat{A}^1_{\text{new}} = w_{11}\hat{A}^1 + w_{12}\hat{A}^2, \quad \hat{A}^2_{\text{new}} = w_{21}\hat{A}^1 + w_{22}\hat{A}^2 $$
+    当键-查询卷积和头部混合卷积都采用 pre-softmax 形式时，它们可以合并为一个3D卷积操作，其中两个维度是键和查询维度，第三个维度是注意力头维度。
+
+3.  **带门控机制的组归一化 (Group normalization with gating mechanism)**
+    为了对抗残差连接并改善梯度流，MTA在注意力输出之后应用了带标量门控（sigmoid gating）的组归一化。这允许模型在不同层之间开关注意力头，更好地适应不同任务。
+
+**实验结果 (Experimental Results)**
+<img width="982" height="289" alt="image" src="https://github.com/user-attachments/assets/f3f7cc24-c4a4-4244-ad71-8daecb8a260a" />
+<img width="980" height="230" alt="image" src="https://github.com/user-attachments/assets/455e3989-dd45-47a3-84b8-da6eb372a512" />
+<img width="980" height="366" alt="image" src="https://github.com/user-attachments/assets/e93c31cf-20b5-496a-8654-b0fd3bac5f46" />
+
+*   **动机性玩具任务 (Motivating Toy Task):** 在一个需要模型定位包含多个给定字母块的任务中，标准Transformer难以学习（错误率高达51.6%），而MTA几乎完美解决了任务（错误率0.1%）。这验证了MTA能够利用卷积聚合多Token信息的能力。
+*   **大规模语言建模 (Large Language Modeling):**
+    *   在SlimPajama数据集上对8.8亿参数模型进行预训练，MTA在所有验证集上均优于Transformer基线、Differential Transformer和Talking Heads attention，验证困惑度（PPL）更低（MTA: 10.91 vs Transformer: 11.25）。
+    *   在标准基准测试（如BoolQ, PIQA, MMLU等）的零样本设置中，MTA也取得了更高的平均分数。
+*   **长上下文微调 (Long Context Finetuning):**
+    *   将预训练模型在更长上下文（4096 Token）上进行微调后，MTA模型依然在困惑度评估中表现优异。
+*   **长程依赖任务 (Long-range Dependency Tasks):**
+    *   **LAMBADA:** 在需要长程依赖的词预测任务中，MTA模型的困惑度显著低于基线（MTA: 13.2 vs Transformer: 17.6）。
+    *   **Needle-in-the-Haystack:** 在2k和4k上下文窗口中插入多根“针”并要求模型检索时，MTA在不同“针”数量和插入深度下都显示出显著的提取能力提升。
+    *   **BabiLong:** 在需要从长文档中推理事实的问答任务中，MTA在存在大量干扰文本时，表现明显优于其他模型。
+*   **核模式分析 (Kernel Patterns):** 论文分析了键-查询和头部卷积核的学习模式。发现部分键-查询核接近单位矩阵，但也有许多复杂的核，例如斜对角线核（用于序列匹配）或用于“启动”（priming）和“边缘检测”（edge detecting）的核。头部核模式则相对简单，常表现为身份缩放或对比（相减）模式。
+*   **消融研究 (Ablation Studies):**
+    *   键-查询卷积层的数量：即使仅在少量层（如2层）中应用MTA，模型也能超越强基线，而6层MTA能在性能与复杂度之间取得平衡。
+    *   头部卷积核大小：增大核大小（增加头部间通信）能提高模型性能。
+    *   核初始化：身份初始化（即初始时行为类似于普通Transformer）能带来更好的收敛和最终性能。
+    *   组件组合：组归一化和指数深度缩放是MTA性能提升的重要因素。
+*   **缩放定律 (Scaling Laws):** 在3亿、5.5亿和10亿参数模型上，MTA始终表现出优于基线的性能，展现了其在不同模型规模下的一致优势。
+*   **集成到现有模型 (Finetuning with MTA):** MTA可以作为附加层集成到已训练好的模型中，并通过持续训练更新权重。实验表明，这种方法不仅能够融合新的卷积核，还能使模型在困惑度方面超越基线。
+
+**结论 (Conclusion)**
+
+MTA通过引入键-查询卷积和头部混合卷积，解决了传统注意力机制中单Token瓶颈的问题。它允许模型利用更细粒度的信息进行注意力聚焦。通过在从玩具任务到大规模LLM的广泛评估，论文证明了MTA在语言建模和长上下文信息检索任务中的优越性，尤其在需要精确识别相关信息的情况下，MTA表现出显著的性能提升。尽管目前MTA的实现未针对优化内核进行优化，导致运行时性能较低，但其在模型能力上的提升预示了其在未来LLM架构中的潜力。
+
 ## CAT:稀疏压缩token
 Attention and Compression is all you need for Controllably Efficient Language Models
 
