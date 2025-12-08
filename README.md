@@ -1,7 +1,78 @@
 # AwesomePaper-for-AI
 Awesome system papers for AI
 
+## SpInfer: Leveraging Low-Level Sparsity for Efficient Large Language Model Inference on GPUs 
+- https://dl.acm.org/doi/abs/10.1145/3689031.3717481 范瑞波 港科大（广）。EuroSys25 best paper
+
+1. ✨ SpInfer提出了一种名为Tensor-Core-Aware Bitmap Encoding (TCA-BME)的新型稀疏矩阵存储格式，该格式通过高效的位图索引显著减少了索引开销，即使在低稀疏度（如30%）下也能实现有效的内存压缩。
+2. 🚀 该框架还集成了一个高度优化的SpMM内核，该内核利用Shared Memory Bitmap Decoding (SMBD)和异步流水线设计，最大化GPU Tensor Core的利用率，并有效重叠内存传输与计算。
+3. ⚡️ 实验结果表明，SpInfer在**30%至70%的稀疏度范围内，其SpMM内核性能显著优于现有的Flash-LLM和SparTA，并在端到端LLM推理中实现了高达1.58倍**的速度提升和优异的内存效率。更稀疏时（>80%），加速效果不如Flash-LLM。
+<img width="511" height="351" alt="image" src="https://github.com/user-attachments/assets/f344570d-c2e7-4883-872a-9de4c90714b8" />
+
+SpInfer是一项旨在通过利用非结构化稀疏性来加速GPU上大型语言模型（LLM）推理的高性能框架。该论文解决了非结构化剪枝（unstructured pruning）在LLM推理中难以实现其理论优势的关键挑战，主要原因是索引非零元素的存储开销和在低稀疏度（约50%）下稀疏矩阵乘法（SpMM）内核效率低下。
+
+**背景与挑战**
+LLM因其巨大的参数规模而面临内存和计算成本的挑战。权重剪枝（weight pruning）作为一种模型压缩技术，通过引入稀疏性来减少资源需求。非结构化剪枝因其灵活性和在保持模型精度方面通常优于结构化剪枝而备受关注。然而，对于LLM而言，其稀疏度通常只能达到50%左右，这带来了两个主要挑战：
+1.  **索引开销：** 在低稀疏度下，传统稀疏格式（如CSR、Tiled-CSL）存储非零元素索引的开销可能抵消剪枝带来的内存节省。例如，Flash-LLM和cuSPARSE在50%稀疏度下压缩率（CR）低于1，意味着它们的存储量甚至可能高于原始稠密矩阵。
+2.  **计算效率：** GPU上的SpMM内核在低稀疏度下难以超越其稠密对应物（cuBLAS）。现有的SpMM实现，即使是针对LLM剪枝的Flash-LLM，在50%或更低稀疏度时也难以实现加速，这使得非结构化剪枝的理论性能增益难以转化为实际效益。
+
+**核心方法：SpInfer的设计**
+SpInfer旨在通过其核心组件——Tensor-Core-Aware Bitmap Encoding (TCA-BME) 和高度优化的SpMM内核——来弥补这些差距。
+
+**1. Tensor-Core-Aware Bitmap Encoding (TCA-BME)**
+TCA-BME是一种新颖的稀疏矩阵存储格式，旨在最小化索引开销并最大化压缩率，同时与GPU Tensor Core架构对齐。
+*   **分块设计 (Tiling Design)：** TCA-BME采用多级分块设计，将权重矩阵划分为不同粒度的Tile以匹配GPU硬件的不同层次：
+    *   **BitmapTile (BT)：** 尺寸为 $8 \times 8$，是TCA-BME格式中最小的粒度单元，直接对应于Tensor Core的最小计算单元。它使用一个 $64$ 位位图（`uint64_t`）来表示其中的稀疏模式，每个位指示相应元素是否为非零。
+    *   **TCTile (TT)：** 尺寸为 $16 \times 16$，由 $2 \times 2$ 个BitmapTile组成，与Tensor Core的`mma`指令（例如用于FP16精度的`mma.m16n8k16`）的矩阵形状对齐。BitmapTile在TCTile内以列主序排列，以简化解码过程。
+    *   **GroupTile (GT)：** 包含多个TCTile，对应于线程块级别。TCTile在GroupTile内也以列主序存储，而GroupTile本身以行主序存储。
+*   **存储结构：** TCA-BME使用三个数组来高效表示稀疏权重矩阵：
+    *   `GTileOffset`：记录每个GroupTile在稀疏矩阵中的起始偏移位置（ $4$ 字节整型）。
+    *   `Values`：存储所有非零元素（FP16精度， $2$ 字节），按GroupTile、TCTile、BitmapTile的嵌套顺序排列。
+    *   `Bitmap`：存储所有BitmapTile的位图（ $8$ 字节整型），每个BitmapTile由一个 $64$ 位整数表示。
+    这种格式的总存储开销计算为：
+    $S_{TCA-BME} = 4B \times (N_{GT} + 1) + 8B \times N_{BT} + 2B \times N_{NZ}$
+    其中 $N_{GT}$ 是GroupTile的数量，$N_{BT}$ 是BitmapTile的数量，$N_{NZ}$ 是非零元素的数量。与CSR和Tiled-CSL相比，TCA-BME在低至中等稀疏度（30%-70%）下实现了更高的压缩率（CR > 1），显著降低了索引开销。
+
+**2. 高性能SpInfer-SpMM内核设计**
+SpInfer的SpMM内核包含了以下关键优化：
+*   **高效数据移动 (Efficient Data Movement)：**
+    *   利用 `LDGSTS.128` 异步矢量化内存访问指令，将稀疏权重数据 (GTile) 从全局内存直接加载到共享内存，绕过L1缓存和寄存器文件，以提高全局内存带宽利用率。通过预处理在GTile内对`Value`数组进行填充，确保8字节对齐以实现128位矢量化。
+    *   利用 `LDSM.M88` (PTX `ldmatrix.x4`) 指令将输入矩阵 $X$ 的数据从共享内存加载到寄存器，并自动调整数据布局以适应Tensor Core计算。
+    这种数据移动路径近似于cuBLAS的理想情况，减少了通过寄存器文件进行不必要往返的开销。
+*   **共享内存位图解码 (Shared Memory Bitmap Decoding, SMBD)：**
+    SMBD是SpInfer-SpMM内核的关键优化，它在共享内存中高效地解压缩位图编码的WTile到寄存器文件，确保为Tensor Core计算准备好正确的布局。
+    *   **寄存器分布：** 在Warp级别的Tensor Core操作中，一个Warp（32个线程）共同处理操作数矩阵的片段。每个线程持有部分操作数矩阵，其分布必须与Tensor Core `mma`指令的要求对齐。对于FP16计算，`mma.m16n8k16`指令在 $16 \times 16$ 矩阵片段上操作。每个线程的寄存器（如`Ra0-Ra3`）需要填充解码后的非零值。
+    *   **两阶段解码过程：** SMBD将解码过程分为两个阶段，以高效处理半精度值：
+        *   **阶段I (Decoding a0)：** 每个线程解码其32位寄存器中的第一个半精度值（a0）。线程 $i$ 检查位图的第 $(2i)$ 位。如果该位为1，线程使用 `MaskedPopCount` （基于NVIDIA GPU内置函数 `__popcll` 计算 $64$ 位位图中1的个数）来计算在其位置之前有多少个非零值，并从压缩的`Values`数组中加载相应的值。如果该位为0，则加载零值。
+        *   **阶段II (Decoding a1)：** 每个线程解码同一32位寄存器中的第二个半精度值（a1）。线程 $i$ 检查位图的第 $(2i+1)$ 位。此时无需额外的 `MaskedPopCount`，直接复用阶段I的结果，若a0是非零值，则偏移量加1以加载a1。这种重用减少了位计数操作的数量。
+    通过这些操作，SpInfer并行高效地解码压缩的矩阵片段，避免了全局内存中显式存储偏移量的需求。
+*   **异步流水线设计 (Asynchronous Pipeline Design)：**
+    SpInfer采用细粒度的异步流水线来最大化内存传输和Tensor Core计算之间的重叠。
+    *   **双缓冲机制：** 为GTile和XTile实现双缓冲，使得可以在当前迭代数据计算的同时，异步预取下一迭代的数据到共享内存，从而隐藏内存加载延迟。
+    *   **细粒度异步组管理：** 使用两个独立的 `cp.async` 组来独立管理GTile和XTile的加载，实现更高的并发性。
+        *   一旦GTile加载完成，SMBD立即开始，与XTile加载并发执行，有效隐藏SMBD的延迟。
+        *   在当前Tile的Tensor Core计算指令发出后，下一Tile的SMBD立即开始。SMBD的位操作和计数在CUDA Core上运行，与Tensor Core指令独立，从而增加了指令级并行（ILP），优化了硬件资源利用率。
+
+**性能评估**
+SpInfer在RTX4090和A6000 GPU上进行了广泛评估，包括内核级和端到端LLM推理。
+*   **内核性能对比：**
+    SpInfer在40%到70%的稀疏度范围内，始终优于cuSPARSE、Sputnik、SparTA和Flash-LLM等主流SpMM实现，并且在低稀疏度（如40%）下能够显著超越cuBLAS。在RTX4090上，SpInfer平均比cuBLAS快1.79倍，比Flash-LLM快1.56倍。在50%稀疏度时，SpInfer比cuBLAS快1.66倍，而Flash-LLM和SparTA仅有微小提升（1.00倍和1.01倍）。微观分析显示，SpInfer消耗更少的寄存器，显著减少了DRAM访问，最小化了共享内存Bank冲突，并实现了更高的Tensor Core流水线利用率。
+*   **端到端LLM推理：**
+    SpInfer在OPT-13B、OPT-30B和OPT-66B模型上的端到端推理中，显著降低了延迟并提高了内存效率。在RTX4090上，SpInfer平均比Flash-LLM、FasterTransformer和DeepSpeed分别快1.35倍、1.42倍和1.49倍。最大的加速比为1.58倍。
+    内存效率方面，SpInfer通过TCA-BME格式实现了模型权重与稀疏度几乎线性的内存缩减。例如，在60%稀疏度下，OPT-13B的内存占用仅为14.4 GB，比稠密基线减少了47.5%。SpInfer在单张RTX4090 GPU上能支持更长的输出序列和更大的Batch Size，而Flash-LLM等在相同条件下可能遇到OOM错误，显示出SpInfer在资源受限环境下的部署优势。
+
+**局限性与讨论**
+*   **Prefill阶段性能：** 在Prefill阶段，当批处理大小和序列长度较大时（操作变得计算密集型），SpInfer可能比cuBLAS_TC慢11.8%，因为其内存访问优化优势减弱，且位图解码引入了开销。
+*   **稀疏度限制：** 在极高稀疏度（>90%）下，位图索引效率下降，可能不如CSR格式。
+*   **动态激活稀疏性：** SpInfer目前不支持动态激活稀疏性，这需要更自适应的稀疏编码技术。
+*   **通用性：** 尽管SpInfer为NVIDIA Tensor Cores优化，其核心技术（TCA-BME的分块策略、SMBD的位操作）可推广到其他硬件架构，如Google TPU、AMD Matrix Cores和Intel AMX，通过调整Tile配置和利用通用位操作实现跨平台效率。
+
+**总结**
+SpInfer是首个能够有效加速LLM在低稀疏度（低于50%）推理的框架，同时保持计算效率和内存节省。它通过创新的TCA-BME格式和高度优化的SpMM内核（包括SMBD和异步流水线）解决了现有稀疏推理技术的关键瓶颈。SpInfer显著超越了现有最先进的SpMM内核和推理框架，弥补了LLM剪枝理论优势与实际性能之间的差距。
+  
 ## GPAS pre-LN
+
+
 https://arxiv.org/abs/2506.22049 港科大等 2025.7
 https://github.com/dandingsky/GPAS
 
