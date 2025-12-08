@@ -1,7 +1,105 @@
 # AwesomePaper-for-AI
 Awesome system papers for AI
 
-##
+
+## TokenFlow
+TokenFlow: Responsive LLM Text Streaming Serving under Request Burst via Preemptive Scheduling 
+
+https://arxiv.org/abs/2510.02758 上交 陈guihai团队 2025.8
+
+1. 🌍 TokenFlow通过引入前瞻性调度和主动KV缓存管理，显著提升了LLM文本流服务在请求突发情况下的响应速度和有效吞吐量。
+2. 💡 其核心机制包括一个基于实时令牌缓冲区状态和消耗率动态调整请求优先级的buffer-aware调度器，以及一个通过write-through策略和I/O重叠来最小化preemption开销的分层KV缓存管理模块。
+3. 🚀 在多GPU和多模型实验中，TokenFlow与现有SOTA基线相比，实现了高达82.5%的有效吞吐量提升和80.2%的P99 TTFT降低，同时保持了相当的整体令牌吞吐量。
+
+TokenFlow是一篇专注于LLM文本流式服务（Text Streaming Serving）的论文，旨在解决请求突发（request burst）场景下，LLM服务在响应性（responsiveness，即Time-To-First-Token, TTFT）和生成稳定性（steady generation，即Time-Between-Tokens, TBT）之间难以平衡的问题。现有系统因非抢占式调度和被动式内存管理，导致资源利用率低和请求处理并行度不足。TokenFlow提出了一种新颖的LLM服务系统，通过抢占式请求调度和主动Key-Value (KV) 缓存管理来增强文本流式性能。
+
+**核心问题与动机：**
+传统的LLM推理系统通常采用先来先服务（FCFS）调度策略，并优先处理Prefill阶段，以最大化整体吞吐量。然而，对于用户交互式应用，TTFT和流畅的Token交付至关重要。研究发现，用户对超过1.3秒的初始响应延迟难以接受，且当生成速率低于特定阈值（如12 tokens/s）或波动超过30%时，用户体验会下降。现有系统无法在请求突发时同时优化TTFT和TBT，导致请求排队时间过长，而**正在服务的请求则以远超用户阅读速度的速率生成Token，**造成资源浪费和用户体验下降。此外，LLM的KV Cache会随序列长度线性增长，占用大量GPU内存，限制了并发请求数。现有内存管理策略通常是被动触发的，只有当GPU内存达到阈值时才进行卸载，导致显著的I/O开销，并且缺乏与调度器的紧密协调。
+
+**TokenFlow的核心贡献：**
+TokenFlow通过协同设计（Co-design）的调度器和KV Cache管理器，解决了上述挑战。其主要创新点在于：
+1.  **Buffer-Aware 调度器：** 根据实时Token缓冲区占用率和Token消耗速率动态调整请求优先级，**实现主动抢占**，确保资源利用与用户消费速度匹配。
+2.  **层次化KV Cache管理：** 在**后台主动地在GPU和CPU内存之间传输KV Cache**，并重叠I/O与计算，以最小化请求抢占开销。
+3.  **QoS度量：** 引入了一个**综合性的服务质量**（Quality of Service, QoS）度量，平衡了Token的有用性（usefulness）、TTFT和回放停顿惩罚（rebuffering penalties），更准确地反映用户体验和系统效率。
+
+**详细方法：**
+
+1.  **QoS 度量：**
+    为了更准确地评估文本流式服务的质量，TokenFlow定义了一个综合性的QoS指标，它考虑了Token的实用价值、首次Token的延迟以及回放停顿带来的惩罚。
+    对于每个请求 $i$，其生成Token $j$ 的实用性权重 $w_{i,j}$ 定义为：
+    $$
+    w_{i,j} = \begin{cases}
+        1, & \text{if } B_{i,j} \le \tau \\
+        \max(1 - \alpha \cdot (B_{i,j} - \tau), 0), & \text{if } B_{i,j} > \tau
+    \end{cases}
+    $$
+    其中，$B_{i,j}$ 是Token $j$ 生成时请求 $i$ 输出缓冲区的Token数量，$\tau$ 是一个阈值，超过该阈值Token的实用性开始衰减，$\alpha > 0$ 是可调的衰减因子。
+    最终的QoS指标定义为：
+    $$
+    \text{QoS} = \frac{1}{T} \sum_{i=1}^{N} \left( \sum_{j=1}^{L_i} w_{i,j} - \lambda \cdot t_{\text{ttft}_i} - \mu \cdot \text{Rebuffer}_i \right)
+    $$
+    其中，$T$ 是总处理时间，$N$ 是请求总数，$L_i$ 是请求 $i$ 生成的Token数，$t_{\text{ttft}_i}$ 是请求 $i$ 的TTFT，$\text{Rebuffer}_i$ 是请求 $i$ 经历的缓冲区空闲时间总和，$\lambda$ 和 $\mu$ 是惩罚系数。
+
+2.  **调度问题形式化与目标：**
+    TokenFlow将LLM请求调度形式化为一个在线组合优化问题，其目标是选择一个请求子集在每个时间间隔 $t$ 内执行，以最大化预期生成的有效Token数量，同时惩罚可能导致缓冲区欠载（underflow）和回放停顿的调度决策。
+    每个请求 $i$ 的效用函数 $U_i$ 定义为：
+    $$
+    U_i = v_i \cdot t - \gamma \cdot \phi(b_{\text{rem}_i})
+    $$
+    其中，$t$ 是当前调度步中分配给该请求的执行时间，$b_{\text{rem}_i}$ 是其输出缓冲区中未读Token的数量，$v_i$ 是估计的Token价值，$\phi(\cdot)$ 是一个惩罚函数，当缓冲区过低时该函数值增加（增加优先级），$\gamma$ 是调节惩罚强度的系数。
+    考虑到硬件约束，包括GPU内存限制和Batch Size对计算的权衡，优化问题可表示为：
+    $$
+    \max_{x_i \in \mathcal{A}} \sum x_i \cdot \left( v_i (t - t_{\text{overhead}_i}) - \gamma \phi(b_{\text{pred}_i}) \right) \\
+    \text{s.t.} \quad x_i \in \{0, 1\} \quad \forall i \in \mathcal{A} \\
+    \sum x_i \le B \\
+    \sum x_i l_i \le M
+    $$
+    其中，$\mathcal{A}$ 是所有活跃请求的集合，$x_i$ 是二进制变量（1表示调度，0表示不调度），$B$ 是最大并发运行请求数，$l_i$ 是请求 $i$ 的上下文长度，$M$ 是总可用GPU内存。
+    该公式还引入了两个关键改进：
+    *   **有效执行时间 $t - t_{\text{overhead}_i}$：** 考虑了内存操作引起的上下文切换延迟。$t_{\text{overhead}_i}$ 估计为 $\min(t_{\text{IO}}, t_{\text{recompute}})$，其中 $t_{\text{IO}}$ 通过内存管理器的I/O吞吐量历史数据获得，$t_{\text{recompute}}$ 通过滑动窗口平均的Per-Token延迟估计。
+    *   **预测缓冲区状态 $b_{\text{pred}_i}$：** 预测在系统开销下Token累积情况。
+
+3.  **Buffer-Aware 请求调度器：**
+    TokenFlow的调度器采用两阶段启发式算法来近似解决优化问题：
+    *   **确定工作集 (Working Set Determination)：**
+        工作集 $W$ 是系统当前活跃处理的请求集合。静态上限 $W_{\text{static}} = \lfloor M / \beta \rfloor$，其中 $\beta$ 是每个请求估计的内存占用。运行时，工作集大小 $W$ 会根据当前运行请求数 $N_{\text{running}}$ 动态调整：
+        $$
+        W_{\text{scheduled}} = W_{\text{static}} - \lambda \cdot (W_{\text{static}} - N_{\text{running}})
+        $$
+        新的请求被允许进入工作集需要满足两个条件：工作集有可用容量（$W_{\text{current}} < W_{\text{scheduled}}$），且现有请求的缓冲区大小满足 $b_{\text{rem}_i} \ge \mu \cdot r_i \cdot (\tau_{\text{evict}} + \tau_{\text{load}} + \tau_{\text{schedule}})$，其中 $\mu \ge 1$ 是安全系数，$r_i$ 是请求 $i$ 所需的输出速率。
+    *   **缓冲区平衡 (Buffer Balancing)：**
+        在工作集内部，调度器根据效用函数 $U_i$ 动态分配优先级，优先处理那些缓冲区较小（接近耗尽）的请求，以防止停顿。效用函数中 $\phi(b_{\text{rem}_i}) = e^{-b_{\text{rem}_i}}$，确保缓冲区接近清空时优先级最高。调度器采用贪婪算法结合局部搜索来选择最佳的执行请求子集。
+        *   **重计算与加载的平衡：** 调度器会动态决定是从CPU内存重新加载卸载的请求还是重新计算它们。这取决于 $t_{\text{IO}}$（卸载/加载队列等待时间 + 传输时间）和 $t_{\text{recompute}}$（Prefill时间）的比较。如果重新计算更快，则选择重新计算，反之则加载。
+
+4.  **层次化KV Cache管理器：**
+    为了支持调度器的主动抢占和频繁的请求切换，KV Cache管理器需要比现有系统更高效和主动。
+    *   **Write-Through 策略：** 将GPU内存视为更大CPU内存的高速缓存。KV Cache一旦生成，就立即同步写入CPU内存，而不是等到抢占时才写入（Write-back）。这消除了抢占模式预测的需求，最大化了PCIe写入带宽利用率，并支持增量更新。
+    *   **同步分块写入 (Synchronous Chunked Writing)：** 每一轮推理生成的KV Cache都会被缓冲。在下一次迭代开始前，系统会估计执行时间，并从写入缓冲区拉取适当大小的数据块，启动与估计计算时间匹配的写入操作。这确保了写入操作在后续计算间隔内完成，避免了调度器因I/O等待而停顿，并最大化了PCIe带宽。
+    *   **加载-驱逐重叠 (Load-Evict Overlap)：** 在抢占请求并恢复其他请求时，TokenFlow允许并行执行KV Cache的驱逐（eviction）和加载（loading）操作。当一个请求的KV Cache被驱逐时，已同步的部分可以立即释放。同时，其他请求的KV Cache可以分块加载，与驱逐过程重叠。这减少了传输延迟和内存碎片。
+
+**实施：**
+TokenFlow在SGLang框架之上实现，替换了其默认调度器，并增加了请求跟踪和管理模块。KV Cache管理器利用并行的CUDA流和Python多线程实现计算和内存操作的完全重叠。
+
+**评估：**
+*   **实验设置：** 在NVIDIA RTX 4090、A6000和H200等多种GPU平台以及Llama3-8B、Qwen2-7B和Qwen2.5-32B等模型上进行。使用ShareGPT、BurstGPT和真实生产 traces 数据集，以及受控的合成请求分布（突发和泊松分布）。
+*   **评估指标：** TTFT、吞吐量（Throughput）和有效吞吐量（Effective Throughput）。有效吞吐量根据用户消费模式对Token进行加权：当缓冲区低于总输出长度的10%时，Token完全计算；在10%到20%之间线性衰减；超过20%的Token不计入有效吞吐量。
+*   **基线：** SGLang（传统）、SGLang (chunked) 和 Andes (QoE-aware)。
+*   **主要结果：** 在真实世界 traces 中，TokenFlow平均降低了52.6%的TTFT（P50最高达88.7%），同时在A6000上有效吞吐量提高了45.1%，H200上提高了37.1%。在受控突发工作负载下，P99 TTFT降低高达80.2%，平均TTFT降低48.4%，有效吞吐量提高52.9%。在泊松分布工作负载下，有效吞吐量最高提高82.5%（RTX 4090），TTFT降低53.7%（H200）。TokenFlow在保持与SGLang相似的原始吞吐量的前提下，大幅提升了有效吞吐量和降低了TTFT。
+*   **微实验：**
+    *   **Token生成时间线：** TokenFlow能更早地开始服务，并以所需速率精准交付Token，克服了SGLang的队头阻塞问题。
+    *   **抢占式调度可视化：** 展示了当请求缓冲区达到阈值时，系统如何重新分配资源，暂停部分请求（表现为时间线上的平稳段），待其缓冲区接近耗尽时再恢复。
+    *   **多速率请求调度：** 成功支持不同目标生成速率的请求，高速率请求因缓冲区消耗更快而获得更高的调度优先级。
+    *   **异构硬件支持：** 在华为Ascend 910B上同样表现良好。
+*   **超参数敏感性：** 重调度间隔（reschedule interval）和缓冲区保守度（buffer conservativeness）对性能有影响。较短的间隔略微提升有效吞吐量和TTFT，但会增加调度开销。缓冲区保守度可调节响应性和稳定性之间的权衡。
+*   **开销和消融研究：** 调度算法和新设计的请求管理器的运行时开销极低（从SGLang的0.07ms增加到0.4ms）。消融研究显示，写直通（Write-Through）和分层卸载设计是性能提升的主要贡献者。
+
+**讨论：**
+TokenFlow与Andes的主要区别在于，Andes侧重于用户体验质量（QoE），而TokenFlow则引入了一个更全面的QoS指标，同时考虑了延迟、吞吐量和用户体验。TokenFlow通过调度器与内存管理器的双向交互（调度器传递抢占需求，内存管理器提供反馈），实现了更有效的资源分配。对于多节点和分布式系统，TokenFlow的调度和KV管理可以扩展，例如引入节点间缓存层。对于不同类型的客户端，TokenFlow可以通过指定目标输出速率，或在未来工作通过系统负载推断有效速率来支持异构场景。
+
+**总结：**
+TokenFlow通过其创新的Buffer-Aware调度器和层次化KV Cache管理器，显著提升了LLM文本流式服务的性能。它能够动态匹配Token生成速率与用户消费模式，并主动管理GPU内存，从而在请求突发场景下实现更高的有效吞吐量和更低的TTFT。这一研究为实时LLM应用提供了一个鲁棒且高效的解决方案。
+
+## DualSparse-MoE
 DualSparse-MoE: Coordinating Tensor/Neuron-Level Sparsity with Expert Partition and Reconstruction 
 https://arxiv.org/abs/2508.18376 2025.8 港科广
 
