@@ -1,6 +1,93 @@
 # AwesomePaper-for-AI
 Awesome system papers for AI
 
+## 华为 Nexus
+Nexus: Higher-Order Attention Mechanisms in Transformers
+https://arxiv.org/abs/2512.03377 华为 2025.12.4
+1. 🌟 本文提出Nexus，一种通过嵌套自注意力循环递归地精炼Query和Key向量的Transformer架构，旨在捕捉单层内复杂的更高阶依赖关系。
+2. 💡 Nexus通过跨递归步骤共享权重实现了O(1)的额外参数，并在理论上证明其能够突破标准注意力机制的线性瓶颈。
+3. 🚀 经验证，Nexus在多个基准测试中超越了标准Transformer，尤其在多步推理任务上表现出色，并能有效提升现有LLM的推理能力。
+
+本文提出了一种名为 Nexus 的新型 Transformer 架构，旨在通过递归框架增强模型的表征能力，以解决标准 Transformer 中一阶注意力机制存在的“低秩瓶颈”（low-rank bottleneck）问题，该问题限制了其捕获复杂、多跳关系（multi-hop relationships）的能力。
+
+
+<img width="1042" height="542" alt="image" src="https://github.com/user-attachments/assets/e10e3153-27ee-4363-b907-b72454b2b567" />
+
+<img width="1042" height="345" alt="image" src="https://github.com/user-attachments/assets/8690fb10-c741-4f13-a280-f9d4e8aff1b1" />
+
+<img width="1042" height="618" alt="image" src="https://github.com/user-attachments/assets/05663721-5009-4cf6-8edd-f814b1d46857" />
+
+
+**1. 引言与动机**
+
+标准 Transformer 架构依赖自注意力机制（self-attention mechanism）来捕获长距离依赖（long-range dependencies）。然而，现有理论研究表明，自注意力矩阵存在秩塌陷（rank collapse）问题，限制了其对复杂、分层关系（hierarchical relationships）的建模能力，尤其是在需要多步推理（multi-step reasoning）和符号操作（symbolic manipulation）的任务中。标准的注意力权重 $A = \text{softmax}\left( \frac{QK^\top}{\sqrt{d_k}} \right) \in \mathbb{R}^{n \times n}$ 仅建模令牌（token）之间的成对（pairwise）交互，这阻碍了模型执行多步推理或捕获更复杂、分层关系的能力。例如，对于三个令牌 $x_i, x_j, x_k$ 之间的三元交互（triadic interaction），标准自注意力机制需要通过多层堆叠或迭代推理才能推断其组合效应，这不仅增加了计算负担，还可能导致信息损失和梯度消失问题。
+
+**2. 核心方法：高阶注意力机制（Higher-Order Attention Mechanism）**
+
+Nexus 的核心思想是动态地改进 Query 和 Key 的表示，使其本身成为内部注意力循环（inner attention loops）的输出。这意味着在最终注意力计算之前，令牌可以聚合全局上下文（global context）并建模高阶关联（high-order correlations）。
+
+**2.1 高阶注意力（H-Attention）**
+
+H-Attention 通过首先对 Query 和 Key 应用自注意力机制来细化它们的表示：
+$$ \text{H-Attention}(X) = \text{Attention}(\text{Attention}_q (X), \text{Attention}_k(X), V) \quad (6) $$
+其中，
+$$ \text{Attention}_q (X) = \text{softmax}\left( \frac{QQ^\top}{\sqrt{d_k}} \right)Q \quad (7) $$
+$$ \text{Attention}_k(X) = \text{softmax}\left( \frac{KK^\top}{\sqrt{d_k}} \right)K \quad (8) $$
+因此，高阶注意力可以形式化为：
+$$ \text{H-Attention}(X) = \text{softmax}\left( \frac{\text{Attention}_q (X) (\text{Attention}_k (X))^\top}{\sqrt{d_k}} \right)V \quad (9) $$
+通过这种方式，$\text{Attention}_q (X)$ 和 $\text{Attention}_k (X)$ 封装了来自多个令牌的聚合信息，使得后续的注意力操作能够直接考虑多令牌依赖（multi-token dependencies），从而在一个注意力层内捕获高阶交互。
+
+**2.2 递归高阶注意力（Recursive Higher-Order Attention）**
+
+该机制可以递归地扩展，以进一步增强模型捕获分层和长距离依赖的能力。第 $m$ 阶注意力可以递归定义为：
+$$ H_m\text{-Attention}(X) = \text{Attention}(H_{m-1}\text{-Attention}_q (X), H_{m-1}\text{-Attention}_k (X), V) \quad (11) $$
+每个递归步骤进一步处理 Query 和 Key 向量，使模型能够捕获多级依赖和更复杂的内部关系结构。
+
+**2.3 参数高效的权重共享（Parameter-Efficient Weight Sharing）**
+
+为了避免高阶机制带来的参数量增加，Nexus 引入了一种权重共享策略。基于语义转换在递归层级上相似的假设，Nexus 强制内部（inner）和外部（outer）注意力层之间共享参数 $\theta = \{W_q, W_k, W_v\}$。这意味着内部注意力机制重用与外部主循环相同的投影权重。
+$$ H\text{-Attention}_q (X; \theta) = \text{Attention}(X, X, X; \theta) \cdot W_q \quad (12) $$
+这一约束确保了 Nexus 的参数复杂度相对于递归阶数 $m$ 保持 $O(1)$，与标准 Transformer 相同，从而实现了参数高效性。
+
+**2.4 复杂度分析**
+
+引入高阶注意力机制会增加计算复杂度。第 $m$ 阶高阶注意力机制的计算复杂度为 $O(2^m n^2 d_k)$。尽管时间复杂度与递归阶数 $m$ 呈指数关系，但在实践中，较小的递归深度（例如 $m=2$）就足以实现显著的性能提升。因此，实际计算开销相对于标准注意力而言是一个常数因子（例如 $m=2$ 时约为 2 倍）。而参数复杂度通过权重共享仍保持为 $O(1)$。
+
+**2.5 标准注意力机制的线性瓶颈（Linear Bottleneck）**
+
+Bhojanapalli et al. (2020) 指出，当 $d_k < n$ 时，标准注意力机制缺乏表达任意注意力权重 $A$ 的能力，即存在低秩瓶颈。Theorem 3.1 进一步阐述了这一问题：
+1.  给定 $N$ 个不同的输入 $X_m \in \mathbb{R}^{n \times d}$ 和对应的行随机矩阵 $A_m \in \mathbb{R}^{n \times n}$，只要 $\text{rank}(\log(A_m)) \le d_k$，就存在映射 $Q, K: \mathbb{R}^{n \times d} \rightarrow \mathbb{R}^{n \times d_k}$ 使得 $\text{softmax}\left( \frac{Q(X_m)K(X_m)^\top}{\sqrt{d_k}} \right) = A_m$。
+2.  如果 $d < n-1$，存在满足 $\text{rank}(\log(A_m))=1$ 的 $A_m \in \mathbb{R}^{n \times n}$，但对于所有线性变换 $Q(X) = XW_q, K(X) = XW_k$，上述等式仍然不成立。
+这表明标准注意力机制无法充分表示低秩矩阵，即使是秩为 1 的 $\log$-attention-weight 矩阵也无法表示。Nexus 通过引入非线性的 $Q(X) = \text{Attention}_q (X)$ 和 $K(X) = \text{Attention}_k (X)$ 映射来解决这一问题，使其更加灵活。
+
+**3. 实验验证**
+
+**3.1 不同规模模型上的评估**
+
+Nexus 在 Pythia 模型上进行验证，并在 PIQA、Hellaswag、SciQ、ARC-E、ARC-C 和 LogiQA 等六个公共数据集上进行了评估。结果显示，Nexus 在所有模型规模上都优于标准 Transformer baseline，尤其是在需要多步推理或长上下文整合的任务上（如 SciQ 和 PiQA）表现出显著提升。
+
+**3.2 消融研究（Ablation Study）**
+
+在 70M 参数规模模型上进行了消融研究，主要发现：
+*   **高阶组件的选择**：对 Query 和 Key 同时应用高阶注意力（Nexus-QK）能带来显著性能提升，而对 Value 应用则无额外收益。这表明核心优势在于细化 Query 和 Key 之间的关联对齐。
+*   **参数效率与权重共享**：权重共享策略（Nexus-QK-Shared）在保持参数量与标准 Transformer 相当的同时，性能略有下降但仍显著优于 baseline，实现了高表达能力与参数效率的平衡。
+*   **递归阶数的影响**：增加到 3 阶注意力（Nexus-Recursive）进一步提升了性能，验证了高阶递归捕获更复杂依赖的能力。综合效率和准确性，2 阶共享配置（Nexus-QK-Shared）被选为默认设置。
+
+**3.3 注意力模式可视化（Visualization of Attention Patterns）**
+
+可视化结果（图 2）显示：
+*   **因果结构（Causal Structure）的保留**：Nexus 的外部注意力（Nexus outer）与标准 Transformer 类似，都保持了因果语言模型（causal language models）的基本结构，如对局部上下文（local context）的强对角线关注和对句首令牌（beginning-of-sentence token）的显著关注，表明 Nexus 在增强表达能力的同时保持了稳定性。
+*   **内部注意力（Inner Attentions）的作用**：内部 Key-Attention（Inner K-Attention）显示出独特的垂直条纹，表明它充当了语义高亮器（semantic highlighter），在主注意力机制计算最终分数之前，识别并聚合全局相关信息（如关键词或实体）到 Key 表示中。
+*   **上下文感知投影（Contextualized Projections）**：Nexus 网络中的 Q 和 K 向量是上下文感知的表示，通过内部循环从先前令牌聚合而来，实现了“预推理”步骤，简化了最终外部注意力层任务。
+
+**3.4 改造标准 Transformer 以进行推理（Retrofitting Standard Transformers for Reasoning）**
+
+Nexus 还可作为现有 LLM 的“升级套件”。通过将预训练的 Qwen2.5-Base 模型（1.5B 和 7B）在 SFT 阶段改造为 Nexus 架构，并在 MATH-500、AIME24 和 GPQA-Diamond 等推理基准上进行评估，Nexus-SFT 取得了持续的性能提升，尤其是在数学推理能力上。这表明 Nexus 架构可以有效升级现有模型，以较低的适应成本释放其在复杂推理任务中的潜力。
+
+**4. 结论**
+
+Nexus 通过引入递归高阶注意力机制，迭代处理 Query 和 Key 向量，构建了多级注意力框架，从而增强了模型捕获复杂分层关系的能力，解决了标准一阶注意力的低秩瓶颈。理论分析表明其具有更强的表达能力，经验评估则证实了 Nexus 在多个基准测试中优于标准 Transformer。此外，Nexus 还支持现有预训练模型的有效“升级改造”。未来的工作将侧重于优化高阶注意力的计算效率，并探索其在视觉和多模态学习等更广泛领域的适用性。
+
 ## Arbitrage 投机加速
 Arbitrage: Efficient Reasoning via Advantage-Aware Speculation
 
