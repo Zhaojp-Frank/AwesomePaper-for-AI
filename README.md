@@ -1,6 +1,82 @@
 # AwesomePaper-for-AI
 Awesome system papers for AI
 
+## SOSP Mercury
+Mercury: Unlocking Multi-GPU Operator Optimization for LLMs via Remote Memory Scheduling
+https://dl.acm.org/doi/pdf/10.1145/3731569.3764798
+  - https://github.com/ChandlerGuan/mercury_artifact
+
+1. 💡 大型语言模型 (LLMs) 对计算和内存的需求已超出单 GPU 的能力，导致多 GPU 算子优化成为关键挑战，而现有方法未能有效利用远程 GPU 内存。
+2. 🛠️ 为此，本文提出了 Mercury，一个**基于 CommIR 的多 GPU 算子编译器，CommIR 将远程 GPU 内存视为内存层级中的一等公民**，通过引入 p**arallelize、shift 等变换原语来统一计算、内存和通信调度**。
+3. 🚀 实验表明，Mercury **能够自动生成高效的多 GPU 算子**，在各种 LLM 算子和硬件平台上，其性能一致优于现有手调基线和自动优化方法，平均加速比达 1.56 倍。
+
+Mercury是一篇关于大模型（LLMs）多GPU算子优化的论文，提出了一个名为Mercury的编译器。该编译器核心思想是将远程GPU内存视为内存层次结构中显式管理的一部分，**扩展了可用存储和通信资源，超越了本地HBM的限制**。**通过这种统一的视角，编译器能够整体性地推理数据放置和设备间通信，从而解锁了一个远超现有手动策略的巨大设计空间**。
+<img width="884" height="232" alt="image" src="https://github.com/user-attachments/assets/b8dbe386-a93d-4d06-a99e-ab750a88a2c1" />
+<img width="512" height="320" alt="image" src="https://github.com/user-attachments/assets/2c792f9f-2074-4f3c-8533-e66d07f99144" />
+<img width="1028" height="398" alt="image" src="https://github.com/user-attachments/assets/ccc2d40d-11f8-4a6f-bbbc-ecdb49219eaa" />
+<img width="1041" height="572" alt="image" src="https://github.com/user-attachments/assets/ddab11b0-2660-40d5-b060-26eccaf05581" />
+
+**1. 问题背景与动机**
+随着LLMs模型大小和输入序列长度的增长，单个算子（特别是Attention和GEMM）的计算和内存需求已超出单个GPU的容量。例如，Llama-3 70B的KV缓存需要282GB内存，远超NVIDIA H100 GPU的80GB HBM。因此，多GPU算子设计不仅是性能优化，更是训练和推理大型模型的根本要求。然而，**优化LLMs的多GPU算子是一个高度手动且劳动密集的过程**，现有方法难**以适应新的硬件和模型配置**。当前**多GPU编译器（如torch.compile）的性能瓶颈在于其“本地内存中心”的执行模型假设**，即所有输入数据必须在计算前完全存在于每个GPU的本地内存中。这种**限制导致数据重复、浪费HBM容量**，并阻碍了更深层次的平铺（tiling）优化，**使得编译器无法探索更灵活的执行和通信模式，特别**是利用远程内存作为共享数据存储资源**以减少本地内存占用和通过计算-通信重叠**（compute-communication overlap）降低整体延迟。
+
+**2. 核心方法：CommIR与远程内存调度**
+Mercury的核心是CommIR，一个**基于循环（loop-based）的中间表示（IR）**。CommIR通过将远程GPU内存视为内存层次结构中一等公民，统一了计算、内存和通信。它引入了**结构化的转换原语（transformation primitives）**，以支持标准的**GPU内平铺和高级的GPU间调度模式，如异步的shifted patterns和**集体通信原语。
+
+**2.1 CommIR的定义与原语**
+CommIR扩展了传统的循环IR，引入了四种用于远程内存访问语义的转换原语：
+*   **Parallelize**: 将一个循环的迭代分配到**并行工作器**（parallel workers）上，指定网络层级（如inter-node或intra-node）。它默认初始化，将由并行循环索引的缓冲区分片（shard），未索引的则复制（replicate）。
+*   **Shift**: **偏移本地循环的索引**，使其相对于并行循环的索引，从而引入异步访问模式，使不同工作器错开数据访问。这显式地在不同时间步引入远程内存访问，并自动对移位循环相关的缓冲区进行分片。
+*   **Shard**: 将缓冲区**跨工作器分片**，每个并行rank拥有缓冲区的一个不相交部分。
+*   **Replicate**: 在参与并行循环的所有工作器之间**复制缓冲区**，使每个rank都拥有一个完整的副本。
+
+**2.2 远程内存访问模式的表示**
+这些原语使得CommIR能够表示广泛的远程内存访问模式：
+*   **并行语义（Parallel Semantic）**: `Parallelize`原语通过在指定网络层级（如层级0为inter-node，层级1为intra-node）并行化循环，来实现工作负载分配。例如，在图4(c), (d)中，循环$I_0$和$J_0$分别映射到层级0和1，这导致了缓冲区$B$在inter-node层级被共享，在intra-node层级被复制。
+*   **异步访问（Asynchronous Access）**: `Shift`原语通过偏移循环索引在工作器之间引入异步性。例如，在图5中，对循环$J$进行`Shift`操作，使其索引依赖于并行循环$I$的索引，即`(j+i)%J`。这导致了错开的数据访问，从而降低了存储需求，并通过允许计算和通信重叠（如Ring-style传递）来提高效率。
+*   **集体访问（Collective Access）**: `Shard`和`Replicate`原语在降低阶段（lowering phase）被解释为集体操作，如AllGather、Broadcast、AllReduce和ReduceScatter。例如，分片读取缓冲区会触发集体收集操作（AllGather或Broadcast），而分片写入缓冲区则触发归约操作（AllReduce或ReduceScatter）。CommIR在降低阶段通过基于规则的模式匹配来决定插入哪种集体通信。
+
+**2.3 CommIR的表达能力**
+CommIR可以表示广泛的并行策略，包括：
+*   **同步并行算子**：如上下文并行（Context Parallel）通过并行化注意力操作的查询维度（I轴），以及DeepSpeed-Ulysses的头部并行（Head Parallel）通过并行化头部维度。
+*   **异步算子**：如RingAttention和LoongTrain/USP，它们通过在特定轴（如KV激活的J轴）上应用`Shift`原语来实现数据在工作器之间的异步传递和通信-计算重叠。
+*   **集体归约**：如TreeAttention，通过重排循环并并行化归约轴（J轴），然后使用`AllReduce`来实现。
+*   **新型模式**：CommIR能自动探索和发现手动设计难以企及的新策略。例如，将`Shift`应用于归约轴（如图7中的“Shift Reduce”），允许部分和在工作器之间并行传递。更复杂的混合模式（如图7中的“Hybrid Pattern”）则结合了多层级的`Parallelize`和`Shift`，实现了复杂的组内和组间通信。
+
+**3. 自动调优（Auto-Tuner）**
+Mercury采用自动调优系统来搜索最佳的分布式算子调度。
+*   **设计空间生成**：生成过程分为两个顺序阶段：
+    *   **计算调度（Computation Schedule）**：应用`Tile`、`Reorder`和`Join`转换来定义本地循环结构和缓冲区布局，探索不同的计算划分方式。
+    *   **通信调度（Communication Schedule）**：应用`Parallelize`、`Shift`、`Shard`和`Replicate`等通信原语，分配计算并管理远程内存访问。
+    *   为了减少搜索空间，生成过程显式结合了硬件拓扑（hardware mesh configuration），只根据网格大小进行平铺和并行化。
+*   **搜索目标**：调优器旨在最小化生成分布式算子的端到端延迟，同时满足内存约束。
+    *   **延迟评估**：每个候选调度都被完全降低（lowered）并在真实硬件上进行性能分析以获取运行时测量数据。
+    *   **内存约束**：通过CommIR表示静态分析每个候选的存储布局，并计算每个工作器的内存占用，超出容量的候选被提前剪枝。
+
+**4. 实现细节**
+*   **DSL**：Mercury设计了一个Python-like的领域特定语言（DSL），它扩展了PyTorch的前端，使其支持循环级别的分发语义。DSL基于`Axis`（循环变量）、`Buffer`（带轴形状的张量）和`Grid`（计算迭代空间）三个核心抽象。
+*   **调度原语实现**：
+    *   **计算原语**：通过重写IR的循环树来修改循环嵌套表示。
+    *   **通信原语**：以IR中循环和缓冲区对象的注解形式实现，不直接插入通信代码，而是在代码生成阶段进行实例化。
+*   **代码生成**：
+    *   **通信核生成**：通过静态分析CommIR中的循环索引转换来推断P2P通信（如`Shift`引入的错开发送/接收模式）的发送方和接收方rank。集体通信则通过分析带有`shard`或`replicate`注解的缓冲区的访问模式和聚合语义来推断。
+    *   **本地计算降低**：将IR的计算部分降低到后端特定的代码，主要使用TorchInductor。对于计算密集型区域，可选地修补（Patch）高性能库（如FlashAttention）。
+*   **算子间重新分片（Inter-Operator Resharding）**：为了将算子级优化的好处扩展到整个模型，Mercury支持图级推理，考虑单个算子的执行时间以及它们之间重新分片所需的通信开销。通过一个图级搜索算法（如Algorithm 1所示），在算子配置和重新分片成本之间找到最优组合，最小化总成本。
+
+**5. 评估**
+Mercury在多种GPU设备和互连设置上进行了评估，包括H100、A100和L4。
+*   **算子基准测试**：在Attention（MHA, GQA）和GEMM（AllGather-GEMM, GEMM-ReduceScatter）算子上，Mercury在所有设置中始终优于现有解决方案，平均加速比在H100上高达4倍（MHA），在A100上达到1.9倍（GEMM）。它能自适应地为算子特征和硬件定制优化策略。
+*   **网络拓扑适应性**：在不同的多GPU配置下（如1x4、2x2、4x1等），Mercury的延迟始终最低，平均加速比达2.91倍。其优势在复杂的混合拓扑中更为显著，而静态方法则表现不佳。
+*   **上下文长度可扩展性**：在MHA算子中，随着序列长度从32K扩展到2M tokens，Mercury始终优于所有基线。在2M tokens下，其他基线出现OOM错误，而Mercury通过积极分片KV缓存和输出张量，以增加通信换取内存减少，从而生成可行的执行计划。
+*   **模型级基准测试**：在Llama3-8B和Llama3-70B模型上，Mercury的计算图级搜索算法（图12），相比3D并行策略显著降低了延迟。这得益于对算子调度和重新分片决策的协同考虑，消除了冗余布局转换，并简化了层间数据流。
+*   **设计空间分析**：如图13所示，Mercury通过CommIR提供的广泛和富有表现力的搜索空间，能够探索现有策略以及手动设计难以企及的新颖调度。例如，在最佳延迟的调度中，它结合了多层级的HP与shifted CP，并对归约维度进行shift以实现细粒度的计算-通信重叠。而最佳内存的调度则使用上下文维度的intra-node并行和shifted的本地Q维度，显著减少了峰值内存使用。USP等手动设计仅探索了整体设计空间中的一小部分。
+
+**6. 相关工作**
+*   **张量编译器**：Halide和AutoTVM/Ansor/MetaSchedule等早期张量编译器主要关注GPU内调度。随着模型规模增大，它们加入了基础的多GPU支持，但通常将设备间数据移动视为外部机制，限制了远程内存复用和异步共享的机会。Mercury通过将远程GPU内存视为一等公民，并统一计算、内存和通信与显式原语，在此基础上取得了进展。
+*   **融合分布式算子**：Flux、Comet、Triton-Distributed和TileLink等系统探索了将通信与计算紧密结合的融合设计，以最大化重叠。Mercury的`Shift`原语概念可以应用于这些融合设计中，但其代码生成和自动调优仍是未来研究挑战。
+
+**7. 结论**
+Mercury是一个用于多GPU张量程序的自动化编译器框架，建立在创新的循环IR CommIR之上。通过结合自定义DSL和先进的调度与通信原语，Mercury协同优化计算和通信，发现了新颖的并行策略，在Attention和GEMM算子上超越了现有最先进的技术。它简化了复杂的多GPU算子设计，并能适应多样化的硬件，为大规模模型的扩展性、高效执行铺平了道路，并为未来的调优、图级集成和异构设备支持开辟了途径。
+
 ## Coruscant
 Coruscant: Co-Designing GPU Kernel and Sparse Tensor Core to Advocate Unstructured Sparsity in Efficient LLM Inference
 - Micro25：软件+硬件。
