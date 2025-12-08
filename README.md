@@ -12,7 +12,9 @@ https://arxiv.org/abs/2512.03494 美团 2025.12.3
 1. ✨ 本研究验证了在**解码阶段使用精确的Top-k Decoding**能显著降低计算成本，同时在**长上下文任务上保持甚至超越全注意力**（full attention）的性能。
 2. 📚 进一步的实验表明，在监督微调（SFT）阶段引入**原生Top-k Attention训练机制**，可确保**训练与推理一致性，从而显著提升模型在Top-k Decoding下**的表现。
 3. 💡 论文探讨了近似Top-k算法的精度对下游任务的影响，并从熵的角度解释了Top-k SFT模型在低熵任务环境下表现更优的理论基础。
+   
 <img width="598" height="405" alt="image" src="https://github.com/user-attachments/assets/5445a9fa-1b85-4d79-8361-d12d37f9ec8a" />
+<img width="941" height="558" alt="image" src="https://github.com/user-attachments/assets/c1aa4f6a-8bc7-458c-9319-0937dbee5740" />
 
 大型语言模型 (LLMs) 在长上下文建模领域日益普及，但其推理计算成本已成为阻碍智能体和多模态应用发展的重要瓶颈。本报告围绕加速长上下文推理的核心问题，对 Top-k Attention 机制在解码和训练阶段的有效性及其理论机制进行了初步研究。
 
