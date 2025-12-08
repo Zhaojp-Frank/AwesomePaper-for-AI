@@ -1,6 +1,32 @@
 # AwesomePaper-for-AI
 Awesome system papers for AI
 
+##
+A Preliminary Study on the Promises and Challenges of Native Top-k Sparse Attention
+
+https://arxiv.org/abs/2512.03494 美团 2025.12.3
+
+中文解读：https://mp.weixin.qq.com/s/d0c6w_S7ppox5oPqd20RbQ 
+测的偏长序列，没有纯粹的数学/代码？？
+
+1. ✨ 本研究验证了在**解码阶段使用精确的Top-k Decoding**能显著降低计算成本，同时在**长上下文任务上保持甚至超越全注意力**（full attention）的性能。
+2. 📚 进一步的实验表明，在监督微调（SFT）阶段引入**原生Top-k Attention训练机制**，可确保**训练与推理一致性，从而显著提升模型在Top-k Decoding下**的表现。
+3. 💡 论文探讨了近似Top-k算法的精度对下游任务的影响，并从熵的角度解释了Top-k SFT模型在低熵任务环境下表现更优的理论基础。
+<img width="598" height="405" alt="image" src="https://github.com/user-attachments/assets/5445a9fa-1b85-4d79-8361-d12d37f9ec8a" />
+
+大型语言模型 (LLMs) 在长上下文建模领域日益普及，但其推理计算成本已成为阻碍智能体和多模态应用发展的重要瓶颈。本报告围绕加速长上下文推理的核心问题，对 Top-k Attention 机制在解码和训练阶段的有效性及其理论机制进行了初步研究。
+
+首先，研究验证了精确 Top-k Decoding 的有效性。在解码阶段，仅保留与 Query 相似度最高的关键 Key 作为上下文窗口，这不仅显著降低了计算开销，而且在 HELMET 和 LongBench v2 等下游任务上实现了与 Full Attention 相当甚至超越的性能。Top-k Ratio ($\rho$) 定义为所选关键 tokens ($W$) 占总上下文 tokens ($N$) 的比例：
+$\rho = \frac{W}{N} = \frac{|K_{top}|}{|K|}$
+其中 $K_{top}$ 是从所有 Key tokens $K$ 中选出的 $W$ 个最显著的 tokens。当 $\rho$ 较低时，计算更稀疏；$\rho = 1$ 则对应 Full Attention。实验结果表明，即使在低 $\rho$ 值下，Top-k Decoding 也能保持高性能。
+
+其次，研究进一步探索了原生 Top-k Attention 训练策略。通过在 Llama-3-8B-ProLong-512k-Base 模型进行 Supervised Fine-Tuning (SFT) 阶段引入 Top-k Attention kernel，获得了 Llama-3-8B-ProLong-Instruct-512K-TopK-SFT 模型。具体而言，该策略通过封装 FLASHATTENTION kernel，预先计算精确 Top-k 索引和分数，并将其传递以更新相应掩码，从而在 1% 的 Top-k 比例下实现变长 Top-k Attention 训练。实验证实，训练和推理阶段 Top-k Attention 操作的一致性有助于进一步释放 Top-k Decoding 的潜力，显著提升模型性能。
+
+再者，考虑到精确 Top-k Attention 的高计算复杂性，研究探讨了近似 Top-k 算法精度对下游任务的影响。为此，引入了 Retrieval Precision ($p$) 的概念：
+$p = \frac{|K_{approx} \cap K_{top}|}{|K_{approx}|} = \frac{|K_{approx} \cap K_{top}|}{W}$
+其中 $K_{top}$ 是精确 Top-W scores 对应的 tokens 集合，而 $K_{approx}$ 是近似方法实际检索到的 tokens 集合。该指标衡量了检索到的集合与真实值之间的重叠率。研究证实了下游任务性能与近似保真度之间存在正相关关系，即 $p$ 值越高，性能越好。对 DeepSeek-V3.2-Exp 模型中 Lightning Indexer 的精度进行了统计评估，发现其平均精度约为 60%，但结合其庞大的参数规模，仍能提供优越的端到端性能。Lightning Indexer 虽然理论复杂度仍为 $O(N^2)$，但通过减少 attention heads 数量、降低 embedding 维度和 FP8 量化有效降低了计算系数，并通过 Multi-Query Attention (MQA) 模式实现了近似。
+
+最后，报告从信息熵的角度提供了理论解释。实验观察表明，经过 Top-k Attention SFT 训练的模型在下游任务中表现出明显的熵降低现象。这验证了低熵状态更适应 Top-k Decoding 的假设，为稀疏 attention 机制的有效性提供了坚实的理论基础。经过 Top-k SFT 的模型相对于原始模型在不同任务上都显示出 attention 熵的降低。
 
 ## TokenFlow
 TokenFlow: Responsive LLM Text Streaming Serving under Request Burst via Preemptive Scheduling 
