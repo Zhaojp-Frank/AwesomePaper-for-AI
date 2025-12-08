@@ -3,12 +3,13 @@ Awesome system papers for AI
 
 ## 华为 Nexus
 Nexus: Higher-Order Attention Mechanisms in Transformers
+
 https://arxiv.org/abs/2512.03377 华为 2025.12.4
 1. 🌟 本文提出Nexus，一种通过嵌套自注意力循环递归地精炼Query和Key向量的Transformer架构，旨在捕捉单层内复杂的更高阶依赖关系。
 2. 💡 Nexus通过跨递归步骤共享权重实现了O(1)的额外参数，并在理论上证明其能够突破标准注意力机制的线性瓶颈。
 3. 🚀 经验证，Nexus在多个基准测试中超越了标准Transformer，尤其在多步推理任务上表现出色，并能有效提升现有LLM的推理能力。
 
-本文提出了一种名为 Nexus 的新型 Transformer 架构，旨在通过递归框架增强模型的表征能力，以解决标准 Transformer 中一阶注意力机制存在的“低秩瓶颈”（low-rank bottleneck）问题，该问题限制了其捕获复杂、多跳关系（multi-hop relationships）的能力。
+本文提出了一种名为 Nexus 的新型 Transformer 架构，旨在通过递归框架增强模型的表征能力，以解决标准 Transformer 中一阶注意力机制存在的“**低秩瓶颈**”（low-rank bottleneck）问题，该问题**限制了其捕获复杂、多跳关系（multi-hop relationships）的能力**。
 
 
 <img width="1042" height="542" alt="image" src="https://github.com/user-attachments/assets/e10e3153-27ee-4363-b907-b72454b2b567" />
@@ -20,11 +21,11 @@ https://arxiv.org/abs/2512.03377 华为 2025.12.4
 
 **1. 引言与动机**
 
-标准 Transformer 架构依赖自注意力机制（self-attention mechanism）来捕获长距离依赖（long-range dependencies）。然而，现有理论研究表明，自注意力矩阵存在秩塌陷（rank collapse）问题，限制了其对复杂、分层关系（hierarchical relationships）的建模能力，尤其是在需要多步推理（multi-step reasoning）和符号操作（symbolic manipulation）的任务中。标准的注意力权重 $A = \text{softmax}\left( \frac{QK^\top}{\sqrt{d_k}} \right) \in \mathbb{R}^{n \times n}$ 仅建模令牌（token）之间的成对（pairwise）交互，这阻碍了模型执行多步推理或捕获更复杂、分层关系的能力。例如，对于三个令牌 $x_i, x_j, x_k$ 之间的三元交互（triadic interaction），标准自注意力机制需要通过多层堆叠或迭代推理才能推断其组合效应，这不仅增加了计算负担，还可能导致信息损失和梯度消失问题。
+标准 Transformer 架构依赖自注意力机制（self-attention mechanism）来捕获长距离依赖（long-range dependencies）。然而，现有理论研究表明，自注意力矩阵存在秩塌陷（rank collapse）问题，限制了其对复杂、分层关系（hierarchical relationships）的建模能力，尤其是在需要多**步推理（multi-step reasoning）和符号操作（symbolic manipulation）的任务中**。标准的注意力权重 $A = \text{softmax}\left( \frac{QK^\top}{\sqrt{d_k}} \right) \in \mathbb{R}^{n \times n}$ 仅建模令牌（token）之间的成对（pairwise）交互，这阻碍了模型执行多步推理或捕获更复杂、分层关系的能力。例如，对**于三个令牌** $x_i, x_j, x_k$ 之间的三元交互（triadic interaction），标准自注意力机制需要通过多层堆叠或迭代推理才能推断其组合效应，这不仅增加了计算负担，还可能导致信息损失和梯度消失问题。
 
 **2. 核心方法：高阶注意力机制（Higher-Order Attention Mechanism）**
 
-Nexus 的核心思想是动态地改进 Query 和 Key 的表示，使其本身成为内部注意力循环（inner attention loops）的输出。这意味着在最终注意力计算之前，令牌可以聚合全局上下文（global context）并建模高阶关联（high-order correlations）。
+Nexus 的核心思想是**动态地改进 Query 和 Key 的表示，使其本身成为内部注意力循环（inner attention loops）的输出。这意味着在最终注意力计算之前，令牌可以聚合全局上下文（global context）并建模高阶关联**（high-order correlations）。
 
 **2.1 高阶注意力（H-Attention）**
 
