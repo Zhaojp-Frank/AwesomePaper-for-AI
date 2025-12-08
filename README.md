@@ -3,12 +3,22 @@ Awesome system papers for AI
 
 ## Arbitrage 投机加速
 Arbitrage: Efficient Reasoning via Advantage-Aware Speculation
+
 https://arxiv.org/abs/2512.05033 伯克利 apple等，2025.12.4
 
 1. 🤔 现有的步级 Speculative Decoding (SD) 方法，例如 RSD，在推理任务中**由于频繁且无意义地重新生成步骤**，导致了大量的计算浪费。
 2. 💡 ARBITRAGE 提出了一种**优势感知型步级推测生成框架**，它使用轻量级 ARBITRAGE ROUTER 来**预测目标模型何时能提供显著更好的步骤**，从而最大限度地减少冗余计算。
 3. ✨ 在多个数学推理基准测试中，ARBITRAGE 始终优于先前的基线，在匹配精度下可将推理延迟降低高达约 2 倍。
 基于草稿模型和目标模型在特定推理步骤上的预期质量差异。它动态地**在草稿模型和目标模型之间进行路由**，仅在预期目标模型**能够提供“有意义的改进”时才调用目标模型**。
+基于SGLang A6000
+
+
+<img width="972" height="697" alt="image" src="https://github.com/user-attachments/assets/bfbf94e5-4458-48dd-bf11-bf6baa8d01d0" />
+
+<img width="1104" height="718" alt="image" src="https://github.com/user-attachments/assets/3212c14a-2235-42d7-901b-797b20b2547f" />
+
+<img width="1104" height="566" alt="image" src="https://github.com/user-attachments/assets/2278e241-164c-4d1a-b6d7-fc5e75145d85" />
+
 
 本文提出了一种名为 ARBITRAGE 的新型分步式推测生成框架，旨在解决大型语言模型（LLMs）在长篇链式思考（Chain of Thought, CoT）推理任务中推理效率低下的问题。尽管传统的推测解码（Speculative Decoding, SD）通过利用一个快速但不太精确的草稿模型（draft model）和一个更强大、更精确的目标模型（target model）来加速推理，但其在推理任务中面临挑战，因为微小的 token 级不匹配就可能导致语义上等效的步骤被不必要地拒绝。近期工作转向了分步式语义验证，例如奖励引导推测解码（Reward-guided Speculative Decoding, RSD），通过使用进程奖励模型（Process Reward Model, PRM）评估整个推理步骤，但这仍然导致大量被拒绝步骤的无谓重新生成，浪费了宝贵的计算资源。
 
