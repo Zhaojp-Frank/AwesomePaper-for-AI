@@ -1,6 +1,86 @@
 # AwesomePaper-for-AI
 Awesome system papers for AI
 
+##
+DualSparse-MoE: Coordinating Tensor/Neuron-Level Sparsity with Expert Partition and Reconstruction 
+https://arxiv.org/abs/2508.18376 2025.8 港科广
+
+1. 💡 论文指出Mixture of Experts (MoE) 模型存在tensor-level和neuron-level双重稀疏性，并引入post-training expert partitioning方法来在不重新训练的情况下增强tensor-level稀疏性，从而提升精度和效率。
+2. 🚀 基于此，作者提出了DualSparse-MoE推理系统，该系统通过动态的tensor-level计算dropping和静态的neuron-level reconstruction来协同利用双重稀疏性。
+3. 📊 实验证明，DualSparse-MoE在实现显著计算加速的同时能将精度损失降至最低（例如，MoE module speedup可达1.41倍，平均精度仅下降0.5%），并在Mixtral、OLMoE和DeepSeek模型上均展现出优异性能。
+
+该论文提出了 DualSparse-MoE，一个用于高效部署大规模语言模型（LLMs）中 Mixture of Experts (MoE) 架构的推理系统。MoE 通过**引入TP稀疏性来降低每 token 的计算量**，但其巨大的计算规模和不可预测的激活模式仍带来挑战。论文的核心思想是**利用预训练 MoE 模型中固有的双重稀疏性**：张量级稀疏性（不同专家间的激活选择）和神经元级稀疏性（单个专家内部的神经元激活模式），以**在保证精度最低损失的前提下提升效率。**
+
+**核心方法论：**
+
+1.  **Expert Partition（专家分区）**
+    为了在后训练阶段**诱导更细粒度的张量级稀疏性**，论文提出了两种专家分区方法：
+
+    *   **Complete Transformation（完全变换）**
+        目标：通过更细粒度的专家结构来提升模型微调时的精度。
+        机制：将预训练 MoE 模型中的每个**专家划分为 $P$ 个更细粒度的专家。**
+        步骤：
+        1.  **重复 gating network 权重：** 原始的 gating network 权重 $\mathbf{W}_g \in \mathbb{R}^{d_{model} \times E}$ 被复制 $P$ 次，形成新的 $\mathbf{W}_g^P \in \mathbb{R}^{d_{model} \times (E \times P)}$。这意味着对于每个原始专家 $e$，其对应的 $P$ 个新专家共享相同的 gating logit $l_e$。
+        2.  **分区专家神经元：** 将原始专家的神经元均匀地分配给这 $P$ 个新专家。例如，如果原始专家 FFN 的中间维度为 $d_{ffn}$，则每个新专家 FFN 的中间维度变为 $d_{ffn}/P$。
+        3.  **缩放 down-projection 权重：** 每个分区后的专家 FFN 的 down-projection 权重 $\mathbf{W}_2$ 被乘以 $P$。
+        数学一致性证明：
+        原始 MoE 输出 $\mathbf{y}_i = \sum_{e=1}^E s_e \cdot f_e(\mathbf{x}_i)$，其中 $s_e = \frac{\exp(l_e)}{\sum_{j=1}^E \exp(l_j)}$。
+        在完全变换后，每个新专家 $(e,p)$ 的 gating score 为 $s_{e,p} = \frac{\exp(l_{e,p})}{\sum_{j=1}^E \sum_{k=1}^P \exp(l_{j,k})} = \frac{1}{P} \frac{\exp(l_e)}{\sum_{j=1}^E \exp(l_j)}$，因为 $l_{e,p} = l_e$ 且分母中共有 $E \times P$ 项。
+        每个原始专家 $f_e(\mathbf{x}_i)$ 的输出是其 $P$ 个分区专家 $f_{e,p}(\mathbf{x}_i)$ 输出之和：$f_e(\mathbf{x}_i) = \sum_{p=1}^P f_{e,p}(\mathbf{x}_i)$。
+        因此，分区后的 MoE 输出 $\mathbf{y}_i^P = \sum_{e=1}^E \sum_{p=1}^P s_{e,p} \cdot f_{e,p}(\mathbf{x}_i) = \sum_{e=1}^E \left(\frac{1}{P} s_e\right) \left(\sum_{p=1}^P f_{e,p}(\mathbf{x}_i)\right) = \sum_{e=1}^E \frac{1}{P} s_e \cdot f_e(\mathbf{x}_i) = \frac{1}{P} \mathbf{y}_i$。
+        为了使 $\mathbf{y}_i^P = \mathbf{y}_i$，需要将 down-projection 权重 $\mathbf{W}_2$ 乘以 $P$。
+
+    *   **Partial Transformation（部分变换）**
+        目标：主要用于提高系统效率，例如 Soft Expert-Tensor Parallelism (S-ETP) 和 DualSparse-MoE。
+        机制：在不修改 gating network 的情况下对专家进行分区。
+        步骤：
+        1.  **重复 gating scores：** 将 Top-K 选定专家的 gating scores 复制 $P$ 次。
+        2.  **重映射专家索引：** 原始专家索引被重新映射，使得每个原始专家对应的 $P$ 个分区专家按顺序排列。
+        3.  **分区专家神经元：** 与 Complete Transformation 类似，将原始专家的神经元均匀地分配给 $P$ 个新专家，但不缩放 $\mathbf{W}_2$。
+        数学一致性：由于 gating scores 被重复且 $\mathbf{W}_2$ 不缩放，模型输出 $\mathbf{y}_i$ 保持不变。
+
+    *   **Soft Expert-Tensor Parallelism (S-ETP)**
+        S-ETP 利用 Partial Transformation **实现 tensor-level 分区，以优化 MoE 模型在分布式部署中的通信模式。**它通过 **AlltoAll 操作取代了 ETP 中 AlltoAll+AllGather **和 **ReduceScatter+AlltoAll 的**复杂模式，减少了核函数启动和同步开销，提高了通信效率。
+
+2.  **DualSparse-MoE 推理系统**
+    DualSparse-MoE 旨在通过协调张量级和神经元级稀疏性，在不重新训练的情况下提升推理效率并最小化精度损失。它由以下策略组成：
+
+    *   **Static Expert Partition and Reconstruction（静态专家分区与重构）**
+        *   **专家分区：** 采用 Partial Transformation 策略将专家分为更细粒度的子专家，增强张量级稀疏性。
+        *   **神经元重要性分析：** 通过校准样本（calibration samples）对每个专家内的神经元进行重要性分析。论文测试了四种 profiling 方法：累积 gate value、累积绝对 gate value、累积 gate-up value、累积绝对 gate-up value。经验表明，基于绝对值的 profiling 方法更有效。
+        *   **重构子专家：** 根据重要性分析，将每个专家重构为两个子专家：一个包含高重要性神经元的 "major sub-expert"，和一个包含低重要性神经元的 "minor sub-expert"。这种静态重构避免了运行时动态识别神经元激活的复杂性。
+
+    *   **Dynamic Token-Expert Computation Dropping（动态 token-expert 计算丢弃）**
+        *   **1T-Drop (Single-Threshold Drop)：** 基于归一化 gating score，如果低于某个阈值 $T^{1}_{drop}$，则丢弃该 token-expert 的计算。论文发现，适当低的阈值甚至能略微提高精度。
+        *   **2T-Drop (Dual-Threshold Drop)：** 结合 Major 和 Minor 子专家，引入双阈值机制：
+            *   **Minor Threshold ($T^{2}_{minor}$):** 对 Minor sub-expert 应用较高的阈值。如果 token-expert 的 gating score 低于 $T^{2}_{minor}$，则其 Minor sub-expert 的计算被丢弃。
+            *   **Major Threshold ($T^{2}_{major}$):** 对 Major sub-expert 应用较低的阈值。如果 token-expert 的 gating score 低于 $T^{2}_{major}$，则该 token-expert 的所有计算（包括 Major 和 Minor）都被完全丢弃。
+            *   对于 gating scores 介于 $T^{2}_{major}$ 和 $T^{2}_{minor}$ 之间的 token-expert，只计算 Major sub-expert 的部分。
+            *   这种机制通过对不同重要性的神经元应用不同的丢弃策略，更精细地控制计算量，从而在保持计算量削减的同时，显著降低精度损失。论文中，经验设置为 $T^{2}_{major} = T^{1}_{drop} - 0.01$ 和 $T^{2}_{minor} = T^{1}_{drop} + 0.01$。
+        *   **优化 Triton kernel：** 为了将计算丢弃转化为实际的性能提升，对 token-expert 分组 GEMM (grouped-GEMM) 的 Triton kernel 进行了优化。
+
+    *   **Load-Aware Thresholding（负载感知阈值）**
+        目标：解决专家并行 (EP) 中分布式设备间的负载不均衡问题，在相同加速效果下最大程度保留精度。
+        机制：动态调整每个设备的丢弃阈值。
+        *   高负载设备应用更高的丢弃阈值，丢弃更多计算。
+        *   低负载设备使用更低的丢弃阈值，减少不必要的计算丢弃。
+        *   通过计算实际负载与理想平衡负载的比率来调整阈值。如果比率大于1，阈值设定为预定义的最大值；如果小于1，阈值按比例降低。
+        效果：确保所有设备尽可能少地丢弃计算，同时将负载控制在原始最高负载设备水平之下，从而在EP部署中实现更高的推理精度和相同水平的加速。
+
+**实验结果：**
+
+*   **专家分区对精度和效率的影响：**
+    *   **精度提升：** 将 Mixtral-8x7B 模型从 8 专家分区为 32 专家（P=4）后，微调损失显著降低（图4）。微调后，分区模型在下游任务上的平均精度从 70.53% 提升到 71.12% (Table 1)，即使在 23.9% 的计算丢弃率下，其精度仍高于未分区模型的基线。
+    *   **效率提升 (S-ETP)：** S-ETP 相较于 ETP 显著提升了通信带宽。在 8xH20 节点上的实际测试中，带宽提升 3.0%~29.9%。在 NVL72 和 CloudMatrix384 等高性能互联模拟环境中，带宽提升 9.9%~80.4%。
+*   **DualSparse-MoE 推理系统的表现：**
+    *   **精度：** 在约 25% 的计算丢弃率下，DualSparse-MoE (2T-Drop with Reconstruct) 相较于基线的平均精度损失极小：Mixtral 仅降低 0.08%，OLMoE 降低 0.28%，DeepSeek 降低 0.18% (Table 2)。相比之下，1T-Drop 会导致更大的精度下降。部分情况下，丢弃计算甚至略微提高了精度，表明低贡献计算可能存在负面影响。
+    *   **效率：** 22%~27% 的 MoE 计算丢弃率能有效转化为 MoE 模块 1.17x~1.23x 的实际加速，以及端到端 1.07x~1.12x 的加速 (Figure 10)。这得益于其张量级丢弃特性，与现有硬件兼容性好。
+    *   **负载感知阈值：** 结合负载感知阈值后，DeepSeek 模型在 8xEP 部署中实现了 1.41x MoE 模块加速和 1.13x 端到端加速，而平均精度损失仅为 0.5% (Figure 11)。
+
+**总结：**
+
+DualSparse-MoE 通过引入后训练专家分区来增强张量级稀疏性，并设计了一种结合动态张量级计算丢弃与静态神经元级重构的双阈值策略，实现了在分布式 MoE 模型部署中显著的效率提升和极小的精度损失。负载感知阈值的引入进一步优化了专家并行下的负载均衡，有效提升了整体性能。该方法为 MoE 模型在服务器端推理的高效部署提供了有力的解决方案。
+
 ## 华为 Nexus
 Nexus: Higher-Order Attention Mechanisms in Transformers
 
