@@ -1,6 +1,80 @@
 # AwesomePaper-for-AI
 Awesome system papers for AI
 
+## SOSP Copier
+How to copy memory
+https://ipads.se.sjtu.edu.cn/_media/pub/sosp25-copier-preprint.pdf 陈海波团队 SOSP25 best paper
+1. 💡 该论文提出 Copier，一个将内存拷贝 (memory copy) 提升为 OS first-class service 的新方法，旨在通过协调异步拷贝来解决其在 syscalls、IPC 和用户应用中普遍存在的性能瓶颈。
+2. ⚙️ Copier 通过利用 Copy-Use windows 抽象异步拷贝、充分发挥 SIMD 和 DMA 等硬件能力，以及通过全局视图实现 holistic optimization (如 copy absorption) 来实现高效拷贝。
+3. 🚀 实验结果表明，Copier 在 Redis 中实现了高达 1.8 倍的加速，在 TinyProxy 等实际应用中相较于 state-of-the-art 解决方案有显著提升，并成功集成到 HarmonyOS 等商业 OS 中。
+
+
+内存拷贝在现代系统中是一个关键的性能瓶颈，广泛存在于系统调用（syscalls）、进程间通信（IPC）和用户态应用中。现有的优化方案，如零拷贝（zero-copy）和硬件加速拷贝，通常针对特定场景，且存在诸多局限。例如，Linux 的零拷贝 `send()` 仅对 ≥10KB 的消息有效，而 `zIO` 需要 ≥16KB 的拷贝大小才能带来收益。
+
+本文提出将内存拷贝作为一个**一等公民的操作系统服务（first-class OS service）**，并引入了名为 **Copier** 的协调异步拷贝服务。Copier 的核心理念在于利用普遍存在的**拷贝-使用窗口**（Copy-Use window）来隐藏拷贝延迟，充分发挥硬件潜力，并通过全局视角实现整体优化。
+
+Copier 的设计解决了以下挑战：
+1.  **从同步到异步**：如何在保持同步拷贝语义的同时，充分利用异步拷贝的性能优势？
+2.  **从函数到OS服务**：如何充分利用硬件特性和全局视图进行优化，同时将额外开销降至最低？
+3.  **从单客户端到多客户端**：如何确保资源隔离、公平性和正确性？
+
+为此，Copier 采用了以下技术：
+
+**核心方法论：**
+
+1.  **管道化拷贝-使用（Pipelined Copy-Use）与 Copier 抽象**：
+    *   **接口**：Copier 提供 `amemcpy()`（异步 `memcpy`）和 `csync()`（拷贝同步）两个基本原语。`amemcpy()` 用于提交异步拷贝任务，`csync()` 用于在数据使用前确保数据已准备就绪。
+    *   **CSH 队列（CSH Queues）**：客户端通过内存映射的（per-client）队列与 Copier 交互，包括 `Copy Queue (QCopy)`、`Sync Queue (QSync)` 和 `Handler Queue`。
+        *   `Copy Queue`：用于提交 `Copy Task`（包含源、目标、长度）。为了提高异步效率，Copier 支持**分段拷贝（segment-based copy）**，将一个拷贝任务划分为多个固定大小的 `segments`，并提供一个 `descriptor`（位图）来细粒度地跟踪每个 `segment` 的完成状态，允许应用在整个拷贝完成前就使用已拷贝的部分数据，实现拷贝-使用管道化。
+        *   `Sync Queue`：用于提交 `Sync Task`，当客户端需要未就绪的数据时，通过 `csync()` 提交 `Sync Task`，提升对应 `segments` 的优先级，实现**任务提升（task promotion）**，解决传统 FIFO 队列可能导致的**队头阻塞（head-of-line blocking）**问题。
+        *   **委托式处理器（Delegation-based Handler）**：`Copy Task` 可附带一个 `FUNC`（函数指针和参数），在拷贝完成后由 Copier 或 libCopier 异步执行，解决了零拷贝中内存所有权管理复杂和 `TOCTTOU` 等问题。
+
+2.  **依赖追踪（Dependency Tracking）**：
+    *   **顺序依赖（Order Dependency）**：通过引入**跨队列屏障（Cross-Queue Barrier）**，并利用系统事件（如 syscall trap 和 return）作为屏障指示器，Copier 能够追踪不同特权级（用户态和内核态）队列间拷贝任务的提交顺序，确保即使在异步和乱序执行下也能维持正确性。
+    *   **数据依赖（Data Dependency）**：Copier 追踪拷贝任务之间是否存在重叠内存区域，从而建立数据依赖关系。这对于处理 `Sync Task` 和实现拷贝吸收至关重要。
+
+3.  **异构拷贝单元协调（Harmonizing Copy Units）**：
+    *   Copier 作为 OS 服务，可以充分利用 CPU 的 SIMD (如 AVX2) 和 DMA 引擎。
+    *   **CPU-DMA 混合子任务（CPU-DMA Hybrid Subtasks）**：将拷贝任务划分为子任务，针对不同大小的子任务选择合适的硬件单元。小于特定阈值（如 1.4KB）的子任务优先使用 CPU（AVX2），大于该阈值的考虑 DMA。
+    *   **搭便车式调度器（Piggyback-based Dispatcher）**：通过将 DMA 任务“搭便车”到 AVX 任务上并行执行，实现 DMA 和 AVX 拷贝的重叠，避免 CPU 等待 DMA 完成造成的周期浪费。
+        *   **内部搭便车（i-piggyback）**：针对单个大型任务，将其中适合 DMA 的部分分配给 DMA，其余部分给 AVX2。
+        *   **外部搭便车（e-piggyback）**：针对多个小型任务，在它们之间没有数据依赖时，从多个任务中选取 DMA 候选子任务进行批量 DMA 处理。
+    *   **地址转换缓存（ATCache）**：利用拷贝地址的局部性，缓存虚拟地址到物理地址的转换，减少 DMA 任务的翻译开销。
+
+4.  **拷贝吸收（Copy Absorption）**：
+    *   **分层拷贝吸收（Layered Copy Absorption）**：Copier 能够识别并消除冗余的中间拷贝。当存在 `A→B` 和 `B→C` 这样的拷贝链时，如果 `B` 的部分数据未被访问（或已访问但未修改），Copier 可以直接从 `A` 拷贝到 `C`，或者从 `B` 的最新数据源拷贝。
+    *   **懒拷贝任务（Lazy Copy Task）**：应用程序可以将一个 `Copy Task` 标记为 `lazy`，表示它优先级最低，只在被依赖或特定时间后才处理，为拷贝吸收提供更多机会。
+    *   `abort` 任务：允许显式放弃不再需要的队列中拷贝任务。
+
+5.  **公平与隔离的多客户端服务（Fair and Isolated Multi-client Serving）**：
+    *   **Copier 线程（Copier Threads）**：Copier 拥有独立的内核线程来处理请求，通过**情景驱动式轮询（Scenario-driven polling）**和**线程自适应扩缩容（auto-scaling）**来平衡性能和能耗。
+    *   **cgroup 扩展**：将拷贝长度（copied length）作为资源单位，扩展 Linux `cgroup` 机制，通过 `copier.shares` 实现不同客户端（进程或 OS 服务）之间的资源隔离和公平调度，类似于 `CFS`。
+    *   **主动故障处理（Proactive Fault Handling）**：Copier 在拷贝前主动触发并处理页面错误，确保虚拟地址到物理地址的映射，并通过锁定映射来避免拷贝过程中的页面失效问题，同时执行安全检查。
+
+**应用与评估：**
+
+Copier-Linux 在 Linux 5.15.131 上实现，并实验性集成到 HarmonyOS 5.0 商用手机操作系统中。
+*   **微基准测试**：Copier 在吞吐量上比 Linux 内核默认的 `ERMS` 拷贝方法提升高达 158%，比用户态的 `AVX2` 提升高达 38%。
+*   **OS 服务优化**：
+    *   `send()` 和 `recv()` 系统调用：延迟降低 7%-59% 不等，优于 `UB`、`io_uring` 和零拷贝方案在中小数据量时的表现。
+    *   `Binder IPC`：端到端延迟降低 9.6%-35.5%。
+    *   **CoW（写时复制）**故障处理：页故障处理的线程阻塞时间降低 8%-71.8%。
+*   **真实应用优化**：
+    *   Redis：`SET` 和 `GET` 操作的端到端平均延迟降低 2.7%-43.4%，吞吐量提升 2.4%-50.0%，显著优于 `zIO` 和 `UB`。
+    *   TinyProxy：吞吐量提升 7.2%-32.3%，并能有效利用拷贝吸收。
+    *   Protobuf：消息接收和反序列化延迟降低 4%-33%。
+    *   OpenSSL：`SSL_read()` 延迟降低 1.4%-8.4%。
+    *   zlib：压缩性能提升 18.8%。
+    *   HarmonyOS 上的 `Avcodec`：视频解码延迟降低 3%-10%，帧丢失减少 22%。
+
+**开发与讨论：**
+
+*   **开发工作量**：由于 libCopier 封装了大部分复杂性，移植现有应用的工作量适中。CopierSanitizer 工具辅助检测 `csync()` 遗漏，CopierGen 探索自动化移植。
+*   **系统资源利用**：在有空闲核心时，Copier 可显著提升性能。在核心完全利用时，虽然可能引入少量 `polling` 开销导致吞吐量略有下降，但对于延迟敏感的应用仍有益；对于有拷贝链或大型拷贝的应用，由于硬件加速和拷贝吸收节省的 CPU 周期，Copier 仍能提升整体吞吐量。
+*   **微架构影响**：Copier 通过解耦大拷贝和应用执行，减少缓存污染，降低 `CPI`。
+
+**未来展望**：Copier 的概念可以进一步整合为 CPU 硬件原语，或应用于更广泛的 OS 服务和场景（如文件 I/O、分层内存管理）。其安全性也优于零拷贝方案，因为它确保数据被拷贝到私有缓冲区后才被检查，避免了所有权共享带来的信任问题。
+
 ## SOSP Mercury
 Mercury: Unlocking Multi-GPU Operator Optimization for LLMs via Remote Memory Scheduling
 https://dl.acm.org/doi/pdf/10.1145/3731569.3764798
