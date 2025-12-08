@@ -1,6 +1,62 @@
 # AwesomePaper-for-AI
 Awesome system papers for AI
 
+## Coruscant
+Coruscant: Co-Designing GPU Kernel and Sparse Tensor Core to Advocate Unstructured Sparsity in Efficient LLM Inference
+- Micro25：软件+硬件。
+- https://github.com/dhjoo98/coruscant 稀疏加速 基于Flash-LLM。M
+
+1. 🚀 Coruscant 提出了一种 Bitmap-based 的稀疏格式，显著提高了 LLM 剪枝在 30% 到 70% 稀疏度范围内的内存压缩效率，弥补了现有稀疏格式在该范围内的不足。
+2. ⚡️ 基于此稀疏格式，Coruscant GPU Kernel 通过减少 GPU 全局内存到处理器的数据传输，并进行高效解压缩，在 GPU 上加速了 SpMM 操作，实现了相对于** cuBLAS 高达 2.02 倍、Flash-LLM 高达 1.48 倍的加速。**
+3. ✨ Coruscant Sparse Tensor Core 通过在 Tensor Core 中集成 Bitmap Decoder，实现了对压缩格式的直接操作，消除了软件解压缩开销，进一步将 SpMM 速度提升至 cuBLAS 的 2.75 倍，并在 Llama 2 推理中显著提高了 token 生成吞吐量。
+<img width="1461" height="351" alt="image" src="https://github.com/user-attachments/assets/b9e6b756-4cda-4baa-a31b-94984bc9cfcf" />
+
+Coruscant 论文提出了一种针对大型语言模型（LLMs）推理中非结构化稀疏性（unstructured sparsity）的高效解决方案，通过协同设计GPU kernel和稀疏Tensor Core来应对当前硬件在处理非结构化稀疏性时的挑战。
+
+**1. 背景与动机**
+LLMs的庞大尺寸和长上下文生成对内存资源提出了高要求。剪枝（pruning）、量化（quantization）和蒸馏（distillation）是常用的模型压缩技术。其中，剪枝在非结构化稀疏性方面潜力巨大，能更好地保持精度，但在现代硬件上利用效率低下。当前LLM剪枝常受限于结构化模式（如2:4半结构化稀疏性，NVIDIA Tensor Core支持），尽管这限制了剪枝的灵活性和精度。Coruscant的目标是弥合非结构化稀疏性潜力与硬件效率之间的鸿沟，专注于加速稀疏矩阵-密集矩阵乘法（SpMM），这是LLM推理decode阶段的主要瓶颈，且通常是内存密集型（memory-bound）操作。研究发现，LLM剪枝的最佳稀疏度范围通常在30%到70%之间，而现有稀疏格式（如CSR, COO, Tiled-CSL）在此范围内的压缩效率不佳，甚至可能导致稀疏表示大于原始密集矩阵。
+
+**2. Coruscant核心方法**
+Coruscant包含三个主要组件：Coruscant Sparse Format、Coruscant GPU Kernel和Coruscant Sparse Tensor Core。
+
+**2.1 Coruscant Sparse Format**
+该格式采用基于位图（bitmap-based）的方法来表示非零元素的位置，显著提高了30%到70%稀疏度范围内的压缩比（70%稀疏度时可达36.25%，50%稀疏度时可达56.25%）。它将矩阵逻辑上划分为列式瓦片（column-wise tiles），每个瓦片（例如1x64）由其非零值和对应的64位位图表示。位图的优势在于避免了存储每个非零元素的显式坐标数组，从而在目标稀疏度范围内实现了比传统格式（如CSR, COO, Flash-LLM的Tiled-CSL）更高的压缩效率。
+
+**2.2 Coruscant GPU Kernel**
+该 kernel利用Coruscant Sparse Format来减少GPU global memory与处理器之间的数据传输，从而加速内存受限的SpMM操作。
+*   **SpMM公式（Formulation）**：它沿用了Flash-LLM的流水线机制，将压缩的稀疏矩阵瓦片加载到GPU处理器寄存器中，然后解压缩到shared memory中的密集矩阵瓦片，最后Tensor Core在这些密集瓦片上执行矩阵乘法。寄存器和shared memory充当乒乓缓冲区（ping-pong buffer），实现加载-压缩和计算-密集迭代的流水线化。
+*   **解压缩算法（Decompression Algorithm）**：核心在于高效地将位图编码的稀疏瓦片解压缩为shared memory中的密集瓦片。每个线程负责解压缩两个长度为64的列，并将其写入shared memory。算法使用 `clz` (count leading zeros) 指令快速找到位图中非零位的位置，避免了逐位迭代，提高了效率。关键优化在于确保CUDA编译器将非零值放在线程寄存器中，并通过将每个瓦片的非零元素填充到8的倍数，确保内存访问合并（coalesced memory access）并充分利用GPU内存带宽。
+*   **避免Shared Memory Bank Conflict**：Coruscant采用列式瓦片划分（column-wise tiling），确保每个线程写入不同的shared memory bank，从而避免了解压缩过程中常见的bank conflict，进一步提升了性能。
+
+**2.3 Coruscant Sparse Tensor Core**
+该组件旨在通过硬件层面的修改，消除Coruscant GPU kernel中解压缩到shared memory的开销（这部分在GPU kernel中可占总执行时间的36%）。
+
+**3. 实验评估与结果**
+Coruscant在NVIDIA RTX 6000 Ada GPU上进行了评估，并将其内核和稀疏Tensor Core模拟集成到Huggingface Transformers库中，用于Llama 2 7B和13B的端到端推理。
+
+*   **端到端LLM评估**：
+    *   在Llama 2 7B上，Coruscant GPU kernel将token吞吐量提高103-135 tokens/sec（26%提升），Coruscant Sparse Tensor Core进一步提高到206 tokens/sec（40%提升）。
+    *   在Llama 2 13B上，Coruscant的权重压缩能力使得在32 batch size下能够成功运行（cuBLAS OOM），从而提高了76 tokens/sec（kernel）和98 tokens/sec（STC）的吞吐量。
+*   **Kernel性能与分析**：
+    *   **延迟**：Coruscant kernel在30%-70%稀疏度范围内始终优于cuBLAS。相比Flash-LLM，Coruscant在30%-60%稀疏度下表现更优，在70%稀疏度时性能接近。这表明Coruscant在目标稀疏度范围内达到了平衡点。
+    *   **内存占用**：Coruscant通过高效压缩，将内存占用比密集cuBLAS减少14%（30%稀疏度）到55%（70%稀疏度）。相比Flash-LLM，Coruscant在所有30%-70%稀疏度下都显示出更低的内存占用。这不仅加速了SpMM，还为KV cache等腾出了更多GPU VRAM。
+    *   **内存开销细分**：Coruscant的压缩特性导致更低的全局内存stall cycles，且内存利用率更高，验证了压缩有效降低了GPU全局内存压力。
+*   **稀疏Tensor Core评估**：
+    *   **性能提升**：Coruscant Sparse Tensor Core将Tensor Core利用率平均提升2.5倍，并将共享内存stall cycles降低到Coruscant kernel的5%，平均实现1.3倍的额外加速。
+    *   **面积和功耗**：Bitmap Decoder的硬件开销极小，对Volta、Ampere和Hopper架构的GPU面积增加不超过0.018%，功耗增加在26.24mW到74.79mW之间。
+    *   **与现有稀疏Tensor Core比较**：
+        *   **DSTC [55]和RM-STC [21]**：这些设计支持任意稀疏度，但主要针对计算密集型（compute-bound）的大型方阵乘法。它们的复杂之处在于需要散集（scatter-gather）逻辑和中间累加缓冲区，导致硬件复杂度和面积开销巨大（比Coruscant-STC高95%-96%）。此外，它们的瓦片尺寸较小，导致非零指针开销相对较高。Coruscant通过专注于SpMM和利用现有Tensor Core的每通道累加能力，避免了这些复杂性。
+        *   **半结构化稀疏性（Semi-Structured Sparsity）**：例如NVIDIA的2:4稀疏性（cuSPARSELt）。半结构化稀疏性通过固定非零模式来消除存储开销和实现静态计算跳过，从而在硬件效率上通常优于非结构化稀疏性。Coruscant-STC在50%稀疏度时性能与2:4 kernel接近，在70%稀疏度时甚至超越，这得益于硬件解压缩和更高的压缩比。然而，半结构化剪枝（如Wanda [49]在2:4模式下）会导致更高的模型精度损失（更高困惑度 Perplexity，更低TriviaQA分数），因为其结构限制了剪枝的灵活性。Coruscant则在硬件效率和模型精度之间取得了更好的平衡。
+
+*   **对通信开销的影响**：Coruscant的压缩格式不仅减少了GPU内部数据传输，也显著降低了模型权重在CPU/SSD与GPU之间传输的延迟，这对于offloading和多GPU并行场景非常有利。
+*   **可扩展性与普适性**：
+    *   **稀疏度范围**：在10-20%稀疏度下，Coruscant kernel的解压缩开销使其不如cuBLAS。在80-90%稀疏度下，Flash-LLM因其简单的坐标存储而表现更好，但高稀疏度通常会导致严重的模型精度损失。Coruscant在30-70%的目标稀疏度范围内表现最佳。
+    *   **大N维度（Batch Size）**：随着N增大，计算量增加，cuBLAS的低寄存器使用和高Occupancy使其在N较大时更具优势。但Coruscant Sparse Tensor Core即使在N=256时仍能实现加速。考虑到当前LLM推理的KV Cache限制了Batch Size，Coruscant在常见Batch Size下仍能保持优势。
+    *   **任务通用性**：在预填充（prefill）阶段，由于SpMM的计算特性，Coruscant可能比cuBLAS慢。但在解码（decode）阶段的累积加速可以抵消预填充的开销，对于长生成（如对话和推理任务）场景，Coruscant能带来显著的端到端加速。
+
+**4. 结论**
+Coruscant通过引入高效的位图式稀疏格式和协同设计的GPU kernel与Tensor Core，成功解决了LLMs中非结构化稀疏性在硬件上利用效率低下的问题。Coruscant GPU kernel在30%-70%稀疏度范围内实现了相对于cuBLAS高达2.02倍的加速。Coruscant Sparse Tensor Core通过将位图解码器集成到Tensor Core中，消除了软件解压缩开销，进一步将加速提升至2.75倍。这些改进显著减少了内存占用，提高了LLM推理的token生成吞吐量，同时保留了非结构化剪枝带来的模型精度优势，为LLM的部署提供了更高效的解决方案。
+
 ## SpInfer: Leveraging Low-Level Sparsity for Efficient Large Language Model Inference on GPUs 
 - https://dl.acm.org/doi/abs/10.1145/3689031.3717481 范瑞波 港科大（广）。EuroSys25 best paper
 
