@@ -1,6 +1,43 @@
 # AwesomePaper-for-AI
 Awesome system papers for AI
 
+## 微软NextLat
+Next-Latent Prediction Transformers Learn Compact World Models
+
+https://arxiv.org/pdf/2511.05963v1 微软 2025.11.8
+Next-Latent Prediction 训练方法解决标准Transformer缺乏压缩历史信息动机的问题，通过在标准自回归训练中加入一个**辅助的自监督任务**——预测下一时刻的潜在状态，引导模型学习紧凑且具有一致动态性的世界模型。这个方法**不改变模型架构和推理过程**，理论上证明了其能促使模型学习到“信念状态”。实验表明，NextLat在world modeling、reasoning、planning 和 language modeling任务上均取得显著提升，在曼哈顿出租车路径规划中，其有效潜在秩比GPT低3倍以上（52.7 vs 160.1），序列压缩率提升了9.2%。
+- 能够使 Transformer 的 latent representations 收敛到 belief states，形成更 compact 的内部 world models 和 transition dynamics，从而注入了 recurrent inductive bias。
+<img width="846" height="368" alt="image" src="https://github.com/user-attachments/assets/69a17e9b-2119-4c27-8ed6-3c13fa6e8985" />
+<img width="340" height="377" alt="image" src="https://github.com/user-attachments/assets/2966ae63-7da5-43d2-893b-e04b1d558226" />
+<img width="816" height="329" alt="image" src="https://github.com/user-attachments/assets/ca62accb-7484-4286-9c67-52682a9a2370" />
+
+**核心问题与动机**：标准Transformer通过自注意力机制可以回顾整个历史序列，**缺乏将历史信息压缩成紧凑状态的内在动力**，这可能**导致模型学习到泛化能力差的复杂捷径**。本文旨在为Transformer引入一种**循环归纳偏置**，促使其**学习紧凑、一致的内部世界模型，从而提升泛化能力**。
+**NextLat 方法原理**：NextLat在标准的NTP 损失基础上，增加了一个辅助的自监督损失，引入一个轻量级的“潜在动态模型”，该模型接收当前时刻的隐藏状态和下一时刻的输入token，来预测下一时刻的隐藏状态。这个过程强迫模型学习到的隐藏状态必须包含预测未来所需的所有信息，从而使其收敛为“信念状态”。
+**理论保障**：从理论上证明，只要同时满足“下一Token 一致性”和“状态转移一致性”，模型学习到的隐藏状态必然会收敛为一个信念状态。信念状态是历史信息的充分统计量，对于预测未来至关重要，这是标准Transformer所不具备的理论保证。
+
+实现细节与损失函数：NextLat的总损失函数由三部分构成，L_next-token 是标准的交叉熵损失，用于预测下一个词元。L_next-h 是预测的下一隐藏状态与真实下一隐藏状态之间的Smooth L1回归损失，为了防止表示崩溃，目标状态的梯度被停止。L_KL 是预测的下一隐藏状态所对应的词元分布与真实下一隐藏状态所对应的词元分布之间的KL散度损失。这类似于知识蒸馏，确保了潜在空间预测的语义一致性。
+
+**对比**：
+vs. 标准GPT：GPT没有学习信念状态的压力，容易过拟合。
+vs. RNN：NextLat 引入了循环归纳偏置，但避免了RNN 训练时完全串行的瓶颈，保留了Transformer 的并行训练效率。
+vs. BST/JTP：与其他旨在学习信念状态的方法BST、JTP相比，NextLat 在计算上更高效，且理论保证更通用，不依赖于特定的可观测性假设，在各类任务中表现也更优越。
+vs. MTP：**MTP 等方法在词元空间进行多步预测，容易受局部n-gram 规律影响而产生短视行为**。NextLat 在潜在空间进行预测，更能捕捉深层结构和长期依赖。
+实验结果：
+
+**世界建模**（Manhattan Taxi Rides）： NextLat在轨迹有效性、序列压缩、有效latent rank和绕道鲁棒性等指标上表现最佳，学习到的世界模型与真实世界模型更一致，且表示更紧凑。所有模型在next-token test上均达到100%准确率，但NextLat在OOD泛化和compactness上显著优越。
+**推理**（Countdown）： NextLat持续优于所有基线，即使在较浅的预测horizon d=1d=1d=1d=1时，也**大幅超越MTP和JTP**。这表明NextLat能够更好地进行前瞻规划，减少了局部性错误，在最终方程的有效性上表现出更高的一致性。
+**规划**（Path-Star Graph）： NextLat在所**有图拓扑结构上都接近100%的解决率**，而其他方法（包括BST）在较大图上开始失效。这表明latent space预测更能避免shortcuts learning，并产生更具泛化性的解决方案，从而提升了long-horizon planning能力。
+**语言建模**（TinyStories）： NextLat在保持GPT的next-token prediction性能的同时，展**示了最强的长horizon预测能力**（最远可达20个token）。相比之下，BST、JTP和MTP的额外token-level预测目标导致next-token性能下降，并且其表示在长horizon预测上表现不佳。
+
+与现有方法的比较：
+
+与BST和JTP： NextLat与BST和JTP等belief-learning方法进行了比较。BST训练成本极高（O(T^2T2T^2T2)梯度信号），且推理时需要双Transformer编码器。NextLat的训练速度显著快于BST（在TinyStories上快10倍以上），且在belief state学习方面拥有更强的理论保证（与预测horizon dddd无关），避免了JTP对k-observability的严格依赖。
+Token-level预测的局限性： 论文指出，token-level监督通常是短视的。NextLat通过将预测转移到latent space，强调latent transition modeling，避免了next-token性能的下降，并通过鼓励学习结构化、预测性表示而非浅层token-level相关性，改善了下游泛化。
+与Recurrent Neural Networks (RNNs)： NextLat通过latent transition prediction引入了循环归纳偏置，但避免了RNNs在训练时的严格顺序计算瓶颈。NextLat仅在训练时引入与rollout horizon dddd成比例的额外顺序成本，远小于整个序列长度TTTT，从而保留了Transformer的并行训练效率。NextLat的梯度传播方式也不同于RNNs的截断反向传播，它对Transformer的计算图进行完全反向传播，而latent dynamics model则在“外循环”中展开，避免了梯度估计的偏差。
+
+结论与未来工作：
+NextLat通过将next-token训练与自监督latent-space预测相结合，使Transformer能够学习belief-state representations。该方法简单、高效，且在不改变Transformer架构、并行训练效率或推理过程的前提下，在世界建模、推理、规划和语言建模等任务中产生了更紧凑、更具预测性且更可泛化的表示。未来的工作将包括在大规模语言模型预训练中评估NextLat，将其作为微调目标以提升现有模型能力，以及探索更高维度或分层belief states的架构扩展。
+
 ## MISA
 MISA: Memory-Efficient LLMs Optimization with Module-wise Importance Sampling
 
