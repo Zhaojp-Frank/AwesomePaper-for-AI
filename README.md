@@ -1,15 +1,100 @@
 # AwesomePaper-for-AI
 Awesome system papers for AI
 
+## MISA
+MISA: Memory-Efficient LLMs Optimization with Module-wise Importance Sampling
+
+https://arxiv.org/abs/2511.00056 北京大学 2025.12.4
+
+https://github.com/pkumelon/MISA
+
+from misa.optimizer import BlockCoordinateDesentOptimizer
+
+base_optimizer = AdamW(model.parameters(), lr=args.learning_rate)
+
+optimizer = BlockCoordinateDesentOptimizer(
+      base_optimizer=base_optimizer,
+      named_parameters_list=list(model.named_parameters()),
+      param_ratio_limit=0.03, # The ratio of trainable parameters
+)
+
+1. ✨ MISA提出了一种模块级重要性采样（Module-wise Importance SAmpling）方法，通过将大型语言模型（LLMs）层细**分为更小的模块**，并**基于梯度范数动态分配重要性分数**，从而实现**内存高效的优化**。
+2. 💡 该方法采用**加权随机采样机制**，在**确保探索性的同时有效利用重要模块**，并提供在**包含Adam优化器**和随机梯度的非凸随机条件下O(1/√K)的收敛速率保证。
+3. 🚀 实验结果表明，MISA在多种微调和预训练任务中，相比于LoRA和现有分层优化方法，在内存效率和性能方面均展现出显著优势。
+
+<img width="1071" height="281" alt="image" src="https://github.com/user-attachments/assets/9d6428a0-4700-4ff7-b0ac-a10ff416e751" />
+
+<img width="1066" height="366" alt="image" src="https://github.com/user-attachments/assets/699434ac-15ef-4d4c-a1b4-bfea22855481" />
+<img width="1045" height="313" alt="image" src="https://github.com/user-attachments/assets/0be77e26-ad9f-49e3-b260-ddd535be1be3" />
+
+MISA (Module-wise Importance SAmpling) 是一项针对大型语言模型（LLMs）优化提出的新方法，旨在解决LLM预训练和微调过程中巨大的内存消耗问题。
+
+**背景与现有方法局限性：**
+LLMs的训练需要存储优化器状态、梯度和中间激活，导致高昂的内存开销。
+1.  **PEFT方法（如LoRA）**：通过冻结大部分预训练参数，仅优化小部分低秩矩阵来节省内存。然而，这种方法限制了模型的适应性，通常导致性能次优。
+2.  **Layer-wise优化方法（如BAdam, LISA）**：基于块坐标下降（BCD）思想，顺序优化Transformer层，冻结其他层以节省内存和激活。它们能够实现接近全参数微调的性能，并比LoRA更节省内存。但现有Layer-wise方法存在以下问题：
+    *   **Q1：分区策略不佳**：将Transformer层视为同质单元，忽略了层内不同模块（如多头注意力、前馈网络、归一化层）重要性的差异，可能导致不佳的优化性能。
+    *   **Q2：采样策略次优**：主要依赖循环或均匀采样模式，未充分利用不同层或模块的重要性差异。LISA虽然考虑了Embedding层和LLM头部的重要性，但对Transformer层仍采用均匀采样。
+    *   **Q3：收敛性保证不足**：现有理论分析通常假设无噪声梯度或每个采样块只更新一次，与LLM实际训练中Adam优化器、随机梯度和多步更新的情况不符。
+
+**MISA的核心贡献与方法：**
+
+MISA通过引入模块级优化和改进的重要性采样机制来克服上述限制，并提供严格的收敛性保证。
+
+1.  **C1：模块级优化 (Module-wise Optimization)**：
+    *   **模块定义**：MISA将LLM的权重划分为更细粒度的“模块”，而非粗粒度的“层”。一个模块定义为Transformer层内与权重梯度相关的矩阵参数。例如，多头注意力机制中的$W_q, W_k, W_v, W_o$以及前馈网络中的$W_{up}, W_{down}$均被视为独立模块。
+    *   **动机**：经验观察表明（如图1所示），同一Transformer层内不同模块的梯度范数差异显著，表明其重要性不同。对层内所有参数进行统一更新可能导致次优结果。理论上，将层分解为更小的模块能保留更多梯度信息。
+    *   **内存效益**：这种细粒度的更新策略消除了将整个层加载到内存的必要性，比Layer-wise优化方法更节省内存。
+
+2.  **C2：改进的重要性采样 (Improved Importance Sampling)**：
+    *   **原理**：为了在优化效率和探索性之间取得平衡，MISA设计了一种加权随机采样机制。它通过最大化目标函数$\max_{\{p_b\}_{b=1}^B} \sum_{b=1}^B p_b \|g_n^b\|^2 - (1/\eta) \text{KL}(p_b, q_B)$来确定模块的采样概率，其中$\|g_n^b\|^2$是模块$b$的梯度范数（重要性度量），$p_b$是采样概率，$q_B = 1/B$是均匀分布，$\eta > 0$是控制探索与利用权衡的系数。
+    *   **采样概率**：该优化问题的闭式解为$p_n^b = \frac{\exp(\eta \|g_n^b\|^2)}{\sum_{j=1}^B \exp(\eta \|g_n^j\|^2)}$。
+    *   **实际实现**：由于全批次梯度范数$\|g_n^b\|^2$在LLM训练中不可访问，MISA使用聚合历史随机梯度的经验平均来近似，即$G_n^b = \beta G_{n-1}^b + (1-\beta) \frac{1}{T} \sum_{t=1}^T \|g_{n,t}^b\|^2$，其中$G_n^b$跟踪模块$b$在迭代$n$时的重要性度量，$T$是内循环更新步数。为了消除不同模块参数量对梯度范数计算的影响，实际中采用按参数量缩放后的梯度范数。
+    *   **优势**：这种动态、基于重要性的采样策略优于传统的循环或均匀采样，同时通过$\eta$参数确保了对所有模块的探索。
+
+3.  **C3：收敛性保证 (Convergence Guarantees)**：
+    *   MISA在非凸、随机和Adam优化器条件下，实现了$O(1/\sqrt{K})$的收敛速率，其中$K$是总的块更新次数。
+    *   **挑战与创新**：传统BCD分析依赖于块梯度是全梯度的无偏估计，但这在MISA的多步更新（repeated block updating）策略下不再成立，引入了偏差和噪声的复杂相互作用。MISA通过以下创新解决：
+        *   **偏差传播分析**：推导了梯度偏差和随机噪声如何在连续的块更新中累积的递归关系。
+        *   **连接块级和全梯度**：算法1中额外的Adam步（Algorithm 1, Line 16: $\theta^{n+1,0}_{\tau_n} \leftarrow \theta^{n,T}_{\tau_n} - \alpha \frac{\beta_1}{1-\beta_1} \frac{m^{n,T}_{\tau_n}}{\sqrt{v^{n,T}_{\tau_n} + \epsilon}}$）在确保从局部块更新到全局变量优化的平滑过渡中起关键作用。
+        *   **新分析工具**：开发了共同控制梯度偏差和放大随机噪声的分析工具。
+
+**MISA算法流程 (Algorithm 1)：**
+MISA采用双循环结构：
+*   **外循环 (Outer Loop)**：迭代$N$次，每次选择一个或一组模块进行优化。
+    *   首先将模型划分为$B$个模块。
+    *   根据当前模块的重要性估计$G_n^b$更新模块的采样概率$p_n^b$。
+    *   根据采样概率$P^n$选择一个（或一组）模块$\tau_n$，并确保可训练参数占总参数的比例低于$\delta$。
+*   **内循环 (Inner Loop)**：对于选定的模块$\tau_n$，执行$T$次更新。
+    *   每次更新中，采样一个mini-batch数据$\xi_{n,t}$计算随机块梯度$g_{n,t}^{\tau_n}$。
+    *   使用Adam优化器更新模块参数$\theta_{n,t}^{\tau_n}$，并更新一阶和二阶动量$m_{n,t}^{\tau_n}, v_{n,t}^{\tau_n}$。
+    *   采用AMSGram-type归一化$\tilde{v}_{n,t}^{\tau_n} = \max(v_{n,t}^{\tau_n}, \|\tilde{v}_{n,t-1}^{\tau_n}\|_{\max})$。
+*   **优化器状态清除**：在外循环结束后，清除当前模块的优化器状态，以确保持续的内存效率。
+
+**内存分析：**
+MISA在长序列微调任务中显著优于LoRA。对于LLaMA3-8B模型，MISA在序列长度增加时，比LoRA具有更优的内存效率。当采样比阈值$\delta$较小时，MISA比Layer-wise方法更具内存效率。
+
+**实验结果：**
+MISA在多种LLM（LLaMA3-8B、Qwen2.5-7B、TinyLLaMA、LLaMA2-7B、Mistral-7B）和多项任务（常识推理、数学推理、指令微调、预训练）上表现出色：
+*   **微调**：在常识推理和数学推理任务上，MISA在相当的内存约束下，性能优于LoRA、DoRA、LISA和BAdam等基线方法。例如，在LLaMA3-8B的常识推理任务中，MISA ($\delta = 3\%$) 达到86.6%的平均准确率，略低于全参数微调，但显著高于其他PEFT和Layer-wise方法。
+*   **指令微调**：在Alpaca GPT-4数据集上微调TinyLLaMA、LLaMA2-7B和Mistral-7B，MISA在MMLU、MMLU-pro和MT-Bench等评估基准上在多数情况下优于所有基线。
+*   **收敛性**：MISA相比LISA和BAdam，在训练时间维度上展现出更好的验证损失收敛性（图3）。
+*   **预训练**：在C4数据集上预训练LLaMA2 130M和350M模型，MISA在130M模型上超越了GaLore和Adam，在350M模型上优于GaLore并接近Adam的性能，显示出其作为Adam正则化的潜力。
+
+**局限性：**
+*   MISA的预训练实验规模相对较小，其在大规模LLMs（如7B、70B或更大模型）预训练中的可扩展性仍待验证。
+*   MISA目前仅在文本Transformer架构LLMs上进行了验证，其在多模态模型或非Transformer架构上的适用性需进一步探索。
+  
 ##
 Efficient Reinforcement Learning with Semantic and Token Entropy for LLM Reasoning
+
 https://arxiv.org/pdf/2512.04359 南京大学 高阳等；2025.12.4
 
 1. 🧩 针对大型语言模型 (LLM) 推理中强化学习 (RL) 存在的**熵坍塌问题**，本文提出了一种名为 SENT 的高效 RL 框架，该框架在语义和 Token 级别上利用熵信号来提升推理能力。
 2. 📚 SENT 在**数据层面通过语义熵引导课程学习，逐步提供难度递增的任务**；在**算法层面，则对低熵 Token 施加 KL 正则化，并对其中高协方差部分施加更强约束以鼓励探索。**
 3. 🚀 实验结果表明，SENT 在 6 个基准测试和 3 种不同参数规模的基础模型上均优于其他基于熵的方法，有效缓解了熵坍塌，并显著增强了 LLM 的推理性能。
 
-该论文提出了一种名为 SENT（Semantic ENtropy with Token-level entropy optimization）的高效强化学习（RL）框架，旨在解决大型语言模型（LLM）推理能力提升过程中常见的熵崩溃（entropy collapse）问题。传统的RLVR（Reinforcement Learning with Verifiable Rewards）方法通常以准确性为导向，但这会导致策略探索不足和局部最优，表现为训练过程中策略熵（policy entropy）的急剧下降，进而限制了模型生成响应的多样性和推理能力。
+该论文提出了一种名为 SENT（Semantic ENtropy with Token-level entropy optimization）的高效强化学习（RL）框架，旨在解决大型语言模型（LLM）推理能力提升过程中常见的熵崩溃（entropy collapse）问题。传统的RLVR（Reinforcement Learning with Verifiable Rewards）方法通常以准确性为导向，但这会导致策略探索不足和局部最优，表现为训练过程中策略熵（policy entropy）的急剧下降，进而限制了模型生成响应的多样性和推理能力。基于verl
 <img width="1181" height="605" alt="image" src="https://github.com/user-attachments/assets/291a99d5-6a2a-4451-b8fd-31fc31af9bae" />
 <img width="1138" height="589" alt="image" src="https://github.com/user-attachments/assets/573c775c-937a-4d57-ae4e-934e5a3cdc55" />
 
