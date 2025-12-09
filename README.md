@@ -1,6 +1,22 @@
 # AwesomePaper-for-AI
 Awesome system papers for AI
 
+## 阶跃 PaCoRe-8B 推荐
+
+paper: https://github.com/stepfun-ai/PaCoRe/blob/main/pacore_report.pdf 2025.12.9
+
+model: https://huggingface.co/stepfun-ai/PaCoRe-8B 
+
+https://github.com/stepfun-ai/PaCoRe
+Model:
+PaCoRe-8B: Our final PaCoRe-trained model checkpoint!
+RLVR-8B-0926: The initial checkpoint of our study, conducted strong reasoning-oriented post-trained on Qwen3-8B-Base.
+📚 Data: PaCoRe-Train-8k The high-quality training corpus, including opensource_math, public_mathcontest, synthetic_math and code:
+🤗 Stage1-3k: PaCoRe-Train-Stage1-3k
+🤗 Stage2-5k: PaCoRe-Train-Stage2-5k
+
+解读： https://mp.weixin.qq.com/s/J5Xhaw7hrGVxj9q_gx2Vxw
+
 ## 微软NextLat
 Next-Latent Prediction Transformers Learn Compact World Models
 
