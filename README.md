@@ -1,6 +1,143 @@
 # AwesomePaper-for-AI
 Awesome system papers for AI
 
+##
+Efficient Reinforcement Learning with Semantic and Token Entropy for LLM Reasoning
+https://arxiv.org/pdf/2512.04359 南京大学 高阳等；2025.12.4
+
+1. 🧩 针对大型语言模型 (LLM) 推理中强化学习 (RL) 存在的**熵坍塌问题**，本文提出了一种名为 SENT 的高效 RL 框架，该框架在语义和 Token 级别上利用熵信号来提升推理能力。
+2. 📚 SENT 在**数据层面通过语义熵引导课程学习，逐步提供难度递增的任务**；在**算法层面，则对低熵 Token 施加 KL 正则化，并对其中高协方差部分施加更强约束以鼓励探索。**
+3. 🚀 实验结果表明，SENT 在 6 个基准测试和 3 种不同参数规模的基础模型上均优于其他基于熵的方法，有效缓解了熵坍塌，并显著增强了 LLM 的推理性能。
+
+该论文提出了一种名为 SENT（Semantic ENtropy with Token-level entropy optimization）的高效强化学习（RL）框架，旨在解决大型语言模型（LLM）推理能力提升过程中常见的熵崩溃（entropy collapse）问题。传统的RLVR（Reinforcement Learning with Verifiable Rewards）方法通常以准确性为导向，但这会导致策略探索不足和局部最优，表现为训练过程中策略熵（policy entropy）的急剧下降，进而限制了模型生成响应的多样性和推理能力。
+<img width="1181" height="605" alt="image" src="https://github.com/user-attachments/assets/291a99d5-6a2a-4451-b8fd-31fc31af9bae" />
+<img width="1138" height="589" alt="image" src="https://github.com/user-attachments/assets/573c775c-937a-4d57-ae4e-934e5a3cdc55" />
+
+SENT 框架通过在数据组织和算法优化两个层面同时利用熵信号来解决这一挑战。
+
+**1. 数据层面：语义熵引导的课程学习 (Semantic Entropy-Guided Curriculum Learning)**
+为了避免训练样本难度突变导致的探索不稳定，SENT引入了基于语义熵（Semantic Entropy, SE）的课程学习。语义熵量化了针对给定问题语义上不同解决方案的多样性，而非单纯的 token 预测不确定性。
+- **语义熵计算：**
+    1.  **响应生成 (Response Generation)：** 对于训练数据集 $\mathcal{D}$ 中的每个查询 $q$，从当前策略 $\pi_\theta$ 中采样 $M$ 个响应 $\{o_1, o_2, \ldots, o_M\}$ 及其对应的概率 $\{P(o_1|q), \ldots, P(o_M|q)\}$。
+    2.  **语义聚类 (Semantic Clustering)：** 根据语义等效性（例如，在数学推理任务中，最终答案相同则视为语义等效）将生成的响应聚类为 $K$ 个语义等效类 $C = \{C_1, C_2, \ldots, C_K\}$。
+    3.  **熵计算 (Entropy Calculation)：** 计算每个语义簇的概率 $P(C_i|q) = \sum_{o \in C_i} P(o|q)$，并对其进行归一化 $\hat{P}(C_i|q) = \frac{P(C_i|q)}{\sum_{j=1}^K P(C_j|q)}$。
+    4.  最终的语义熵通过以下公式估计：
+        $$H_{SE}(q) = - \sum_{i=1}^K \hat{P}(C_i|q) \log \hat{P}(C_i|q)$$
+        高语义熵表明模型生成了多样化的推理路径和解决方案，任务难度较高；低语义熵则表示模型倾向于收敛到相同解决方案，任务相对容易。
+- **课程设计 (Curriculum Design)：** 在训练前，使用初始策略（通常是 SFT 模型）计算每个查询的语义熵，然后将整个训练数据集 $\mathcal{D}$ 按语义熵升序排序，得到 $\mathcal{D}_{sorted} = \text{sort}(\mathcal{D}, \text{key} = H_{SE})$。最后，将排序后的数据集划分为 $N$ 个课程阶段，模型逐阶段进行训练。这种设计使得模型能够从简单到复杂逐步适应推理任务，从而维持稳定的探索。
+
+**2. 算法层面：Token 级别熵优化 (Token-Level Entropy Optimization)**
+为了防止对低熵 token 的过度优化，SENT 引入了 token-选择性 KL 正则化。
+- **识别低熵 Token：** 低熵 token 被定义为策略在预测这些 token 时具有高置信度（即不确定性低）的 token。这些 token 容易导致熵崩溃。
+    $$\text{Tlow} = \{o_t | H_t(q, o_{<t}) < \tau_H\}$$
+    其中 $H_t(q, o_{<t})$ 是在给定上下文 $q, o_{<t}$ 下 token $o_t$ 的熵，$\tau_H$ 是低熵阈值。
+- **计算协方差 (Covariance)：** 在低熵 token 中，那些具有高协方差的 token 对熵动态影响最大。协方差衡量了模型置信度（log 概率）与学习信号（优势 $A_t$）之间的相关性。对于每个低熵 token $o_t \in \text{Tlow}$，其协方差计算如下：
+    $$\text{Cov}_{o_t \sim \pi_\theta (\cdot|q,o_{<t})} = \left(\log \pi_\theta (o_t|q, o_{<t}) - \frac{1}{N}\sum_{j=1}^N \log \pi_\theta (o_j |q, o_{<j} )\right) \cdot \left(A_t - \frac{1}{N}\sum_{j=1}^N A_j \right)$$
+    其中 $N$ 是 rollout token 的批次大小。
+- **识别高协方差低熵 Token：**
+    $$\text{Thigh-cov} = \{o_t \in \text{Tlow} | \text{Cov}_t > \tau_{cov}\}$$
+    其中 $\tau_{cov}$ 是高协方差阈值。
+- **自适应 KL 正则化：** 根据 token 的熵和协方差，应用不同的 KL 正则化系数 $\beta_{con}$：
+    $$\beta_{con} = \begin{cases} \beta_{low} & \text{if } o_t \in \text{Tlow} \setminus \text{Thigh-cov}, \\ \beta_{high} & \text{if } o_t \in \text{Thigh-cov} \subseteq \text{Tlow}, \\ 0 & \text{if } o_t \notin \text{Tlow}. \end{cases}$$
+    其中 $\beta_{high} > \beta_{low} > 0$。这意味着对于高协方差的低熵 token 施加最强的约束，以最大限度地保持熵。
+- **优化目标：** 结合数据层面的课程学习和 token 级别选择性正则化，SENT 的优化目标为：
+    $$J_{SENT}(\theta) = \mathbb{E}_{(q,a)\sim\mathcal{D}_n, \{o_i\}_{i=1}^G\sim\pi_{old}(\cdot|q)}\left[\frac{1}{G}\sum_{i=1}^G \frac{1}{|o_i|}\sum_{t=1}^{|o_i|}\left[\min\left(r_t(\theta) \hat{A}_i, \text{clip}(r_t(\theta), 1-\epsilon, 1+\epsilon) \hat{A}_i\right) - \beta_{con} D_{KL}(\pi_\theta \parallel \pi_{ref})\right]\right]$$
+    其中 $r_t(\theta) = \frac{\pi_\theta (o_t|q, o_{<t})}{\pi_{old} (o_t|q, o_{<t})}$ 是 likelihood ratio，$\hat{A}_i$ 是 Group Relative Policy Optimization (GRPO) 中计算的优势估计，$\mathcal{D}_n$ 是当前课程阶段的数据集，$\pi_{ref}$ 是参考模型。
+
+**3. 理论分析 (Theoretical Analysis)：**
+论文通过理论分析阐述了 SENT 如何控制熵动态。策略熵的变化与动作 log-概率及其 logit 变化之间的协方差成反比。
+- **Logit 变化 (Logit Change)：** 在 Policy Gradient 算法中，logit 变化满足：
+    $$\theta^{k+1}_{s_t,o_t} - \theta^k_{s_t,o_t} = \eta \cdot \pi^k_\theta (o_t|s_t)A_t$$
+- **熵变化 (Entropy Change)：**
+    $$H(\pi^{k+1}_\theta) - H(\pi^k_\theta) \approx -\eta \mathbb{E}_{s_t}\left[\text{Cov}\left(\log \pi^k_\theta (o_t|s_t), \pi^k_\theta (o_t|s_t)A_t\right)\right]$$
+- **带有 KL 正则化的熵变化：** SENT 的 logit 更新包含 KL 正则化项，导致熵变化为：
+    $$H(\pi^{k+1}_\theta) - H(\pi^k_\theta) \approx -\eta \mathbb{E}_{s_t}\left[\text{Cov}\left(\log \pi^k_\theta (o_t|s_t), \pi^k_\theta (o_t|s_t)A_t\right)\right] + \eta \mathbb{E}_{s_t}\left[\beta_{con} \text{Cov}\left(\log \pi^k_\theta (o_t|s_t), \nabla_\theta D_{KL}(\pi^k_\theta \parallel \pi_{ref})\right)\right]$$
+    第一项是香草 Policy Gradient 导致的熵衰减，第二项是 KL 正则化导致的熵保持效果。SENT 的分层 $\beta_{con}$ 确保只在熵崩溃最可能发生（低熵）和影响最大（高协方差）的 token 上进行干预，从而实现熵的保持，同时最小化对优化过程的干扰。数据层面的课程学习进一步稳定了训练，使得模型在处理更复杂任务时能动态调整熵控制。
+
+**4. 实验结果 (Experimental Results)：**
+- SENT 在 1.5B、7B 和 14B 参数规模的基础模型上进行了广泛实验，数据集为 DAPO-MATH-17K。
+- **性能比较：** 在 AIME、AMC、MATH500、OlympiadBench 和 Minerva 等 6 个数学推理基准测试中，SENT 在 Pass@K 和 Avg@K 指标上均显著优于现有熵基方法，尤其是在 1.5B 模型上，SENT 在 Pass@K 的平均得分上超过次优方法 3.26 分。在 7B 和 14B 模型上，SENT 也展示了持续的优势，在 MATH500 Pass@16 上甚至达到 100% 的最优表现。
+- **响应长度 (Response Length)：** SENT 生成的响应长度显著增加（平均多出 1000 多个 token），表明模型进行了更深入、多步骤的推理探索。
+- **熵变化分析：** 实验结果图（Fig. 4, Fig. 11, Fig. 12）显示，GRPO 经历快速熵崩溃，而直接熵最大化（w/ En）导致熵爆炸。SENT 则实现了受控的熵变化，避免了持续的熵衰减，并在训练后期维持了健康的探索水平。这证明了 SENT 成功缓解了熵崩溃。
+- **渐进性能 (Asymptotic Performance)：** SENT 在训练初期展现出更快的学习效率，在后期课程阶段（数据复杂度增加）虽有短暂性能下降，但能迅速恢复并最终超越基线方法，表明其在应对逐步复杂数据时的鲁棒性。
+- **泛化能力 (Generalization Ability)：** 在 LiveCodeBench 编程任务上的评估表明，SENT 在域外任务上也能保持优越的性能，证明了其所培养的推理能力具有良好的泛化性。
+- **消融研究 (Ablation Study)：** 独立的课程学习、低熵 token 约束和高协方差约束均对性能有提升，而三者结合的 SENT 达到最佳效果，验证了各组件的有效性和协同作用。
+
+综上所述，SENT 通过语义熵引导的课程学习和 token 级别自适应 KL 正则化，有效地缓解了 RLVR 中 LLM 推理的熵崩溃问题，同时显著提升了 LLM 在各类数学推理任务上的性能和探索深度。
+
+## SpePV
+SpecPV: Improving Self-Speculative Decoding for Long-Context Generation via Partial Verification
+
+https://arxiv.org/pdf/2512.02337 西安交大 2025.12.2
+https://github.com/TanZhendong/SpecPV
+
+1. 📝 针对长上下文生成中推测解码的验证瓶颈，该论文提出了SpecPV，一种采**用部分KV状态进行快速验证，并周期性地进行完整验证以消除累积误差的自推测**解码方法。
+2. ⚡️ SpecPV通过构建包含sink tokens、检索tokens和局部tokens的部分KV缓存来加速验证过程，该缓存远小于完整KV缓存，在内存受限时尤其能降低PCIe传输开销。
+3. 🚀 在LLaMA-3.1-8B-Instruct和Qwen3系列模型上的实验结果表明，SpecPV相比标准自回归解码，可实现高达6倍的解码加速，且仅有轻微的准确性下降。
+
+<img width="881" height="285" alt="image" src="https://github.com/user-attachments/assets/69cec556-0576-46a0-9a2d-b11730e03168" />
+
+<img width="641" height="571" alt="image" src="https://github.com/user-attachments/assets/3b361348-7e4b-4b74-93e8-bc1e84c7e81b" />
+
+本文提出了一种名为SpecPV的自推测解码（self-speculative decoding）方法，旨在通过部分验证（partial verification）加速长上下文（long-context）文本生成，以应对大型语言模型（LLMs）在代码生成、深度推理和长文档理解等任务中对长上下文生成日益增长的需求。
+
+**背景与动机**
+随着上下文长度的增长，LLMs的生成效率面临挑战。推测解码（speculative decoding）是一种有效的加速方法，其遵循草稿-验证（draft-verify）范式：一个轻量级草稿模型（draft model）提出候选tokens，然后目标模型（target model）进行验证。然而，研究发现，在长上下文生成中，验证阶段逐渐成为主要的性能瓶颈，其时间占比从短上下文的约60%增长到长上下文的近80%（根据EAGLE-3的测量）。这促使作者思考是否能更积极地利用部分Key-Value (KV) cache进行验证，从而减轻完整验证的开销，同时保持最小的性能损失。鉴于LLMs在处理长上下文时注意力（attention）表现出稀疏性，通过精心设计的检索策略，可以利用部分KV cache实现有效验证。
+
+**核心方法：SpecPV**
+SpecPV的核心思想是在自推测解码框架下，主要采用部分KV cache进行快速验证，并周期性地进行完整验证以纠正累积误差，确保生成结果与原始输出一致。
+
+1.  **自推测解码框架 (Self-Speculative Decoding Framework)**
+    自推测解码的关键特点是草稿模型重用目标LLM的层特征。在预填充（prefilling）阶段之后，模型预测下一个token并生成一组层特征，这些特征作为自推测草稿的输入。草稿阶段仅涉及草稿模块的计算，无需额外调用目标LLM的前向传播，因为验证阶段已生成了所有必要层特征。
+
+2.  **部分验证 (Partial Verification)**
+    为提高解码效率，SpecPV采用部分KV cache。部分KV cache在block级别组织，包含四个组成部分：
+    *   **Sink Tokens**: 始终保留初始token的KV blocks，以维持注意力sink机制的性能。
+    *   **Retrieval Tokens**: 这是部分KV cache的主体。受Quest启发，关键tokens的集合取决于当前query。由于自然语言的语义连续性，注意力具有内在的局部性，因此部分KV cache无需每步更新即可保持良好性能。为加速检索过程，系统缓存每个block的Key-states summary：
+        $$S_i = \begin{pmatrix} K_{max}^i \\ K_{min}^i \end{pmatrix}$$
+        其中，$K_{max}^i$ 和 $K_{min}^i$ 分别表示block $i$ 中Key states的元素级最大值和最小值。对于每个block，基于输入query states计算分数 $s_i$。在验证阶段，草稿模型生成一系列候选tokens，产生多个query states。因此，首先计算每个query与每个block的得分 $s_{i,j}$：
+        $$s_{i,j} = \max(\mathbf{q}_j (K_{max}^i)^\top, \mathbf{q}_j (K_{min}^i)^\top)$$
+        然后通过归约函数（如max、mean或last，其中last指最近验证token的query state）聚合为单个重要性得分：
+        $$s_i = f(s_{i,1}, s_{i,2}, \dots, s_{i,M})$$
+        根据这些得分选择要保留的KV blocks。
+    *   **Local Tokens**: 保留少量最近的tokens，作为一个固定大小的窗口。
+    *   **Buffer**: 临时存放已部分验证且等待纠正的tokens。在验证完成后，无效tokens将从buffer中移除。
+    这些组件在token顺序上是连续的，并在注意力前向传播期间作为单个连续KV段处理。
+
+3.  **通过完整验证纠正 (Rectified with Full Verification)**
+    部分验证引入的误差会逐渐累积，导致生成输出随时间漂移。这源于部分验证tokens的KV states不准确，以及检索到的上下文随生成进程变化。SpecPV通过周期性地应用完整验证来消除这些累积误差：
+    *   在进入验证前向传播之前，将已部分验证的tokens添加到新生成的候选tokens之前。
+    *   在验证过程中，使用完整KV cache执行注意力计算，并相应地刷新部分KV cache。
+    *   在此前向传播中，计算部分验证tokens和候选tokens的KV states。
+    *   更新检索tokens和局部窗口tokens。
+    *   评估候选tokens后，从部分和完整KV cache中移除无效tokens。
+    当序列长度小于部分KV cache预算时，禁用部分验证。当序列增长超过部分KV cache预算时，执行一次完整验证以初始化部分KV cache，然后平滑过渡到部分验证。当部分验证和候选tokens的总数超过设定的最大buffer size时，切换回完整验证并刷新部分KV cache。通过调整buffer size，可以控制触发完整验证的频率。
+    此外，在内存受限（如RTX 4090 GPU）的KV cache offloading场景下，由于部分KV cache远小于完整KV cache，仅offload完整KV cache到主机内存，将部分KV cache保留在设备上，从而减少PCIe传输开销，提高推理效率。
+
+**实验评估**
+
+1.  **设置**
+    *   **模型**: LLaMA-3.1-8B-Instruct和Qwen3系列（4B, 8B, 14B）。草稿模型采用YARN扩展的EAGLE-3框架。
+    *   **任务**: 效率评估采用PG-19上的故事续写任务；性能评估使用LongBench v1和v2上的文档摘要和问答任务。
+    *   **基线**: TriForce (独立草稿模型, 分层推测), TokenSwift (Medusa-style草稿头, 部分KV cache for drafting), EAGLE3-YARN (直接使用YARN适配的EAGLE-3模型)。
+    *   **指标**:
+        *   效率: 总加速比（$\alpha = \text{Throughput}_{\text{SpecPV}} / \text{Throughput}_{\text{AR}}$），草稿接受长度（$\tau$）。
+        *   质量: 问答任务使用Exact-Match Accuracy；摘要任务使用ROUGE-L和BLEURT。
+    *   **硬件**: A100 80GB GPU，以及RTX 4090 24GB GPU（KV cache offloading）。
+
+2.  **生成效率**
+    在长上下文场景下，SpecPV相比EAGLE3-YARN、TriForce和TokenSwift取得了显著的加速。例如，在60K上下文长度下，SpecPV-4K在LLaMA3.1-8B-Instruct上实现了6.15x的加速比，而EAGLE3-YARN为3.48x。这表明部分验证在长上下文时效率提升更加显著。不同部分KV预算下，SpecPV均能保持较高的草稿接受长度（约3.0-3.6）。在KV cache offloading场景下，SpecPV由于减少了完整cache访问和PCIe传输，展现出更显著的加速。
+
+3.  **生成质量**
+    SpecPV在摘要和问答任务上保持了与完整验证高度一致的生成质量。在摘要任务中，SpecPV与完整生成结果的相似度（ROUGE-L和BLEURT）仅有轻微下降，且差异与完整生成和朴素自回归解码之间的固有数值差异相当。在问答任务中，当KV cache预算为4096 tokens时，SpecPV的性能与完整验证相当，甚至在某些数据集上略有超越，作者推测这可能是因为丢弃部分KV cache有时能减少长上下文中的噪声。
+
+4.  **消融研究 (Ablation Study)**
+    *   **检索分数聚合策略**: 比较了Mean、Max和Last三种归约函数，发现Mean归约函数在LLaMA3.1和Qwen3上均能产生最高的相似度和略长的草稿接受长度，因此在其他实验中均采用Mean归约。
+    *   **刷新间隔（Buffer Size）**: 随着刷新间隔（即buffer size）的增加，SpecPV与完整验证结果的相似度逐渐降低，表明周期性部分KV cache更新有助于保持模型性能。为平衡效率与准确性，buffer size通常设定为单次验证步骤中处理的token数量加上20。
+
+**结论**
+SpecPV通过引入部分KV cache进行快速验证，并辅以周期性完整验证以消除累积误差，有效地加速了长上下文场景下的推测解码。实验结果表明，SpecPV在不显著牺牲准确性的前提下，相比标准自回归解码实现了高达6倍的解码加速，相比完整验证在60K上下文长度下也实现了约2倍的加速。该工作为更高效、实用的长上下文LLM应用提供了有益探索。
+
 ## DeepMind Evo-Memory 
 Evo-Memory: Benchmarking LLM Agent Test-time Learning with Self-Evolving Memory
 
