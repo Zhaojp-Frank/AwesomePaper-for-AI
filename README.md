@@ -12,10 +12,20 @@ Model:
 PaCoRe-8B: Our final PaCoRe-trained model checkpoint!
 RLVR-8B-0926: The initial checkpoint of our study, conducted strong reasoning-oriented post-trained on Qwen3-8B-Base.
 📚 Data: PaCoRe-Train-8k The high-quality training corpus, including opensource_math, public_mathcontest, synthetic_math and code:
+
 🤗 Stage1-3k: PaCoRe-Train-Stage1-3k
+
 🤗 Stage2-5k: PaCoRe-Train-Stage2-5k
 
 解读：https://mp.weixin.qq.com/s/9sZLZvk2BoY41_a7bSBTXw
+<img width="1065" height="435" alt="image" src="https://github.com/user-attachments/assets/df699125-f320-414b-899b-40646c644b24" />
+<img width="1081" height="732" alt="image" src="https://github.com/user-attachments/assets/c0142f92-fc48-49f2-8596-04b63e487fe7" />
+<img width="1083" height="534" alt="image" src="https://github.com/user-attachments/assets/6d290659-8a0b-407b-9d68-b2141503cafe" />
+<img width="918" height="407" alt="image" src="https://github.com/user-attachments/assets/cef65557-236e-41a5-b89c-0449398bbc27" />
+<img width="893" height="410" alt="image" src="https://github.com/user-attachments/assets/849795e3-5c91-4f34-b088-dba93bbdd2d6" />
+<img width="944" height="228" alt="image" src="https://github.com/user-attachments/assets/63e26ca4-bc5d-4d9a-9721-cfb61282f6e0" />
+
+
 
 ## 微软NextLat
 Next-Latent Prediction Transformers Learn Compact World Models
