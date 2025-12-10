@@ -1,6 +1,23 @@
 # AwesomePaper-for-AI
 Awesome system papers for AI
 
+## LoRA for RL
+https://macaron.im/mindlab/research/building-trillion-parameter-reasoning-rl-with-10-gpus 2025.12.2 MindLab
+
+对Kimi K2 base (1T) 采用LoRA进行强化后训练，64卡H100，colocated, on-policy
+- 混合并行: 训练（EP TP PP SP），推理（DP TP）
+- 稳定性：Replay router，TIS
+- LoRA：r=128，dense 和 MoE都用LoRA adaptor；LoRA本身也fully shared，fusion
+- 集成实现：verl+megatron-bridge
+
+相关patch
+https://github.com/volcengine/verl/pull/4063
+https://github.com/modelscope/ms-swift/pull/6714
+https://github.com/modelscope/ms-swift/pull/6720
+https://github.com/NVIDIA-NeMo/Megatron-Bridge/pull/1310
+https://github.com/NVIDIA-NeMo/Megatron-Bridge/pull/1380
+<img width="747" height="624" alt="image" src="https://github.com/user-attachments/assets/96d63c6a-6e82-4435-acdd-0981b00cfb64" />
+
 ## 阶跃 PaCoRe-8B 推荐！
 
 paper: https://github.com/stepfun-ai/PaCoRe/blob/main/pacore_report.pdf 2025.12.9
