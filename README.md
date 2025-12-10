@@ -1,6 +1,62 @@
 # AwesomePaper-for-AI
 Awesome system papers for AI
 
+## DS-GRPO
+Differential Smoothing Mitigates Sharpening and Improves LLM Reasoning 
+
+https://arxiv.org/pdf/2511.19942 CMU 清华等，2025.11.25
+1. 📚 该研究深入分析了RL微调大型语言模型时出现的输出**多样性崩溃**问题，并从第一性原理上提出了**选择偏置和强化偏置**是导致正确轨迹多样性下降的根本原因。
+2. 💡 基于此诊断，论文提出了一种名为 **Differential Smoothing **(DS-GRPO) 的原则性方法，通过对正确轨迹应用熵奖励并对不正确轨迹应用熵惩罚，实现了**差异化的奖励修改**。
+3. 📈 理论证明DS-GRPO能够同时**提高模型的正确性**（Pass@1）和**多样性（Pass@K）**，并通过在**CountDown和数学推理任务上的广泛实验**，一致性地展示出其优于现有方法和香草RL的性能。
+
+深入探究了强化学习（RL）微调大型语言模型（LLM）时普遍存在的**多样性崩溃（diversity collapse）**问题。研究指出，RL微调模型通常会导致**输出缺乏多样性**，从而在诸**如Pass@K等指标上表现不佳**，甚至在K值较大时可能不如原始基础模型。现有缓解该问题的方法往往需要在正确性（Pass@1）和多样性（Pass@K）之间进行权衡，效果不一致，甚至相互矛盾。
+核心诊断：RL中的**选择偏置和强化偏置**（Selection Bias and Reinforcement Bias）
+该研究首先从第一性原理出发，对RL微调导致多样性崩溃的机制进行了形式化分析，并引入了两个关键概念：
+<img width="1026" height="321" alt="image" src="https://github.com/user-attachments/assets/ef0a8a0f-c21a-4f13-a747-837412a5721e" />
+<img width="959" height="358" alt="image" src="https://github.com/user-attachments/assets/71146cf3-8bca-447a-8205-6cb811e161c4" />
+<img width="1061" height="319" alt="image" src="https://github.com/user-attachments/assets/7c47f3cb-8511-4fe7-bcd0-a8a2e47c9350" />
+<img width="1082" height="295" alt="image" src="https://github.com/user-attachments/assets/ac21df42-e1d4-498e-bac9-a5efd6e07719" />
+<img width="1070" height="437" alt="image" src="https://github.com/user-attachments/assets/f0207d30-82e1-4b69-906c-75bf1969170f" />
+
+研究强调，这些偏置特指对**正确轨迹**的影响。相反，不正确的轨迹则表现出相反的动态：高概率的错误会受到更强的惩罚，使得不正确轨迹的概率分布变得扁平化。这种不对称的效应导致了多样性与正确性之间的内在权衡。
+
+**核心方法：差分平滑（Differential Smoothing, DS）**
+<img width="924" height="188" alt="image" src="https://github.com/user-attachments/assets/eabbb4d5-7f43-47d3-96ae-95bf4ce4ef49" />
+<img width="973" height="141" alt="image" src="https://github.com/user-attachments/assets/e88fb2ed-2a0f-46e9-aa55-10845cafe2cb" />
+
+基于上述诊断，该研究提出了一种名为**差分平滑（Differential Smoothing）**的原则性方法。核心思想是：只需要在**正确轨迹**上修改奖励函数以防止多样性崩溃，而不正确轨迹可以继续使用原始奖励或甚至鼓励“锐化”的修改。这种对正确和不正确轨迹施加不同压力的差异化奖励机制，能够同时改善正确性和多样性，克服了现有启发式方法的局限性。
+
+差分平滑通过修改奖励函数$r_{\text{DS}}(\tau)$来实现：
+$$
+r_{\text{DS}}(\tau) = \begin{cases} \hat{r}(\tau) - \gamma_p \cdot \log(\pi_{\text{base}}(\tau)) & \text{if } r(\tau) > 0 \quad (\text{correct trajectories}) \\ r(\tau) + \gamma_n \cdot \log(\pi_{\text{base}}(\tau)) & \text{if } r(\tau) \le 0 \quad (\text{incorrect trajectories}) \end{cases}
+$$
+其中，$\gamma_p, \gamma_n \ge 0$是超参数。
+
+*   **对正确轨迹（$r(\tau) > 0$）**：通过减去一个与轨迹在基础模型下对数概率（$\log \pi_{\text{base}}(\tau)$）成比例的项（即**熵奖励，entropy bonus**），来鼓励模型给那些在基础模型下不那么常见的正确轨迹分配更高的概率。这直接对抗了选择偏置和强化偏置，促进了正确解决方案的多样性。
+*   **对不正确轨迹（$r(\tau) \le 0$）**：通过加上一个与轨迹在基础模型下对数概率成比例的项（即**熵惩罚，entropy penalty**），鼓励模型给那些不正确的轨迹分配更低的概率。这进一步锐化了对错误轨迹的惩罚，增强了模型的正确性，同时不影响正确解决方案的多样性。
+
+**理论支撑与实现（DS-GRPO）**
+
+研究在理论上证明了这种差分奖励修改的优越性：
+**定理 3.4**：假设模型对所有轨迹的奖励有正确估计。对于在熵正则化策略$\pi_{\text{ent}}$中使用的任意参数$\gamma_{\text{ent}} \ge 0$和$\beta_{\text{ent}} > 0$，如果它满足接近度约束$K_{\rho}(\pi_{\text{ent}}, \pi_{\text{base}}) \le \kappa$，那么差分平滑策略$\pi_{\text{DS}}$存在参数$\gamma_{\text{DS}} \ge 0$和$\beta_{\text{DS}} > 0$，使其也满足$K_{\rho}(\pi_{\text{DS}}, \pi_{\text{base}}) \le \kappa$，并且同时满足正确性$C(\pi_{\text{DS}}) \ge C(\pi_{\text{ent}})$和多样性$\sigma(\pi_{\text{DS}}) \ge \sigma(\pi_{\text{ent}})$。其中$C(\pi)$定义为策略$\pi$的正确性，$\sigma(\pi)$定义为正确解决方案的归一化方差，用于衡量多样性。该定理对多种KL散度度量均成立。这意味着DS方法在保持与基础模型接近度的同时，能够同时提升正确性和多样性。
+
+在实践中，差分平滑被集成到Group Relative Policy Optimization (GRPO)框架中，形成了**DS-GRPO**算法。DS-GRPO通过修改GRPO的优势函数（advantage function）$\text{ADS}_i$来实现：
+$$
+\text{ADS}_i = A_i + \begin{cases} - \gamma_p \log \pi_{\theta_{\text{old}}}(y_i | x) & \text{if } r_i = 1 \\ + \gamma_n \log \pi_{\theta_{\text{old}}}(y_i | x) & \text{otherwise} \end{cases}
+$$
+这里，$A_i$是原始GRPO的标准化优势，$r_i$是完成$y_i$的奖励。理论分析中使用$\pi_{\text{base}}$，但实践中发现使用前一策略迭代的$\pi_{\theta_{\text{old}}}$在稳定性上表现更优，且两者在参数重整化下被证明是等价的。
+
+**实验验证**
+
+研究在CountDown和数学推理等多个领域，使用1.5B到8B不同大小的模型进行了广泛实验。
+*   **对比Vanilla GRPO**：DS-GRPO在Pass@1和Pass@K上均取得了一致的提升，最高可达6.7%的Pass@K提升。同时，它还能在保持相同Pass@K性能的情况下，显著提高推理速度（例如，实现4倍的推理加速）。
+*   **对比现有启发式方法**：包括基于熵正则化（全局熵奖励或熵惩罚）和Pass@K优化等方法。实验结果表明，DS-GRPO在所有测试数据集和模型上都表现出鲁棒的优越性，而现有方法往往只在特定设置下有效。
+*   **对熵控制的澄清**：研究解释了为什么全局熵奖励和熵惩罚会在不同任务上产生矛盾的效果。全局熵奖励提高多样性但可能损害正确性，适用于具有高“解决方案多样性（Solution Multiplicity）”的任务（即每问题有多个正确解决方案）；而全局熵惩罚提高正确性但牺牲多样性，适用于低解决方案多样性任务。DS-GRPO的差分方法通过对正确样本应用熵奖励，对不正确样本应用熵惩罚，成功地结合了两者的优点，实现了同时提升正确性和多样性。
+
+**结论**
+
+这项工作为RL微调中的多样性崩溃提供了严格的理论基础，并基于此提出了一种新颖且有原则性的差分平滑方法。该方法在理论上和经验上均被证明能够同时改善模型的正确性（Pass@1）和多样性（Pass@K），超越了现有的RL方法和启发式策略。此外，它还澄清了熵控制在LLM微调中的复杂且任务依赖的角色，为未来的研究指明了方向。
+
 ## LoRA for RL
 https://macaron.im/mindlab/research/building-trillion-parameter-reasoning-rl-with-10-gpus 2025.12.2 MindLab
 
