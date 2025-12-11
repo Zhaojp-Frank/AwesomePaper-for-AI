@@ -1,6 +1,16 @@
 # AwesomePaper-for-AI
 Awesome system papers for AI
 
+## NPR
+Native Parallel Reasoner: Reasoning in Parallelism via Self-Distilled Reinforcement Learning
+https://arxiv.org/abs/2512.07461 朱松纯团队 2025.12.8
+
+https://github.com/bigai-nlco/Native-Parallel-Reasoner
+
+https://huggingface.co/bigai-NPR
+
+中文解读：https://mp.weixin.qq.com/s/LusROLFlk-m0giJ3wXbALw 
+
 ## TileRT
 中文介绍 https://mp.weixin.qq.com/s/5T-93n5kk7UbHXj_I3NIvw 
 
