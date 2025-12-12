@@ -1,6 +1,51 @@
 # AwesomePaper-for-AI
 Awesome system papers for AI
 
+## CMU RL的能力来源和条件
+On the Interplay of Pre-Training, Mid-Training, and RL on Reasoning Language Models 
+
+https://arxiv.org/abs/2512.07783 CMU 2025.12.8
+
+中文解读：https://mp.weixin.qq.com/s/PrjOBHUuCktIEyXOmotPGg
+
+<img width="668" height="202" alt="image" src="https://github.com/user-attachments/assets/1d8746a8-7c8e-4d0e-a423-44524af85a26" />
+构建了一个完全可控的实验框架，隔离预训练、中间训练和基于RL的后训练的因果贡献。该框架基于三个原则：
+(1) 具有显式原子操作和DAG定义依赖结构的完全可控合成推理任务；
+(2) 可观察、可解析的推理过程，支持过程级评估并减少奖励或评估欺骗；
+(3) 系统操纵预训练/中间训练/后训练分布，将因果效应归因于每个阶段。
+<img width="1048" height="427" alt="image" src="https://github.com/user-attachments/assets/839c0503-53ed-4bef-bf92-fd67d0207d93" />
+
+论文使用100M参数的Qwen2.5模型，在包含30B Token的大规模合成推理数据集上训练，该数据集跨越多个操作范围和上下文模板，并被划分为不相交的预训练、中间训练和后训练分割以避免分布污染。
+论文沿两个关键维度：
+- 外推泛化 (Extrapolative Generalization) (深度)：评估模型解决比预训练中遇到的问题更复杂的能力，即 op(G)op(G)op(G)op(G) 超出训练范围的问题。问题分为三类：In-Distribution (ID, op=2-10op=2−10op=2-10op=2−10)、OOD-edge (op=11-14op=11−14op=11-14op=11−14) 和 OOD-hard (op=15-20op=15−20op=15-20op=15−20)。
+- 上下文泛化 (Contextual Generalization) (广度)：评估模型将推理技能迁移到表面形式不同但底层逻辑相似的新颖上下文的能力。
+
+**发现1：RL能力提升的条件**
+RL仅在两个条件同时成立时才能产生pass@128提升：
+(1) 任务在预训练期间没有被大量覆盖，留下足够的探索空间；
+(2) RL数据校准到模型的"能力边界"（Edge of Competence），既不太简单（分布内）也不太困难（分布外）。
+分布内任务（op=2-10）上，无论RL数据方案如何，pass@1有明显的性能提升但pass@128没有提升，表明**RL锐化了现有能力而没有扩展它们**。
+分布外任务（op=11-14和op=15-20），当应用于能力边界数据（op=11-14）时，RL**始终提升pass@128性能**，达到+42%的提升，证明了超越预训练的真正能力提升
+<img width="1039" height="368" alt="image" src="https://github.com/user-attachments/assets/755e9702-cdda-4939-90dc-0de45b03168f" />
+
+**发现2：广度泛化能力提升等条件**
+ctxB**需要在预训练中有最小曝光**。当预训练排除长尾上下文B或提供很少曝光（0%或0.1%）时，RL无法迁移到上下文B。**引入1%**的上下文B数据，post-training泛化就能显著增强，甚至可以泛化到最困难的op=20任务，达到+60% pass@128的提升。
+<img width="1059" height="367" alt="image" src="https://github.com/user-attachments/assets/313b59b0-8e14-472f-b56b-30104231992d" />
+
+**发现3：Mid+RL混合效果：问题越难 越需要更多RL**
+固定计算预算下，引入一个桥接预训练和后训练分布的中间训练阶段显著增强了分布内和分布外性能。中间训练+RL在OOD-hard任务上比仅RL高出+10.8%。
+比较了五种mid+RL配比：完全中间训练、完全RL、Light-RL（β=0.2）、Medium-RL（β=0.5）和Heavy-RL（β=0.8）。结果显示，
+在OOD-edge任务上，完全中间训练和轻量RL配置优于重量或完全RL；
+**对于OOD-hard任务，将更多预算重新分配给重量RL显著提升了最困难实例的性能**
+<img width="1054" height="376" alt="image" src="https://github.com/user-attachments/assets/9b6748a6-5b90-40e2-b8a9-24c07cb5dc66" />
+
+**发现4：结果奖励容易引发欺骗；过程奖励可以改善。二者结合最好**
+过程级奖励（Process-Level Rewards）能够减少奖励欺骗（Reward Hacking），提升推理的真实性。
+通过将过程验证纳入奖励函数，使强化信号与有效推理行为对齐，在复杂的组合设置下，pass@1在外推任务（op=15-20）上提升了4-5%。
+<img width="1060" height="314" alt="image" src="https://github.com/user-attachments/assets/3f894c9f-ede1-436e-b3ea-190a404e91af" />
+<img width="812" height="351" alt="image" src="https://github.com/user-attachments/assets/2f3fd6ce-f65d-469e-a570-98873417c976" />
+
+
 ## NPR
 Native Parallel Reasoner: Reasoning in Parallelism via Self-Distilled Reinforcement Learning
 https://arxiv.org/abs/2512.07461 朱松纯团队 2025.12.8
