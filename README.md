@@ -22,29 +22,38 @@ https://arxiv.org/abs/2512.07783 CMU 2025.12.8
 
 **发现1：RL能力提升的条件**
 
-仅在下面两个条件同时成立时 RL才能产生提升能力边界（pass@128：
+仅在下面两个条件同时成立时 RL才能产生提升能力边界（pass@128)：
+
 (1) 任务在预训练期间没有被大量覆盖，留下足够的探索空间。
+
 (2) 模型的"能力边界"（Edge of Competence）处，既问题不太简单（分布内）也不能太困难（分布外）。
+
 分布内任务（op=2-10）上，无论RL数据方案如何，pass@1有明显的性能提升但pass@128没有提升，表明**RL锐化了现有能力而没有扩展它们**。
 分布外任务（op=11-14和op=15-20）：对于边界（op=11-14）时，RL**始终提升pass@128性能**，达到+42%的提升，证明了超越预训练的真正能力提升
+
 <img width="1039" height="368" alt="image" src="https://github.com/user-attachments/assets/755e9702-cdda-4939-90dc-0de45b03168f" />
 
 **发现2：广度泛化能力提升等条件**
 
-ctxB**需要在预训练中有最小曝光**。当预训练排除长尾上下文B或提供很少曝光（0%或0.1%）时，RL无法迁移到上下文B。**引入1%**的上下文B数据，post-training泛化就能显著增强，甚至可以泛化到最困难的op=20任务，达到+60% pass@128的提升。
+ctxB**需要在预训练中有最小曝光**。当预训练排除长尾上下文B或提供很少曝光（0%或0.1%）时，RL无法迁移到上下文B。
+**引入1%的**上下文B数据，post-training泛化就能显著增强，甚至可以泛化到最困难的op=20任务，达到+60% pass@128的提升。
+
 <img width="1059" height="367" alt="image" src="https://github.com/user-attachments/assets/313b59b0-8e14-472f-b56b-30104231992d" />
 
 **发现3：Mid+RL混合效果：问题越难 越需要更多RL**
 固定计算预算下，引入一个桥接预训练和后训练分布的中间训练阶段显著增强了分布内和分布外性能。中间训练+RL在OOD-hard任务上比仅RL高出+10.8%。
 比较了五种mid+RL配比：完全中间训练、完全RL、Light-RL（β=0.2）、Medium-RL（β=0.5）和Heavy-RL（β=0.8）。结果显示，
 在OOD-edge任务上，完全中间训练和轻量RL配置优于重量或完全RL；
+
 **对于OOD-hard任务，将更多预算重新分配给重量RL显著提升了最困难实例的性能**
+
 <img width="1054" height="376" alt="image" src="https://github.com/user-attachments/assets/9b6748a6-5b90-40e2-b8a9-24c07cb5dc66" />
 
 **发现4：结果奖励容易引发欺骗；过程奖励可以改善。二者结合最好**
 过程级奖励（Process-Level Rewards）能够减少奖励欺骗（Reward Hacking），提升推理的真实性。
 通过将过程验证纳入奖励函数，使强化信号与有效推理行为对齐，在复杂的组合设置下，pass@1在外推任务（op=15-20）上提升了4-5%。
 <img width="1060" height="314" alt="image" src="https://github.com/user-attachments/assets/3f894c9f-ede1-436e-b3ea-190a404e91af" />
+
 <img width="812" height="351" alt="image" src="https://github.com/user-attachments/assets/2f3fd6ce-f65d-469e-a570-98873417c976" />
 
 
@@ -57,6 +66,96 @@ https://github.com/bigai-nlco/Native-Parallel-Reasoner
 https://huggingface.co/bigai-NPR
 
 中文解读：https://mp.weixin.qq.com/s/LusROLFlk-m0giJ3wXbALw 
+1. 💡 本文提出了 Native Parallel Reasoner (NPR)，这是一个**teacher-free框架**，通过自蒸馏渐进式训练使 Large Language Models (LLMs) 能够自主演化出真正的并行推理能力。
+2. 🚀 NPR 引入了新型 Parallel-Aware Policy Optimization (**PAPO**) 算法，直接在执行**图中优化分支策略以学习自适应分解**，并设计了鲁棒的NPR Engine确**保大规模并行RL训练的稳定性**。
+3. 📈 在八个推理基准测试中，NPR 在 Qwen3-4B 上实现了24.5% 的性能提升和 **4.6 倍的推理加速**，并展现了 100% 的 genuine parallel execution
+
+<img width="1012" height="314" alt="image" src="https://github.com/user-attachments/assets/2c22c7b1-34a3-4edb-86ec-d151c8840869" />
+
+<img width="824" height="527" alt="image" src="https://github.com/user-attachments/assets/db08f78d-e000-4384-aa99-504dd43e7f2b" />
+
+这篇论文介绍了**Native Parallel Reasoner** (NPR)，这是一个teacher-free的框架，旨在使大型语言模型（LLMs）能够自我演化出原生的并行推理能力。传统LLMs在“更深”的测试时扩展（single-path reasoning）上表现出色，但在需要探索多条轨迹的“更广”推理能力方面（parallel reasoning）存在不足。现有的并行推理实现面临三大挑战：
+1.  **算法与架构不兼容**：主流的推理引擎和强化学习（RL）算法未能**有效支持原生分支操作**，尤其是特殊令牌（special tokens）的梯度裁剪，阻碍了模型学习严格的并行结构。
+2.  **低效的手工并行化**：早期方法通过独立采样实现并行，但**未能利用共享的Key-Value (KV)状态，导致冗余计算和线性（$O(N)$）的延迟成本**。
+3.  **依赖监督蒸馏**：例如Multiverse等框架**依赖于从更强的教师模型中蒸馏数据**，这限制了**学生模型发现新颖、模型内在**的并行策略的能力。
+
+为此，NPR提出了一个**三阶段的渐进式训练范式**，将模型从**顺序模拟**（sequential emulation）**转变为原生的并行认知**（native parallel cognition）。
+<img width="683" height="386" alt="image" src="https://github.com/user-attachments/assets/2ce503a5-1a4f-49ee-8e48-e99988c79a94" />
+
+**核心方法（Methodology）**
+
+NPR的训练过程分为三个阶段：
+<img width="824" height="527" alt="image" src="https://github.com/user-attachments/assets/db08f78d-e000-4384-aa99-504dd43e7f2b" />
+
+**1. 阶段1：格式遵循强化学习**
+*   **目标**：在没有外部标注的情况下，引导模型自发发现并生成结构化的并行推理格式。
+*   **并行格式**：NPR采用了一种简化的“Map-Process-Reduce”范式，灵感来源于Multiverse但结构更精简。每个并行块以`<guideline>...</guideline>`开始，包含`<plan>...</plan>`条目定义Map阶段。Process阶段通过`<step>...</step>`块独立并行执行子任务。最后，**Reduce阶段通过`<takeaway>...</takeaway>`聚合结果**。这种基于标签的格式便于解析和验证。
+*   **奖励函数**：使用DAPO (Yu et al., 2025) 算法。奖励函数结合了格式（format）和准确性（accuracy）信号。
+    *   **格式奖励**：通过格式检查的输出获得0.0奖励，失败则惩罚在$(0.0, -2.0]$之间。
+    *   **准确性奖励**：格式检查通过后，正确答案获得+1.0，错误答案获得-1.0。
+*   **产物**：此阶段训练出的模型称为NPR-ZERO，它主要学习生成所需的结构化格式。其生成的数据用于后续阶段的大规模自蒸馏（self-distillation）。
+
+**2. 阶段2：拒绝采样与并行热身**
+*   **目标**：通过对NPR-ZERO**生成的轨迹进行拒绝采样**，构建高质量的自蒸馏数据集，并进行监督微调（SFT），以稳定化模型对并行原语的生成能力。
+*   **结构化轨迹收集**：
+    *   对于数据集中的每个问题$q_i$，模型生成$K$个候选推理轨迹和答案$\{(\hat{r}_{ij}, \hat{a}_{ij})\}_{j=1}^K$。
+    *   **拒绝采样过滤器**：
+        *   **结果正确性 (Outcome Correctness)**：丢弃答案$\hat{a}$与真实答案$a_i$不匹配的轨迹，即$1_{\text{correct}}(\hat{a})$。
+        *   **结构化并行性 (Structured Parallelism)**：丢弃未能遵循预定义结构化输出格式的轨迹，即$1_{\text{format}}(r)$。
+    *   **接受标准**：样本**仅在满足两个标准时被接受**：$1_{\text{accept}}(r, \hat{a}) = 1_{\text{correct}}(\hat{a}) \cdot 1_{\text{format}}(r)$。
+    *   **数据集**：接受的轨迹形成自蒸馏数据集$D_{\text{accept}} = \{(q_i, r_{ij}, a_{ij}) | i \leq N, j \leq K, \text{s.t.} (r_{ij}, a_{ij}) \sim \pi_{\theta}(\cdot|q_i), 1_{\text{accept}}(r_{ij}, \hat{a}_{ij}) = 1\}$。
+*   **并行注意力掩码与位置编码 (Parallel Attention Mask & Positional Encoding)**：
+    *   采用**Multiverse Attention (Yang et al., 2025a) 的核心设计**，构建并行注意力掩码和对应的位置编码。这使得**多个推理路径可以在一个前向传播中并行存在**，并**支持KV缓存共享以减少推理开销**。
+    *   通过初始化特殊令牌来暴露结构化标签，以确保模型可以生成这些标签。
+*   **并行热身**：在$D_{\text{accept}}$上对模型进行监督训练（使用标准负对数似然）。此阶段产物为NPR-BETA，作为后续并行RL的稳定初始化。
+
+**3. 阶段3：Native-parallel RL)**
+*   **目标**：进一步**放大和泛化并行推理能力，**通过直接优化模型在并行执行图中的分支策略。
+*   **Parallel-Aware Policy Optimization (PAPO)**：对标准RL（**基于DAPO）进行多项实践修改以适应并行语义：**
+    1.  **并行Rollout**：使用NPR Engine (§2.5) 进行采样，确保**所有生成的轨迹都遵循预期的Map–Process–Reduce流程**。
+    2.  **结构化过滤 (Structural Filtering)**：在Rollout期间，**对不符合并行Schema的malformed序列进行过滤**，确保**保留的轨迹严格遵守目标结构**。过滤后奖励仅基于准确性（正确最终答案+1，否则-1）。
+    3.  **批次级优势归一化 (Batch-level Advantage Normalization)**：由于违反格式的样本被移除，导致组级方差塌陷，因此采用**Lite-PPO **(Liu et al., 2025a) 风格的优势函数，将组级方差替换为批次级方差：
+        $\hat{A}_{i,t} := \frac{R_i - \text{mean}(\{R_1, R_2, \cdots, R_G \})}{\text{std}(\{R_1, R_2, \cdots, R_G, \cdots, R_{N \times G}\})}$
+        其中$N$是批次大小，$G$是组大小，$R$是准确性奖励。
+    4.  **保留特殊令牌的梯度 (Preserve Gradients on Special Tokens)**：**特殊令牌对于维持并行语义至关重要，因此移除了其梯度裁剪**，确保它们**始终获得梯度**。为了避免PPO中重要性采样的不稳定性，NPR消除了重要性采样，采用**严格的on-policy目标。**
+*   **PAPO目标函数**：
+    $J (\theta) = E_{(q,y)\sim D, \{\hat{y}_i \}^G_{i=1}\sim\pi_{\theta} (\cdot|q)} \left[ -\frac{1}{\sum_{i=1}^G |\hat{y}_i|} \sum_{i=1}^G |\hat{y}_i| \sum_{t=1} \left( \pi_{\theta} ( \hat{y}_{i,t} | q, \hat{y}_{i,<t}) \cdot \text{sg}[\pi_{\theta} ( \hat{y}_{i,t} | q, \hat{y}_{i,<t})] \cdot \hat{A}_{i,t} \right) \right]$
+    其中$\text{sg}[\cdot]$表示stop-gradient操作。
+    
+<img width="829" height="456" alt="image" src="https://github.com/user-attachments/assets/f7f70c00-d288-438f-9adb-73edee5e01a8" />
+
+**NPR Engine**
+为了支持大规模并行RL的稳定Rollout，NPR重新设计了**Multiverse的并行生成引擎**，解决了**SGLang在生产规模下存**在的以下稳定性问题：
+1.  **KV缓存双重释放和内存损坏 (KV-cache double-free and memory corruption)**：在高并行分支下，**共享的radix-tree KV路径可能被多次回收，导致上下文损坏和GPU内存泄漏**。**解决方案**：用显式、预算感知的回收策略替代了机会性回收。
+2.  **全局令牌预算低估 (Underestimated global token budget)**：并行解码会数倍增加总令牌消耗，但原始引擎仅跟踪最长的单个分支。**解决方案**：扩展了长度核算以适应分支，引擎现在记录每个扩展处的活跃分支因子并相应更新全局令牌账本。
+3.  **非法并行Schema导致的未定义状态 (Undefined states from illegal parallel schemas)**：某些并行分支布局导致引擎条件逻辑出现未定义状态。**解决方案**：增加了轻量级预分支格式验证器，强制执行少量结构不变性检查。
+4.  **`<step>`块内部局部重复 (Local repetition inside `<step>` blocks)**：细粒度步骤流容易出现局部重复。**解决方案**：对`<step>...</step>`上下文中的令牌施加温和、选择性的重复惩罚（系数1.02）。
+
+**实验结果**
+<img width="825" height="325" alt="image" src="https://github.com/user-attachments/assets/e6f61023-fefe-4d86-8470-b8faf7122636" />
+
+<img width="811" height="182" alt="image" src="https://github.com/user-attachments/assets/887098f9-b858-4223-a354-fb8384ca2cbe" />
+
+<img width="843" height="273" alt="image" src="https://github.com/user-attachments/assets/c2739fd7-dbc2-46ae-8250-12a7b3801d1a" />
+
+<img width="810" height="303" alt="image" src="https://github.com/user-attachments/assets/21c8380b-89bf-4326-9f01-7a4709868452" />
+
+<img width="828" height="612" alt="image" src="https://github.com/user-attachments/assets/cb8e6e40-91be-4a16-bed4-3a59c8e771be" />
+
+<img width="743" height="598" alt="image" src="https://github.com/user-attachments/assets/de462382-f1f1-4e58-a525-85c1191a3f64" />
+
+NPR在八个推理基准测试（如AIME25, AIME24, HMMT25, OlympiadBench, Minerva-Math, ZebraLogic, AMC23, MATH500）上进行了评估，使用Qwen3-4B-Instruct-2507和Qwen3-4B（非思考模式）作为基础模型。
+*   **性能提升**：NPR相对于基线模型实现了显著的性能提升，例如在Qwen3-4B上平均性能提升超过24.5%。
+*   **自蒸馏数据优势**：NPR的自蒸馏数据集平均比Multiverse的教师生成轨迹高10.1分。
+*   **并行效率和有效性**：NPR-BETA和NPR-RL均显著优于直接的顺序RL基线（如DAPO），证实自适应并行策略提供了优于单路径Rollout的搜索机制。
+*   **100%原生并行执行**：NPR在所有评估测试案例中实现了100%的原生并行推理，没有隐藏的自回归（AR）回退或伪并行行为，而之前的基线存在30%以上的AR回退。
+*   **推理加速**：NPR提供了高达4.6倍的推理加速（相对于AR解码），特别是在更难的问题上加速效果更明显。
+*   **测试时可扩展性**：NPR在测试时可靠地增加了oracle覆盖率，尤其在基础模型较弱时提升更显著。
+*   **定性案例研究**：NPR能够根据问题类型自适应其并行度，例如在创造性任务中进行广泛探索，在逻辑任务中进行严格的交叉验证。
+
+**结论**
+
+NPR框架通过自蒸馏并行SFT和agentic并行RL，实现了LLM自主演化原生并行推理能力。该方法使模型能够学习自适应分解、多样化的并行规划和可靠的聚合，而非模拟或脚本化的行为。这些结果表明，原生并行推理是通往更通用和可扩展智能的未来方向。
 
 ## TileRT
 中文介绍 https://mp.weixin.qq.com/s/5T-93n5kk7UbHXj_I3NIvw 
