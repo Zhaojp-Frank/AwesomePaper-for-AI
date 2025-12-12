@@ -72,8 +72,6 @@ https://huggingface.co/bigai-NPR
 
 <img width="1012" height="314" alt="image" src="https://github.com/user-attachments/assets/2c22c7b1-34a3-4edb-86ec-d151c8840869" />
 
-<img width="824" height="527" alt="image" src="https://github.com/user-attachments/assets/db08f78d-e000-4384-aa99-504dd43e7f2b" />
-
 这篇论文介绍了**Native Parallel Reasoner** (NPR)，这是一个teacher-free的框架，旨在使大型语言模型（LLMs）能够自我演化出原生的并行推理能力。传统LLMs在“更深”的测试时扩展（single-path reasoning）上表现出色，但在需要探索多条轨迹的“更广”推理能力方面（parallel reasoning）存在不足。现有的并行推理实现面临三大挑战：
 1.  **算法与架构不兼容**：主流的推理引擎和强化学习（RL）算法未能**有效支持原生分支操作**，尤其是特殊令牌（special tokens）的梯度裁剪，阻碍了模型学习严格的并行结构。
 2.  **低效的手工并行化**：早期方法通过独立采样实现并行，但**未能利用共享的Key-Value (KV)状态，导致冗余计算和线性（$O(N)$）的延迟成本**。
