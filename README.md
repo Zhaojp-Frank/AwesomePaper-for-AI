@@ -1,6 +1,66 @@
 # AwesomePaper-for-AI
 Awesome system papers for AI
 
+## ThreadWeaver
+ThreadWeaver: Adaptive Threading for Efficient Parallel Reasoning in Language Models
+
+https://arxiv.org/pdf/2512.07843 Meta 田渊栋等，2025.12.10
+
+1.  🚀 ThreadWeaver是一个**自适应并行推理框架**，通过**分解问题解决过程**为并发推理线程，显著降低了大型语言模型（LLMs）在复杂任务上的推理延迟。
+2.  💡 该框架的核心创新包括**两阶段并行trajectory生成器**、基于**trie的训练-推理协同设计**（无需修改现有推理引擎例如kv cache），以及**并行化感知的强化学习框架**P-GRPO，以平衡准确性和高效并行化。
+3.  🏆 在六项数学推理基准测试中，ThreadWeaver在Qwen3-**8B上实现了与顶尖顺序推理模型相当的准确率**（平均71.9%），同时将token **latency平均加速了1.53倍**，建立了新的性能-效率帕累托前沿。
+vllm + FSDP；
+
+<img width="834" height="453" alt="image" src="https://github.com/user-attachments/assets/298920a8-b3aa-46c1-b3e3-b0cbd4871597" />
+ThreadWeaver是一种为大型语言模型（LLM）设计的自适应并行推理框架，旨在解决现有方法在复杂任务上推理延迟高以及准确性下降的问题。该框架通过引入并发推理线程，显著降低了推理延迟，同时保持了与先进序列推理模型相当的准确性。
+
+**核心挑战：**
+文章指出了当前自适应并行推理面临的三个主要挑战：
+1.  **高质量并行推理轨迹难以获取：** 为真实世界复杂问题生成高质量的并行推理轨迹进行训练成本高昂，且现有LLM在生成复杂并行轨迹方面仍有困难。
+2.  **依赖定制推理引擎：** 大多数现有方法需要修改LLM的 `position embeddings`、 `KV caches` 或 `attention masks`，导致**部署复杂且难以兼容标准推理框架**。
+3.  **强化学习（RL）探索不足且难以扩展：** 在并行推理轨迹上进行RL训练引入了额外的建模和系统挑战，例如跨分支的 `advantage calculation` 和训练与测试执行之间的一致性。
+
+**ThreadWeaver的创新与方法：**
+ThreadWeaver通过三项关键创新来解决这些挑战：
+1.  **两阶段并行轨迹生成器（Two-Stage Parallel Trajectory Generator）：**
+    *   **第一阶段：LLM重写（LLM Rewriting）**：首先从Qwen3-8B生成的**顺序推理轨迹中提取，并使用一个更强大的LLM（如GPT-5）对其进行轻量级重写和注释**，以**识别并标记可并行化的部分**。重写过程仅进行局部修改，例如移除跨线程依赖、平滑过渡，并添加 `<Outlines>`。它不会重新生成整个 `chain-of-thought`，从而保留了原始推理轨迹的探索和自我反思。**生成的轨迹遵循特定的** `fork-join` 格式，包含 `<think>`、`<Parallel>`（包含 `<Outlines>` 和多个 `<Thread>`）等控制令牌。
+    *   **第二阶段：自训练与奖励过滤（Self-training with Reward-based Filtering）**：在第一阶段生成的少量高质量数据上进行 `supervised fine-tuning` (SFT) 后，模型会根据自身生成能力在完**整数据集上生成大量并行轨迹**。这些轨迹通过 `answer correctness` 和 `structural validity` 过滤，形成一**个更大、与模型自身生成模式更匹配的数据集**，用于进一步的SFT，从而稳定并行结构的生成。
+<img width="815" height="520" alt="image" src="https://github.com/user-attachments/assets/1835c583-5fdf-4e1f-a8b6-6384a90a7cb6" />
+
+2.  **基于Trie的训练与推理协同设计（Trie-Based Training and Inference Co-Design）：**
+    *   **并行推理机制：** ThreadWeaver的推理采用状态机模式，通过轻量级控制令牌实现 `fork-join` 结构。模型生成到 `<Outlines>` 标签时停止顺序解码，解析出 `<Outline>` 条目。然后，每个 `<Thread>` 的内容作为独立的 `completion request` 并行发送给标准 `autoregressive inference engine` (如vLLM或SGLang)，并以 `</Thread>` 为停止符。所有并行线程完成后，结果被合并，主线程继续顺序解码。这种设计无需修改底层LLM架构或 `KV caches`，兼容现有服务优化（如 `paged attention`、 `prefix caching`）。
+    *   **Trie构造与损失计算：** 为了训练模型生成这种结构，训练数据通过构建 `token-level prefix tree` (trie) 来处理。每个 `<context, completion>` 对（对应推理时的API请求-响应）被插入到trie中，共享前缀合并，分支代表不同的延续。通过深度优先遍历将trie扁平化为一个单一的训练序列，并应用 `ancestor-only attention mask` 以防止跨线程信息泄露。损失仅应用于 `completion token`。这种协同设计确保了训练时和推理时 `position embeddings` 和上下文的一致性，同时允许模型在纯顺序模式下运行。
+<img width="840" height="424" alt="image" src="https://github.com/user-attachments/assets/cd199c9d-bc1b-4a1e-a535-b42435c3c62c" />
+
+3.  **并行化感知强化学习（P-GRPO - Parallelization-Aware GRPO）：**
+    *   **GRPO的修改：** ThreadWeaver采用 Group Relative Policy Optimization (GRPO) 的变体P-GRPO。它将轨迹级别的 `advantage` $A_{P-GRPO_{p,i}}$ 广播到该轨迹中的所有令牌。
+    *   **轨迹分解：** 一个并行轨迹 $\tau_{(p,i)}$ 被分解为一系列有序的 `(context, completion)` 单元 $(cont_{(i,m)}, comp_{(i,m)})$。整个轨迹的对数概率可以分解为所有 `completion segment` 的对数概率之和：
+        $\log \pi_{\theta} (\tau_{(p,i)}) = \sum_{m=1}^{M_i} \log \pi_{\theta}(comp_{(i,m)} | cont_{(i,m)})$
+    *   **优势计算：** P-GRPO计算 `group-normalized advantage`，但为了提高稳定性并维持 `correctness` 和 `acceleration` 奖励之间的平衡，它移除了标准差归一化，仅使用均值中心化：
+        $A_{P-GRPO_{p,i}} = r_{p,i} - \mu_p$
+        其中 $r_{p,i}$ 是轨迹的奖励，$\mu_p$ 是该 `prompt` 所有 `rollout` 的平均奖励。
+    *   **并行化感知奖励：** 总奖励 $r(\tau)$ 由两部分组成：
+        *   `Correctness reward` $R_{correct}(\tau) = \mathbf{1}_{\{Correct(\tau)\}}$：如果最终答案正确则为1。
+        *   `Acceleration reward` $R_{accel}(s) = \mathbf{1}_{\{Correct(\tau)\}} \min (\rho \cdot \eta(s), \rho_{clip})$：只有当答案正确时才给予，鼓励更有效的推理路径。
+            加速比 $\eta(s) = 1 - \frac{L_{longest}}{L_{total}}$，其中 $L_{longest}$ 是最长线程的序列长度（`token latency`），$L_{total}$ 是整个轨迹中的总令牌数。$\rho$ 是加速奖励比例，$\rho_{clip}$ 是裁剪阈值。
+<img width="848" height="422" alt="image" src="https://github.com/user-attachments/assets/10084aa0-75ce-4848-8661-bfd14dc648a8" />
+
+**实验与结果：**
+<img width="844" height="397" alt="image" src="https://github.com/user-attachments/assets/a96dca2d-5386-47e5-a037-4539ab25c8b3" />
+
+<img width="865" height="327" alt="image" src="https://github.com/user-attachments/assets/ddddcd8f-32d9-44d4-ad87-191f05e0b28c" />
+
+ThreadWeaver在Qwen3-8B模型上进行训练，并在AIME24、AIME25、AMC23、MATH500、Minerva Math和OlympiadBench等六个数学推理基准上进行评估。
+*   **性能提升：** ThreadWeaver的平均准确率（71.9%）与顺序RL基线（72.2%）相当，但在 `token latency` 上实现了显著降低（平均从15.1k降至13.2k），平均加速比达到1.22倍，最高可达1.53倍。在AIME24上准确率甚至略有提升（79.9% vs 78.3%）。这建立了准确性和效率之间的新 `Pareto frontier`。
+*   **与现有方法的比较：** 相比Multiverse和Parallel-R1，ThreadWeaver在AIME24上实现了更高的准确率（79.9% vs 53.8%或19.4%）和更高的 `self-parallelism speedup`。ThreadWeaver在 `long chain-of-thought` 模式下运行，与强大的顺序推理模型相匹配。
+*   ** `Wall-clock` 加速：** 在实际部署中，通过将并行线程分配到多GPU上，ThreadWeaver实现了1.14倍的 `wall-clock latency` 降低，验证了 `critical-path` 长度减少能够转化为实际的端到端加速。
+*   **消融研究：**
+    *   移除GRPO中的标准差归一化提高了训练稳定性，并带来了更高的准确率和更短的 `critical path`。
+    *   高质量、与模型对齐的SFT数据对下游性能至关重要，优于使用其他LLM生成的轨迹（即使教师模型更强大）。
+    *   RL阶段的并行 `rollout` 和自训练对提高准确率和推理效率均有贡献。
+<img width="850" height="449" alt="image" src="https://github.com/user-attachments/assets/1d954d14-9388-436f-a658-6fa99caccd35" />
+
+
 ## CMU RL的能力来源和条件
 On the Interplay of Pre-Training, Mid-Training, and RL on Reasoning Language Models 
 
