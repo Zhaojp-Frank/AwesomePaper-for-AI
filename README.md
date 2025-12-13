@@ -1,6 +1,69 @@
 # AwesomePaper-for-AI
 Awesome system papers for AI
 
+## MicroEP 
+MicroMoE: Fine-grained Load Balancing for Mixture-of-Experts with Token Scheduling
+
+https://arxiv.org/pdf/2511.16947 北大 2025.11.21
+
+1.  ✨ 本文提出了一种新颖的MoE负载均衡策略MicroEP，通过在每个Micro-batch内进行Token Scheduling，实现了GPU之间的细粒度负载均衡。
+2.  🌍 该方法将负载均衡问题建模为线性规划问题并高效求解，并通过 Expert Placement 和 Adaptive Replacement 机制来优化 Token Scheduling 的能力。
+3.  🚀 实验结果表明，MicroMoE 系统相比现有最先进系统，端到端训练吞吐量最高提升47.6%，并且能够几乎一致地在GPU之间实现最佳负载均衡。
+<img width="506" height="300" alt="image" src="https://github.com/user-attachments/assets/620b8c47-07f6-4e4a-807f-7eb31dab63fe" />
+
+<img width="453" height="279" alt="image" src="https://github.com/user-attachments/assets/d0a5c8a7-4008-432f-b9f5-ffc59a89c191" />
+
+<img width="457" height="705" alt="image" src="https://github.com/user-attachments/assets/4b85956f-6438-4e0a-bf79-05077cae4606" />
+
+MoE (Mixture-of-Experts)模型因其稀疏激活特性而能有效扩展深度学习模型，但**其动态路由会导致专家之间负载不均衡，严重影响分布式训练效率**。现有解决方案要么牺牲模型精度（如通过修改路由算法引入负载均衡损失或丢弃tokens），要么引入额外的系统开销（如通过调整专家-GPU映射），均未能实现细粒度的负载均衡，而这对于优化训练效率至关重要。
+
+本文提出了MicroEP，一种新颖的并行化策略，旨在通过token调度实现MoE系统的细粒度负载均衡。在此基础上，本文设计并实现了高效的分布式MoE训练系统MicroMoE。
+
+**核心方法学：MicroEP**
+
+MicroEP通过token调度在每个微批次内实现GPU间的负载均衡，其关键在于在EDP（Expert Data Parallelism）组之间调度tokens，并通过重新洗牌专家放置（expert placement）来扩展调度空间。
+
+1.  **调度空间与前提：**
+    *   传统的EP（Expert Parallelism）范式中，每个EP组包含每个专家的一个副本，token到GPU的映射由token到专家的映射固定，没有调度空间。
+    *   MicroEP的关键观察是，如果DP（Data Parallelism）度大于EP度，且每个GPU承载多个专家副本，那么一个token可以在其指定专家的EDP组内任何GPU上的副本进行计算。这允许合并多个EP组形成一个MicroEP组，并在其中进行token调度。
+    *   为了扩大调度空间并实现全局负载均衡，MicroEP在合并的EP组内随机打乱专家放置，使得不同专家的EDP组可以相互交叉。
+
+2.  **Token调度算法：**
+    *   **确定副本负载（Determining Replica Loads）：**
+        将负载均衡问题建模为一个线性规划问题（LPP 1），目标是最小化MicroEP组内所有GPU上的最大负载。
+        设 $E$ 为所有专家的集合，$G_{MicroEP}$ 为MicroEP组内所有GPU的集合，$G^e_{EDP}$ 为专家 $e$ 的EDP组中的GPU集合。变量 $x^g_e$ 表示专家 $e$ 在GPU $g$ 上的副本负载（即tokens数量）。$load_e$ 表示专家 $e$ 的总负载。
+        优化问题表述为：
+        $$ \text{minimize } \max_{g \in G_{MicroEP}}\left\{\sum_{e \in E:g \in G^e_{EDP}} x^g_e \right\} $$
+        $$ \text{subject to } \sum_{g \in G^e_{EDP}} x^g_e = load_e, \quad \forall e \in E $$
+        $$ x^g_e \ge 0, \quad \forall e \in E, g \in G^e_{EDP} $$
+        该LPP可在每个微批次中高效求解，通过复用前一个解的中间状态进行“热启动”（warm-start），显著减少优化开销。
+    *   **路由Tokens到副本（Routing Tokens to Replicas）：**
+        一旦确定了每个副本的负载 $x^g_e$，就需要将tokens路由到具体的专家副本以强制执行这些负载。这通过一个顺序路由策略实现。
+        为了减少All-to-All（A2A）通信量，MicroEP采用局部性感知路由（locality-aware routing）：当GPU $g$ 包含专家 $e$ 的副本时，优先将来自GPU $g$ 的tokens路由到其本地专家副本，然后再考虑远程副本。此外，LPP也可以扩展为通信感知调度，将通信时间纳入优化目标，通过 $\alpha$ 参数平衡计算和通信的权重。
+
+3.  **分布式调度与延迟隐藏：**
+    *   **分布式调度：** 调度算法在所有设备上分布式执行，每个设备通过All-gather操作收集全局负载信息，然后独立执行确定性调度算法，确保结果一致性。
+    *   **延迟隐藏：** 通过与Megatron-LM中现有操作（如token排列）重叠来隐藏调度延迟。对于没有合适重叠操作的框架，MicroEP提出了一种流水线机制（pipelining），将tokens分成两部分，交错执行EP的A2A通信和MicroEP的调度，以进一步隐藏延迟。
+
+4.  **专家放置策略（Expert Placement）：**
+    专家放置决定了EDP组的构成，从而直接影响负载均衡能力。
+    *   **最优专家放置分析：** 通过图论抽象（GPU为顶点，专家为连接EDP组中所有顶点的超边），LPP 1的最优目标值 $m$ 等于图G中所有诱导子图密度（induced subgraph density）的最大值。
+        $$ m = \max_{G_{max} \subseteq G_{MicroEP}}\left\{\frac{1}{|G_{max}|} \sum_{e \in E:G^e_{EDP} \subseteq G_{max}} load_e \right\} $$
+        因此，最优专家放置是使最大诱导子图密度最小化的图。
+    *   **对称放置（Symmetric Placement）：** 在没有预先专家负载分布知识时，采用对称放置，将所有专家同等对待。本文提出使用Cayley图（Cayley graphs）来构建近乎最优的对称放置，利用其固有的对称性确保边的均衡分布。
+    *   **非对称放置（Asymmetric Placement）：** 如果已知真实的专家负载分布，则可以构建非对称放置。本文采用启发式两步策略：首先通过贪心算法确定每个专家的副本数量，然后通过Monte Carlo采样确定专家副本在GPU上的具体放置。
+    *   **自适应替换（Adaptive Replacement, AR）：** AR机制补充了token调度，处理长期、粗粒度的负载不均衡。放置管理器在训练期间监视专家负载分布，并通过时间序列分析预测未来负载。如果未来性能下降到特定阈值以下，它将生成新的最优非对称放置并重新初始化模型状态。与现有专家调度方案不同，AR是MicroMoE中token调度的优化，而非主要负载均衡手段。
+
+<img width="947" height="602" alt="image" src="https://github.com/user-attachments/assets/d59e82ca-6b02-4709-9467-4bfaa7262dc6" />
+
+<img width="451" height="281" alt="image" src="https://github.com/user-attachments/assets/bfcefc4c-2a14-4920-bbac-6a5f61245b64" />
+
+<img width="476" height="292" alt="image" src="https://github.com/user-attachments/assets/d1c05fad-f71b-43ab-bb14-9845f734b289" />
+
+**实验结果：**
+MicroMoE相比Megatron-LM端到端训练吞吐量提升高达47.6%，平均提升36.9%。即使在高度不平衡的工作负载下，也能几乎持续地实现GPU间的最佳负载均衡。调度开销极低（64 GPU和256专家下小于1ms），而自适应替换开销（模型状态迁移）在数百毫秒级别，需权衡替换频率。消融研究表明，热启动、局部性感知路由和调度重叠等优化有效减少了调度时间。
+
+4节点H100（4*8=32卡），400Gb RDMA x2 per node。基于Megatorn-LM修改。模型：Mixtral， GPT
 ## ThreadWeaver
 ThreadWeaver: Adaptive Threading for Efficient Parallel Reasoning in Language Models
 
