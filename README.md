@@ -1,6 +1,62 @@
 # AwesomePaper-for-AI
 Awesome system papers for AI
 
+
+## RoEP++ real
+Beyond Real: Imaginary Extension of Rotary Position Embeddings for Long-Context LLMs
+
+https://arxiv.org/abs/2512.07525 复旦 邱锡朋 2025.12.8
+https://github.com/OpenMOSS/rope_pp 
+
+1. 💡 针对标准RoPE在计算注意力分数时丢弃**复数点积虚部**的问题，本文提出了RoPE++，通过重新引入这一**虚部来增强旋转位置编码**。
+2. 🎉 RoPE++利用完整的复数表示来创建**双组分注意力分数**，并提供了两种配置：**RoPE++EH**在注意力头数相同的情**况下将KV缓存减半**，而**RoPE++EC则在缓存大小相同的情况下将注意力头数翻倍。**
+3. 🚀 实验结果表明，RoPE++在短上下文和长上下文基准测试中均持续优于传统RoPE，尤其是在**长上下文场景下表现出显著提升**，同时RoPE++EH还能有效降低内存成本并加速解码。
+<img width="599" height="375" alt="image" src="https://github.com/user-attachments/assets/0c7c6baf-96a5-4690-b2f7-22a88756da8f" />
+
+该论文提出 SII-OpenMOSS (RoPE++), 旨在通过重新引入旋转位置编码 (RoPE) 中被舍弃的虚部信息，以增强大型语言模型 (LLMs) 的长上下文建模能力。
+<img width="702" height="623" alt="image" src="https://github.com/user-attachments/assets/3fb52a3c-31a6-421a-b4df-869079a0c9dd" />
+
+**问题背景：**
+RoPE 已成为 LLMs 中常用的位置编码方式，它通过对查询（query）和键（key）向量在复平面进行旋转来编码序列顺序。然而，标准实现只使用复值点积的实部来计算注意力分数，这导致虚部（包含宝贵的相位信息）被丢弃，可能损失了对建模长上下文依赖至关重要的关系细节。
+
+**核心方法论：**
+RoPE++ 的核心思想是重新利用 RoPE 计算中被忽略的虚部信息。
+
+1.  **复数形式的重新审视与虚部恢复：**
+    标准的注意力分数计算 $A_{t,s}$ 在复数形式下表示为：
+    $$A_{t,s} = \text{Re}\left[\sum_{n=0}^{d/2-1} \tilde{q}^{(n)}_t (\tilde{k}^{(n)}_s)^* e^{-i\theta_n(t-s)}\right]$$
+    其中 $\tilde{q}^{(n)}_t = q^{(2n)}_t + i \cdot q^{(2n+1)}_t$ 和 $\tilde{k}^{(n)}_s = k^{(2n)}_s + i \cdot k^{(2n+1)}_s$。
+    论文恢复了被丢弃的虚部，严格来说是负虚部，并将其定义为虚部注意力 ($A_{Im_{t,s}}$)：
+    $$A_{Im_{t,s}} = -\text{Im}\left[\sum_{n=0}^{d/2-1} \tilde{q}^{(n)}_t (\tilde{k}^{(n)}_s)^* e^{-i\theta_n(t-s)}\right]$$
+    通过对 $q_t$ 向量进行 $-\pi/2$ 的旋转，虚部注意力也可以表示为绝对位置编码的形式。假设 $R_{\Theta,t}$ 是应用于 $q_t$ 的 RoPE 旋转矩阵，则实部注意力可以表示为 $A_{Re_{t,s}} = (R_{\Theta,t}q_t)^\top (R_{\Theta,s}k_s) = q_t^\top R_{\Theta,s-t}k_s$。相应地，虚部注意力可表示为：
+    $$A_{Im_{t,s}} = (R_{-\frac{\pi}{2}}q_t)^\top R_{\Theta,s-t}k_s$$
+    这意味着计算虚部注意力只需将 $q_t$ 向量旋转 $-\pi/2$ 后再进行标准的位置编码，而 $k_s$ 的位置嵌入保持不变。
+
+2.  **长依赖捕获能力分析：**
+    实部注意力（RoPE）的特征曲线近似为余弦积分函数 $\tilde{c}_{Re}(\Delta t) = \text{Ci}(\Delta t) - \text{Ci}(\frac{\Delta t}{10^4})$，它在相对距离 $\Delta t$ 增加时表现出衰减特性，更倾向于局部语义关联。
+    虚部注意力则近似为正弦积分函数 $\tilde{c}_{Im}(\Delta t) = \text{Si}(\Delta t) - \text{Si}(\frac{\Delta t}{10^4})$。尽管 $\sin(\theta \Delta t)$ 在 $\Delta t=0$ 时为零且有波动，但论文发现虚部注意力特征曲线在超过一定距离后衰减非常缓慢，表明它能够更好地捕获更远距离的信息。图1的对比也印证了虚部注意力在长上下文区域分配了更多权重，从而有助于 LLMs 检索长上下文信息。此外，虚部注意力也具备语义聚合特性。
+
+3.  **缓存与参数效率考量 (RoPE++EH 和 RoPE++EC)：**
+    由于虚部注意力的计算方式与实部注意力高度相似，它们可以并行计算。
+    *   **RoPE++EC (Equal Cache size)：** 保持与原始 RoPE 相同的 KV 缓存大小。通过将经过 $-\pi/2$ 旋转的 $q_t$ 和原始 $q_t$ 交错处理，可以在 FlashAttention 中一次性完成实部和虚部注意力的计算，不引入额外的 KV 缓存成本。这会使注意力头数量翻倍。
+    *   **RoPE++EH (Equal Head number)：** 保持与原始 RoPE 相同的注意力头数量。这会使 QKV 参数和 KV 缓存大小减半。这种配置在长上下文场景中能显著降低内存消耗并提高吞吐量。
+    两种配置都要求实部和虚部注意力共享相同的参数 $W_q$，因为虚部注意力是相对实部注意力定义的，不能独立存在。
+
+4.  **长度外推能力提升：**
+    标准 RoPE 中，偶数索引的 $q^{(2n)}$ 和奇数索引的 $k^{(2n+1)}$ 维度仅与 $\cos \theta_n(t-s)$ 和 $\sin \theta_n(t-s)$ 相乘，在超出训练上下文长度时可能遇到分布外（OOD）的负嵌入值。RoPE++ 通过引入虚部注意力，使得这些维度在训练阶段就接触到负的 $\cos \theta_n(t-s)$ 和正的 $\sin \theta_n(t-s)$，从而观察到更完整的正弦波值范围（包括负值），缓解了长度外推问题。虽然 RoPE++ 本身不是即插即用的长度外推方案，但其困惑度曲线在超出训练长度后上升更缓慢。
+
+**实验结果：**
+论文在 376M、776M 和 1.5B 不同规模的模型上进行了预训练和评估，训练数据为 DCLM-Baseline-1.0，最大上下文长度 4k，并进行了长上下文继续预训练（32k 长度， rotary base 从 10000 扩展到 500000）。
+
+*   **短上下文评估：** RoPE++EH 和 RoPE++EC 在 WikiText、LAMBADA 和 Open LLM Leaderboard 任务上的平均分数优于标准 RoPE 和其他基线（FoPE, Pythia, ALiBi）。RoPE++EH 在 KV 缓存和 QKV 参数减半的情况下仍超越了标准 RoPE。
+*   **长上下文评估：** 在 RULER 和 BABILong 等合成基准测试中，RoPE++ 在 64k 上下文长度下取得了最高分数。RoPE++EC 在相同缓存成本下显著优于 RoPE，而 RoPE++EH 在 KV 缓存减半的情况下表现与 RoPE 相当甚至更优。
+*   **效率：** RoPE++EH 显著降低了内存成本并加速了解码，尤其是在上下文长度增加时，优势更为明显。
+*   **注意力模式分析：** 对 RoPE++ 模型的注意力模式检查表明，虚部注意力头更倾向于关注全局信息和初始位置，而实部注意力头则更关注局部上下文。通过对虚部注意力施加噪声，模型在长上下文任务上的性能下降更为显著，证实了虚部注意力在长上下文建模中的主导作用。
+*   **与其他长上下文技术结合：** RoPE++ 可以与 NTK-RoPE、Linear PI 和 YaRN 等现有长上下文技术结合使用，并在此类组合中持续展现性能优势。
+
+**结论：**
+RoPE++ 通过重新引入 RoPE 计算中被忽略的虚部，并将其作为一个新的注意力头组，成功增强了 LLMs 的长上下文建模能力。其两种配置 (RoPE++EH 和 RoPE++EC) 在短上下文任务上实现了更优性能，并在长上下文场景中带来了显著提升，同时在某些配置下（RoPE++EH）还实现了参数和缓存效率的提高。对注意力模式的分析证实了虚部注意力在长上下文建模中的关键作用。
+
 ## MicroEP 
 MicroMoE: Fine-grained Load Balancing for Mixture-of-Experts with Token Scheduling
 
