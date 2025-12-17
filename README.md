@@ -1,6 +1,79 @@
 # AwesomePaper-for-AI
 Awesome system papers for AI
 
+## ParallelKittens 
+ParallelKittens: Systematic and Practical Simplification of Multi-GPU AI Kernels 
+
+https://arxiv.org/abs/2511.13940 2025.11.17
+
+blog: https://hazyresearch.stanford.edu/blog/2025-11-17-pk
+1. 🚀 ParallelKittens (PK) 提出并实现了一套基于**传输机制、调度策略和设计开销**三大原则的 CUDA 框架，旨在系统性地简化和优化 multi-GPU AI kernels 的开发。
+2. ✨ 该框架通过利用 Tensor Memory Accelerator (TMA) 和 register-level instructions 等高效数据传输方式，支持 **intra-SM 和 inter-SM 两种 overlapping 调度策略**，并大幅减少了现有通信库的同步和缓冲开销。
+3. ⚡ PK 在 Hopper 和 Blackwell 架构上展示了卓越性能，相较于 baseline 和现有 hand-tuned 以及 compiler-based 方法，为 data-、tensor-、sequence- 和 expert-parallel workloads 带来了**显著的性能提升，且代码量极少~50LOC。**
+
+ParallelKittens (PK) 是一项旨在系统化并简化多GPU AI内核开发的框架，其核心目标是解决多GPU工作负载中GPU间通信日益成为瓶颈的问题。现有系统主要通过计算-通信重叠来缓解这一问题，但往往未能达到理论峰值性能，且在异构工作负载和新型加速器上表现不佳。PK通过提炼和封装一套简单的、可复用的原则，构建了一个最小的CUDA框架，大大简化了重叠式多GPU内核的开发。
+
+**核心方法论 (Core Methodology)**
+
+PK的核心方法论基于对影响多GPU性能的三个关键因素的全面分析：数据传输机制、资源调度和设计开销。
+
+1.  **传输机制 (Transfer Mechanism)**
+    *   **主机发起 (Host-initiated) vs. 设备发起 (Device-initiated) 通信：**
+        *   **拷贝引擎 (Copy Engine)**：由主机发起，支持连续内存传输。在H100上可达368.82 GB/s (理论峰值82%)，在B200上为726.13 GB/s (理论峰值81%)。对于饱和传输，需要至少256MB的大消息粒度。PK认为这种方式主要适用于大规模连续数据传输（如全分片数据并行中的权重移动），且重叠通常是直观的（在不同CUDA Stream中启动）。
+        *   **设备发起 (Device-initiated)**：由设备上的Streaming Multiprocessors (SMs) 发起。PK主要依赖这种方式进行细粒度通信。
+            *   **张量内存加速器 (Tensor Memory Accelerator, TMA)**：支持NVLink传输和NVSwitch加速的广播。TMA可以在H100上达到350.01 GB/s (78%)，B200上达到669.12 GB/s (74%)。其关键优势在于可以由单个线程异步启动，不增加寄存器压力，允许同一SM中的其他线程重叠计算或内存工作（intra-SM overlap）。TMA在2KB消息粒度下即可达到接近峰值带宽利用率。
+            *   **寄存器级操作 (Register-level instructions, `ld`, `st`)**：效率相对较低，在B200上约70%的峰值带宽。这些指令是同步的，需要高SM占用率（数千线程并发）来饱和NVLink带宽，同时带来更高的寄存器压力和手动内存合并。仅当拷贝引擎和TMA无法提供所需功能时才使用，例如NVSwitch的in-network reduction (如`multimem.ld.reduce`和`multimem.red`)。
+
+    *   **传输机制选择总结：**
+        *   拷贝引擎：点对点传输，fabric内广播。
+        *   TMA：点对点传输，fabric内广播，点对点规约（P2P Reduction）。
+        *   寄存器操作：点对点传输，fabric内广播，点对点规约，fabric内规约（in-fabric reduction），元素级传输。
+
+2.  **调度 (Scheduling)**
+    PK确定了两种主要的调度策略来重叠计算和通信：
+    *   **SM内部重叠 (Intra-SM Overlapping)**：将一个SM内的线程划分为两部分，一部分执行计算/内存指令，另一部分执行通信指令。
+        *   **优势**：当计算和通信粒度对齐时非常有效。所有计算单元（Tensor Core）可以充分利用，因为计算吞吐量与执行计算的SM数量线性相关。相比SM间重叠，SM内部重叠引入的同步开销更低（例如，使用`mbarrier`对象进行intra-SM同步约为64 ns，而通过HBM进行inter-SM同步约为832 ns）。
+        *   **通信隐藏条件**：对于BF16 GEMM，当输入维度$K \gtrsim \frac{sR}{2B}$时（其中$s$为每元素大小，$R$为Tensor Core吞吐量，$B$为NVLink带宽），通信可以被计算完全隐藏。例如，在H100上，当$K \gtrsim 2197$时，通信开销几乎完全隐藏。
+    *   **SM间重叠 (Inter-SM Overlapping)**：将SMs划分为两部分，一部分专门用于计算，另一部分专门用于通信。
+        *   **优势**：能够利用in-network acceleration（如NVSwitch的规约功能），显著减少通信量。例如，GEMM all-reduce通过SM间重叠可实现3.62倍的性能提升。此外，可以有效处理远程L2缓存重用问题，因为对等GPU的HBM访问只在源设备缓存，每此远程访问都受NVLink带宽限制。通过通信专用SM批量传输数据到本地HBM，可以提高L2重用。
+        *   **SM划分**：需要平衡计算和通信的SM数量，最优划分取决于输入规模，大型工作负载倾向于更多计算SMs，小型工作负载倾向于更多通信SMs。PK允许用户在运行时自动搜索最优SM分配。
+
+3.  **设计开销 (Design Overheads)**
+    PK通过避免传统通信库（如NCCL、NVSHMEM）中的不必要开销来提升性能：
+    *   **双向同步和中间缓冲**：NCCL等库通常强制执行每操作双向同步和使用预分配的中间缓冲区。这些在细粒度通信中导致显著开销。PK通过使用预分配的目的缓冲区实现直接、单向传输，避免了中间暂存，从而在全规约等纯通信内核中实现了高达1.79倍的性能提升。
+    *   **对等内存访问和同步**：NVSHMEM的API函数在远程对等访问时会引入全局内存加载（`ldg`）来检索对等地址，并强制进行组同步（`syncthreads`）。PK通过将对等地址保存在寄存器中并移除不必要的同步，将元素级NVLink访问延迟降低了4.5倍，并将带宽利用率提高了约20 GB/s。
+
+**ParallelKittens 抽象**
+
+PK建立在ThunderKittens (TK) 框架之上，提供一套最小且互补的通信原语：
+*   **数据结构**：PK为GPU内存层次结构的每个级别定义了数据结构。
+    *   **寄存器级**：最小执行单元为16x16 Tile。
+    *   **共享内存级 (SMEM)**：`shared tiles`支持单线程异步地从对等HBM加载和存储，可选支持对等内存上的原子规约和通过in-network广播进行多播。
+    *   **HBM级**：引入**并行全局布局 (Parallel Global Layout, PGL)**，表示在所有设备上分配的形状和大小相同的内存区域，作为异步P2P传输、广播和同步fabric内多播/规约的中心数据结构。
+*   **多GPU操作**：PK引入了八个新的核心原语，足以实现所有实验中展示的内核。
+    *   **P2P通信原语**：`store_async` (将共享Tile存储到多播内存), `store_add_async` (原子性地将共享Tile添加到多播内存)。这些是异步单线程操作，支持与其他操作融合。
+    *   **网络加速通信原语**：`reduce` (将数据从多播内存规约到本地HBM), `all_reduce` (对多播内存上的数据执行全规约)。这些需要至少Warp级的参与以获得最优吞吐量。
+    *   **设备间和SM间同步原语**：`signal` (向特定设备的barrier发送信号), `signal_all` (同时向所有设备的barrier发送信号), `wait` (等待特定设备的barrier达到期望值), `barrier` (等待所有设备到达此点)。
+*   **编程模板 (Program Template)**：PK提供一个统一的“加载-计算-存储-通信 (LCSC)”模板，用于实现各种多GPU内核。该模板定义了四个工作组件：
+    *   `loader`：执行本地或对等HBM读取。
+    *   `storer`：处理本地或对等HBM写入。
+    *   `consumer`：执行Tensor Core或CUDA Core的本地计算。
+    *   `communicator`：专门执行设备间通信，在独立的通信SMs上运行，实现SM间重叠。
+    该模板自动化了内核配置、共享内存和TMA设置、barrier和同步管理以及SM/Warp划分的优化，允许用户专注于每Tile的计算和通信逻辑。
+
+**实验结果**
+
+PK在H100和Blackwell架构上对数据并行、张量并行、序列并行和专家并行等多种AI工作负载进行了验证。
+*   **数据和张量并行**：对于AG+GEMM, GEMM+RS, GEMM+AR工作负载，PK相对于非重叠基线（cuBLAS + NCCL）实现了1.06-1.68倍的加速，相较于编译器方法（Triton Distributed）性能提升1.07-5.63倍。PK与Flux和CUTLASS等手工优化内核性能持平或超越，例如相对于Flux加速0.97-2.33倍。非重叠通信时间占比可降至1%以下。
+*   **序列并行**：
+    *   **Ring Attention**：PK通过精确的SM间重叠融合KV交换和计算，相对于xDiT基线实现了1.07-4.08倍的加速，将非重叠通信时间占比降至9%。
+    *   **DeepSpeed-Ulysses**：PK实现了细粒度的all-to-all内核，移除了传统方法中因NCCL不支持内部维度all-to-all而引入的张量重塑开销，实现了1.01-1.39倍的加速。
+*   **专家并行**：PK在令牌分派和第一层专家MLP重叠中，与Comet等手工优化基线性能持平或超越，实现了0.92-1.22倍的性能提升。
+所有PK内核的通信部分，通常只需要少于50行设备代码。
+
+**总结**
+
+PK提供了一个最小化、系统化的框架，通过对传输机制、调度策略和设计开销的深入分析，实现高性能多GPU内核。它证明了小范围的核心原语即可匹配或超越手工优化内核的性能，同时大大简化了实现复杂性。该工作专注于节点内执行，为未来节点间通信扩展提供了基础。
 
 ## RoEP++ real
 Beyond Real: Imaginary Extension of Rotary Position Embeddings for Long-Context LLMs
