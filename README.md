@@ -1,6 +1,87 @@
 # AwesomePaper-for-AI
 Awesome system papers for AI
 
+## B200 microbenchmark
+Microbenchmarking NVIDIA’s Blackwell Architecture: An in-depth Architectural Analysis
+
+https://arxiv.org/abs/2512.02189v1 Delaware Univ. 2025.12.1
+1. 🚀 这项工作首次通过微基准测试深入分析了NVIDIA Blackwell B200 GPU，揭示了其5th-gen Tensor Cores、Tensor Memory (TMEM) 和 Decompression Engine (DE) 等架构创新带来的显著性能提升。
+2. 💡 研究发现，Blackwell的TMEM使缓存未命中延迟降低58%，并提供16 TB/s的读带宽，而新引入的FP4/FP6精度Tensor Cores则实现了高达7702.5 TFLOPS的计算能力。
+3. 📈 在实际工作负载中，B200在LLM推理、科学计算和混合精度训练方面均展现出比H200显著的性能优势，例如，其Tensor Core增强实现了1.56倍更高的混合精度吞吐量和42%更优的能效。
+
+本文旨在通过深入的微基准测试（microbenchmarking）对 NVIDIA 最新的 Blackwell (B200) GPU 架构进行全面的性能分析，填补当前硬件发展与性能理解之间的空白。随着 exascale 计算和机器学习对 GPU 性能需求的快速增长，Blackwell 引入了多项关键架构创新，包括 5th-generation Tensor Cores、Tensor Memory (TMEM)、Decompression Engine (DE) 以及双芯片设计。然而，这些创新的实际性能影响和优化潜力在广泛工作负载中仍未被充分理解。本研究提供了一个开源微基准测试套件，旨在帮助应用程序开发者做出明智的架构决策，并指导未来的 GPU 设计方向。
+
+本文的核心贡献包括：首次详细表征 NVIDIA Blackwell B200 的关键组件；量化 TMEM 对矩阵密集型工作负载的影响及其在减少张量计算内存瓶颈中的作用；评估 DE 在不同格式下的吞吐量并确定最佳使用方式；通过新的 `tcgen05` PTX 指令分析 5th-gen Tensor Core 执行的性能含义；评估 FP4/FP6 性能和精度权衡；以及通过 LLM 推理、训练和科学计算 kernels 演示其实际性能增益。
+100MB数据压缩：
+<img width="577" height="115" alt="image" src="https://github.com/user-attachments/assets/87b5698f-58db-41b1-b54d-13b1583c1b77" />
+<img width="403" height="103" alt="image" src="https://github.com/user-attachments/assets/21081714-baf4-4efc-8b6c-ebefa7e89459" />
+<img width="294" height="108" alt="image" src="https://github.com/user-attachments/assets/9005639d-d1fb-404f-9ce2-02693f25e5e8" />
+<img width="432" height="131" alt="image" src="https://github.com/user-attachments/assets/58d6bca3-7479-4636-b31f-840ef1f96b9b" />
+<img width="1017" height="258" alt="image" src="https://github.com/user-attachments/assets/af7144da-c693-4dd6-af2f-f30e2527cbce" />
+<img width="978" height="199" alt="image" src="https://github.com/user-attachments/assets/b9b9122c-fe7a-4112-8a60-0d14a22ab6c1" />
+
+**Blackwell 架构概述：**
+B200 GPU 采用了双芯片配置，通过 NVIDIA High-Bandwidth Interface (NV-HBI) 连接，为软件提供统一的 192 GB HBM3e 内存空间。主要架构改进包括：
+1.  **5th-generation Tensor Cores**: 相较于 Volta、Ampere 和 Hopper 等早期架构的 `warp-synchronous` (如 `mma.sync` 或 `wgmma`) 范式，Blackwell 引入了 `tcgen05.mma`，这是一种 `single-thread instruction`，允许每个线程独立地执行 `MMA` 操作，消除了 `warp-level` 同步需求，提高了调度灵活性。
+2.  **Tensor Memory (TMEM)**: 新增的 `on-chip memory`，专用于张量数据移动，减少了对 `shared memory` (SMEM) 和 `register files` (RF) 的依赖。数据移动通过 `tcgen05.ld`, `tcgen05.st`, `tcgen05.cp` 等新指令显式管理。
+3.  **Decompression Engine (DE)**: 硬件级别的解压缩引擎，旨在加速模型权重和大型数据库表的加载。支持多种算法（如 LZ4, Snappy, Zstandard, GZIP, Cascaded, Bitcomp, ANS）。
+4.  **Extended Precision**: Tensor Cores 原生支持 FP4 和 FP6 浮点精度。
+5.  **CTA Pair Execution**: 两个 `Cooperative Thread Arrays` (CTAs) 共享操作数，减少冗余数据移动。
+
+**核心方法论：PTX 微基准测试**
+本文采用基于 NVIDIA Parallel Thread Execution (PTX) 的微基准测试方法来表征 Blackwell 的微架构特征。PTX 允许对寄存器和内存操作进行显式控制，其代码编译为 Streaming Assembler (SASS) 指令。通过记录 PTX 到 SASS 的转换并验证性能，确保基准测试能准确隔离和测量特定的微架构行为。
+
+1.  **TMEM 特征化**:
+    *   **延迟基准测试**: 使用 `pointer-chase` 基准测试比较传统 `shared memory` 与 TMEM 之间的内存访问延迟，通过创建依赖内存访问来防止 `pipeline overlap`，以揭示每种内存层级的基本访问成本。
+    *   **指令比较**: 系统性比较 `tcgen05.*` 系列新数据移动指令与传统指令（如 `wmma.load`, `ldmatrix`, `ld.shared`, `cp.async`）在不同访问模式下的性能。
+    *   **带宽饱和点**: 改变操作数大小和访问步长，识别带宽饱和点和每访问延迟，揭示新指令集的性能能力和限制。
+
+2.  **Decompression Engine (DE) 特征化**:
+    *   **自定义套件**: 开发定制微基准测试套件，针对七种压缩格式（LZ4, Snappy, Zstandard, GZIP, Cascaded, Bitcomp, ANS）。
+    *   **测量指标**: 测量 100MB 数据集的端到端解压缩吞吐量（`input throughput` 和 `output throughput`）和延迟。
+    *   **数据多样性**: 使用不同熵的合成数据集（随机数据、混合字母数字、重复模式、全零缓冲）来隔离压缩比效应。
+    *   **参数调整**: 系统性地改变 `chunk size` (32KB, 64KB, 128KB, 256KB) 和 `batch concurrency` (1–1024 `concurrent operations`)，以识别最佳并行级别，并定义 `pipeline depth` 和 `saturation point`。
+
+3.  **Tensor Core 特征化**:
+    *   **自定义 GPU kernels**: 执行 `D = A × B + D` 形式的 `MMA` 操作，使用 Blackwell 新引入的 `tcgen05` 指令集。
+    *   **延迟和吞吐量测量**: 针对不同指令类型、矩阵 `tile shapes` 和操作数布局进行测量。
+    *   **单指令延迟隔离**: 隔离 `tcgen05.mma` 的单指令延迟 (`SI-LAT`)，并与 Hopper 的 `wgmma` 进行比较。
+
+4.  **Extended Precision (FP4 和 FP6) 特征化**:
+    *   **系统性基准测试**: 首次为 Blackwell 的 FP4 和 FP6 `MMA` 指令 (`tcgen05` PTX `opcode` 和 `e2m1`/`e3m2`/`e2m3` 编码格式) 开发系统性基准测试。
+    *   **依赖链方法**: 采用 `dependency-chain` 方法隔离这些超低精度操作的真实指令延迟。
+
+**关键发现与性能分析：**
+
+1.  **内存子系统**:
+    *   **TMEM 性能**: TMEM 在 `cache-miss` 场景下实现 420 时钟周期端到端内存访问延迟，比 Hopper 的 `global memory latency` 减少 58%。这归因于 TMEM 专用的仲裁逻辑绕过了传统内存层次结构中 L2 cache 分区竞争。TMEM 提供每 SM 16 TB/s 的读带宽和 8 TB/s 的写带宽，且与 L1/SMEM 带宽累加。FP8 数据上的背靠背 `MMA` 操作可维持 8 TB/s 带宽，比传统 `ld.global` 路径的 3.8 TB/s 提高 2.1 倍。
+    *   **TMEM 最佳实践**: 最佳效率在 64×64 元素 `tile` (FP8 精度为 4KB) 时实现，完全利用 1024-bit 内存接口宽度。这与 Hopper 32×32 的最佳 `tile size` 不同，需要算法调整。较小 `tile` 利用率低，较大 `tile` 引入 `pipeline stalls`。TMEM 适用于大型工作集的 `multi-stage tensor pipelines`，通过在 TMEM 中保持中间结果，可以显著减少数据移动（估计每秒 12 TB）。功率效率分析显示，对于大型矩阵，将 `Matrix-D accumulators` 放在 TMEM 中可降低 15% 的 `board-level power consumption`。
+    *   **Decompression Engine (DE) 性能**:
+        *   **格式特定优化**: DE 在不同压缩格式下吞吐量差异显著 (42 到 462 GB/s)。Bitcomp 针对数值数据实现 462.4 GB/s 的出色输出吞吐量和 0.227ms 的低延迟。Zstandard 在通用工作负载中表现平衡。
+        *   **输入带宽瓶颈**: DE 的性能主要受 `compressed input bandwidth` 限制，而非解压缩计算能力。压缩比越高，输入吞吐量越低。然而，输出吞吐量保持在约 160-220 GB/s 之间，表明 DE 架构优先考虑持续输出带宽。
+        *   **延迟一致性**: 无论数据模式如何，解压缩延迟始终较低 (100MB 数据集为 0.477-0.660ms)，表明 DE 实现了复杂的工作负载平衡机制。
+        *   **管线深度与并发**: `pipeline depth` 随 `chunk size` 增加而减少。32KB `chunks` 支持 16 个并发操作，256KB `chunks` 支持 4 个。峰值吞吐量随 `chunk size` 增加而提升，从 53.8 GB/s 增加到 151.6 GB/s。
+
+2.  **GPU Cores 微架构**:
+    *   **5th-Generation Tensor Cores**: `tcgen05.mma` PTX 指令编译成不同的 SASS 指令（如 `OMMA` 用于 FP4）。Blackwell 的 `tcgen05.mma` 实现了 2.9–11.6 倍的单指令延迟降低（相比 Hopper 的 `wgmma`），并且延迟在不同 `tile sizes` 下几乎保持不变（11.0–11.4 周期），这表明 Blackwell 采用了 `spatial array` 设计而非 Hopper 的 `temporal pipelining`。`Warp-level` 粒度减少了调度器 `stalls` 18–23%。
+    *   **精度影响**: 尽管 FP64 (44.8 TFLOPS) 与 FP4 (7702.5 TFLOPS) 之间吞吐量差异 177 倍，但延迟仅变化 1.27 倍（11.2–14.2 周期），这证实吞吐量提升是通过增加并行性实现，而非更深的管线。FP32 累加器将吞吐量减半，表明累加器数据路径是瓶颈。INT8 略优于 FP8，FP4 优于 FP8。
+
+3.  **性能分析与案例研究**:
+    *   **LLM 推理**:
+        *   **精度模式影响**: 降低精度带来性能提升。FP8 和 FP4 对于 Mistral-7B 分别实现 1.73 倍和 2.5 倍吞吐量提升，接近理论带宽上限（2x 和 4x）。内存流量减少和 `cache locality` 提升是关键因素，L2 cache `hit rates` 从 68% 增加到 84%。B200 比 H200 始终保持 1.57–1.59 倍的吞吐量优势。FP8 引入的 `perplexity` 增加最小 (+1.9% to +2.4%)，FP4 较大但仍可接受 (+7.7% to +9.1%)。
+        *   **Batch Size 敏感性**: 在小 `batch size` 下 (如 `batch size` 1)，B200 比 H200 有 1.48–1.52 倍的优异性能提升，因为 `pipeline` 自动重配置减少了处理阶段。在大 `batch size` 下，系统优化吞吐量，性能比稳定在 1.44 倍。
+    *   **科学计算**:
+        *   **FP64 性能**: B200 在大型矩阵尺寸下达到 36.3 TFLOPS 的 FP64 DGEMM 性能，利用率达 80.7% (H200 为 18.9 TFLOPS，55.6%)。这归因于 TMEM 启用的累加器和改进的内存访问合并模式。
+        *   **持续内存带宽**: STREAM Triad 基准测试显示，当工作集超出 `cache capacity` 时，B200 和 H200 均实现超过 90% 的内存带宽利用率。B200 达到 7.48 TB/s，H200 达到 4.38 TB/s，B200 有 1.71 倍的速度提升，与原始带宽比（8.0/4.8）相符。
+        *   **稀疏操作**: 利用 DE 进行稀疏矩阵-向量乘法 (SpMV) 可实现 3.16 倍的持续加速。DE 引入的延迟开销小于 5%，同时为 `pointer-intensive workloads` 减少 35% 的内存流量。
+    *   **混合精度训练**:
+        *   **端到端训练性能**: 在 ResNet-50 和 GPT-1.3B 训练中，实现 1.54–1.56 倍的速度提升。分解为 SM 数量 (1.09x)、CTA 配对 (1.27x) 和 TMEM (1.26x)。
+        *   **能效**: 即使功耗增加 14%，GPT 训练能效仍提高 42%。
+
+**讨论与结论：**
+Blackwell 架构通过 TMEM、双模式 Tensor Cores 和解压缩引擎等创新，显著提升了性能，尽管晶体管数量有所增加。256KB 的 TMEM (`per SM`) 实现 61–82% 的 `hit rates`，验证了其尺寸设计。CUDA 13.0 提供了 TMEM/CTA 的初步支持，但软件工具链仍在发展。FP4/FP6 的 `per-layer precision selection` 对于保持精度和利用性能至关重要。对于 LLM 推理，B200 提供了 1.8–3.9 倍的优势；训练性能提升 (1.54–1.56x) 支持 33% 更大的 `batches`；HPC 性能 (1.92x FP64) 在科学计算中也极具竞争力。
+
+总而言之，NVIDIA B200 GPU 标志着 GPU 架构的重大转变。本文提供了首次详细的微基准测试特性，量化了 TMEM 对矩阵密集型工作负载的影响，评估了硬件解压缩引擎的吞吐量和最佳使用方式，并分析了通过新 `tcgen05` PTX 指令实现的 5th-generation Tensor Core 执行。研究进一步评估了 FP4 和 FP6 精度权衡，基准测试了 Blackwell 在 LLM 推理、科学内核和混合精度训练等多种工作负载下的性能，并为开发人员提供了可操作的性能指南。
 ## SonicMoE
 SonicMoE: Accelerating MoE with IO and Tile-aware Optimizations
 
