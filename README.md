@@ -1,6 +1,91 @@
 # AwesomePaper-for-AI
 Awesome system papers for AI
 
+## SonicMoE
+SonicMoE: Accelerating MoE with IO and Tile-aware Optimizations
+
+https://arxiv.org/abs/2512.14080 Tri Dao 普林斯顿 伯克利等， 2025.12.16
+
+https://github.com/Dao-AILab/sonic-moe
+
+https://github.com/open-lm-engine/lm-engine
+
+1. 🤔 SonicMoE提出了一种针对细粒度和稀疏MoE模型训练效率低下的共同设计方案，通过优化算法和GPU内核来解决**其激活内存占用大和硬件IO开销高**的问题。
+2. 🚀 该方法通过内存高效的算法减少了MoE**反向传播的激活内存占用达45%**，并设计了新的GPU内核，在NVIDIA Hopper GPU上通过**IO和计算重叠实现了1.86倍**的吞吐量提升。
+3. 💡 此外，SonicMoE引入了**创新的“token rounding”路由方法**，通过将token数量四舍五入到Grouped GEMM瓦片大小的倍数，有效减少了填充造成的FLOPs浪费，在高稀疏场景下核执行时间可额外**加速1.16倍，**同时保持模型质量。
+<img width="944" height="281" alt="image" src="https://github.com/user-attachments/assets/98475f93-57a7-48f5-895b-faf43e3c17ec" />
+
+<img width="923" height="376" alt="image" src="https://github.com/user-attachments/assets/fae6b7ea-0690-4483-a8e8-3369d0f18b9a" />
+
+<img width="926" height="554" alt="image" src="https://github.com/user-attachments/assets/c336f327-d746-4df8-9072-dbc9706f86ef" />
+
+<img width="779" height="277" alt="image" src="https://github.com/user-attachments/assets/3347e6e4-ce78-453e-8ecb-4e13a9cd0988" />
+
+<img width="723" height="327" alt="image" src="https://github.com/user-attachments/assets/5a65cf35-c1f4-4135-98e6-5e7bdff1a7df" />
+
+SonicMoE是一项针对Mixture of Experts (MoE) 模型训练效率的协同设计解决方案，旨在解决细粒度 (fine-grained) 和稀疏 (sparse) MoE所面临的激活内存占用过高、I/O成本增加以及Grouped GEMM中填充 (padding) 导致计算浪费等挑战。
+
+**背景与挑战**
+MoE模型通过仅激活部分专家来扩展语言模型，从而在不显著增加计算成本的情况下扩大模型规模。然而，现代MoE模型正趋向于更高的专家粒度（专家中间维度$n$更小，即$d/n$更大）和更高的稀疏度（专家总数$E$增加但激活专家数$K$不变）。这导致了硬件效率低下：
+1.  **激活内存占用高**: 随着专家粒度增加，激活内存占用线性增长。
+2.  **I/O成本和算术强度降低**: 细粒度专家导致每个专家处理的tokens更少，使得算术强度降低，I/O成为瓶颈。
+3.  **Grouped GEMM填充浪费**: 在高度稀疏的MoE中，每个专家接收的tokens数量可能无法整除GEMM的tile size，导致额外的计算浪费。
+<img width="825" height="285" alt="image" src="https://github.com/user-attachments/assets/558ac2bd-ff41-44c3-8ff5-e17798573643" />
+
+**核心贡献**
+SonicMoE通过三个主要贡献解决了上述问题：
+1.  **内存高效的MoE前向和后向算法**: 最小化反向传播所需的激活缓存，消除激活内存占用随专家粒度增加而线性增长的问题。
+2.  **I/O感知型GPU kernels**: 利用Hopper和Blackwell GPU的硬件特性，实现内存I/O与计算的重叠，提高吞吐量。
+3.  **Tile感知型token rounding方法**: 最小化Grouped GEMM中因填充造成的计算浪费。
+<img width="841" height="277" alt="image" src="https://github.com/user-attachments/assets/f66d2844-f6fe-429d-b7be-3ff4a45caf3b" />
+
+**核心方法学**
+
+1.  **内存高效的MoE算法**
+    SonicMoE通过重新设计计算图来优化激活内存使用，特别是在反向传播过程中。
+    -   **避免缓存$Y$和$Xe$**: 传统的MoE实现会缓存$Y$ (down-projection输出) 和$Xe$ (gathered $X$) 用于反向传播。SonicMoE通过融合gather操作与HBM加载来避免对$Xe$的显式物化和缓存，并为$dY$（Y的梯度）找到替代计算路径，避免将其写入HBM。
+    -   **优化$dS$和$dH$计算**:
+        -   **$dS$（router scores的梯度）计算**: 对于专家$e$，输入$X_e \in \mathbb{R}^{T_e \times d}$，专家权重$W_{1,e} \in \mathbb{R}^{d \times 2n}$, $W_{2,e} \in \mathbb{R}^{n \times d}$。前向计算为$H_e = X_e W_{1,e}$, $A_e = \text{SwiGLU}(H_e)$, $Y_e = A_e W_{2,e}$。聚合输出为$O_t = \sum_{e \in [E]} \pi_{t,e} S_{t,e} Y_{e,t}$。
+        -   SonicMoE计算$dS_{t,e}$为$\langle dA'_{e,t}, A_{e,t} \rangle$，其中$dA'_{e,t} = dO_{e,t} W_{2,e}^{\top}$。这种方法比传统的$\langle dO_{t}, Y_{e,t} \rangle$更优，因为它：
+            -   **节省HBM流量**: $dA'$和$A$在$dH$ kernel中已经计算得出，避免了额外的HBM加载（2$T K d$ bytes）。
+            -   **节省缓存激活内存**: 避免缓存$Y$ (2$T K d$ bytes)。
+            -   **减少并行归约轮次**: $\langle dA', A \rangle$在中间维度$n$上归约，而$\langle dO, Y \rangle$在维度$d$上归约，前者通常更快，因为$n$远小于$d$。
+        -   **$dH$（$H$的梯度）计算**: $dH_e = d\text{SwiGLU}(dA_e, H_e)$。SonicMoE将$dH$和$dS$的计算融合到反向传播的down-proj激活梯度(dH) kernel的epilogue中，减少了额外的kernel启动和内存访问。
+
+2.  **I/O感知型kernel设计**
+    SonicMoE的Grouped GEMM kernels通过以下策略最大化吞吐量：
+    -   **Gather fusion with HBM load**: 对于变量M维度Grouped GEMM（如前向的up-proj），SonicMoE将输入tokens的gather操作（从非连续内存位置收集数据）与从HBM到SMEM的数据加载融合。这通过Hopper/Blackwell GPU的`cp.async`指令实现，并针对Blackwell的2-CTA集群做了优化（使用relay warp传递完成信号），避免了额外的gather kernel启动和大量I/O。
+    -   **Epilogue fusion**:
+        -   将SwiGLU和dSwiGLU激活函数融合到GEMM的epilogue阶段。
+        -   如上所述，将$dH$和$dS$的计算融合到down-proj激活梯度(dH) kernel的epilogue中。
+    -   **MMA与异步I/O重叠 (Ping-Pong Scheduling)**:
+        -   在Hopper GPU上，GEMM使用producer-consumer模式。SonicMoE利用"Ping-Pong"调度策略，让两个consumer warpgroups交替进行MMA计算和I/O操作，使得I/O延迟与计算重叠。这对于具有重度epilogue操作的kernels（如前向down-proj $Y$和反向down-proj激活梯度$dH$）特别有效。
+        -   SonicMoE选择异步TMA (Tensor Memory Access) store进行HBM写入，而非同步`st.global`指令。同步的`st.global`会阻塞下一个tile的MMA执行，导致吞吐量显著下降（高达20%），尤其是在需要scatter操作的情况下。SonicMoE不融合scatter与HBM store，而是让每个token在expert aggregation kernel中gather专家输出，从而避免了同步scatter的性能开销。
+
+3.  **Token Rounding Routing**
+    针对稀疏MoE的"tile quantization effect"（由于token数量不能整除GEMM tile size而导致的填充浪费），SonicMoE引入了Token Rounding (TR) 路由方法。
+    -   **算法概述**:
+        1.  执行标准的Top-K token choice (TC) 路由，得到每个token选择的专家以及对应的分数。
+        2.  对于每个专家，计算其接收到的token频率($f_e$)。
+        3.  根据预定义的tile size ($M_{tile}$)，将$f_e$向上取整到最近的$M_{tile}$倍数（$\lceil f_e \rceil_{M_{tile}}$）或向下取整（$\lfloor f_e \rfloor_{M_{tile}}$）。
+        4.  TR算法根据某种舍入策略（例如“nearest rounding to Mtile-multiples via expert frequency”，NR-f）选择是填充额外的tokens以达到下一个tile大小，还是丢弃部分tokens以匹配前一个tile大小。
+        5.  构建一个分数矩阵$S'$，使得TC选择的tokens总是优先于其他tokens。
+        6.  对每个专家，根据$S'$和舍入后的token数量重新分配tokens。
+    -   **核心保证**: 对于每个专家，token数量与原始TC路由结果的最大偏差被限制在一个tile内。
+    -   **优点**: 有效消除了Grouped GEMM中的填充浪费，同时在训练期间保持了相似的总token数量，并在下游任务中维持了模型质量。在高度稀疏MoE训练中，TR可以显著提高计算吞吐量。
+
+**实验结果**
+
+-   **激活内存**: SonicMoE在单MoE层上的峰值激活内存占用最低。对于7B MoE模型，激活内存使用量比ScatterMoE减少45%，对于30B和120B模型，节省更为显著（120B模型相比MoMoE节省超过3GiB）。SonicMoE的激活内存占用不随专家粒度增加而改变。
+-   **训练吞吐量**:
+    -   **Kernel级别**: SonicMoE在H100 GPU上实现了1.86x的BF16 MoE kernel计算吞吐量提升。它在不同模型规模下持续实现最高的TFLOPS，对于细粒度MoE，其相对DeepGEMM++的加速比更高。
+    -   **端到端训练**: SonicMoE在64个H100 GPU上实现了每天2130亿tokens的训练吞吐量，与ScatterMoE在96个H100 GPU上实现的2250亿tokens/天相当，展现了显著的效率提升。
+    -   **Token Rounding的额外加速**: 在高MoE稀疏设置下，tile-aware token rounding算法在kernel执行时间上额外带来1.16x的加速，同时保持了相似的下游任务性能。对于256个专家（K/E=1/128），Token Rounding路由在前向和反向传播中分别带来了25.7%和11.8%的TFLOPS提升，端到端提升15.9%。
+-   **Token Rounding质量**: 实验证明，即使在训练时使用TR，在推理时切换回标准Top-K TC路由，模型质量也与TC训练的模型相近甚至略优，尤其是在极端稀疏的MoE配置下。TR算法对不同的舍入子程序以及微批次大小和tile size的变化表现出较强的鲁棒性，只要$T_e / M_{tile} \ge 2$。
+
+**总结**
+SonicMoE通过内存高效的算法、I/O感知型GPU kernels和创新的token rounding路由方法，全面提升了MoE模型的训练效率，特别是在处理当前和未来趋势下的细粒度、稀疏MoE模型时，能有效降低内存占用并提高计算吞吐量。
+
 ## ParallelKittens 
 ParallelKittens: Systematic and Practical Simplification of Multi-GPU AI Kernels 
 
