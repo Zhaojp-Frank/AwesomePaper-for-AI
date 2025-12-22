@@ -1,6 +1,59 @@
 # AwesomePaper-for-AI
 Awesome system papers for AI
 
+## Efficient-DLM
+Efficient-DLM: From Autoregressive to Diffusion Language Models, and Beyond in Speed
+
+paper：https://arxiv.org/pdf/2512.14067 佐治亚 MIT NV等，2025.12.16
+1. 🎯 本文提出Efficient-DLM框架，旨在将**预训练的自回归（AR）模型高效转换为扩散语言模型**（dLM），以实现**更高的吞吐量并保持甚至略微提升任务准确性**。
+2. 💡 关键创新包括采用**块状注意力模式**（block-wise attention）并使用**干净上下文**（clean context）以更好地保留AR模型能力，以及提出**位置依赖的token掩码策略**（position-dependent token masking）以弥合训练与测试间的差距。
+3. 🚀 实验结果表明，Efficient-DLM系列模型4B～8B在准确性-吞吐量权衡方面超越了现有SOTA的AR和dLM，并能自适应调整以平衡准确性和效率，同时在文本嵌入任务中展现出强大优势。
+<img width="406" height="322" alt="image" src="https://github.com/user-attachments/assets/764adbba-ec5c-4110-99df-21808c07527c" />
+<img width="883" height="388" alt="image" src="https://github.com/user-attachments/assets/8a0f8678-e2d9-4565-a509-2a8c7e8307f0" />
+<img width="887" height="273" alt="image" src="https://github.com/user-attachments/assets/28bc3d20-b4ef-410a-9440-a2bfcf81cf21" />
+<img width="870" height="582" alt="image" src="https://github.com/user-attachments/assets/39a8a401-ec14-4e04-aec5-953a0ef831c5" />
+
+该论文提出了一种名为 Efficient-DLM 的新型扩散语言模型 (dLM) 家族，旨在解决自回归 (AR) 语言模型在生成吞吐量方面的限制，同时克服现有 dLM 在学习效率和实际速度方面的不足。核心思想是将预训练的 AR 模型高效地转换为 dLM，从而在保持 AR 模型任务准确性的同时实现更高的生成速度。
+
+该研究通过深入分析现有 AR-to-dLM 方法的注意力模式和训练目标，提出了关键的改进原则和方法。
+
+**核心方法学与技术细节：**
+
+1.  **注意力模式的优化：**
+    *   **问题识别：** 现有的 AR-to-dLM 方法（如 Dream）通常采用完全双向注意力模式，即序列中的所有 token 都可以相互看到。这种模式存在缺陷：1) 难以应用 KV caching；2) 上下文过度损坏，特别是对于后续 token；3) 与 AR 模型的因果性注意力模式差异大，导致从 AR 模型初始化时权重漂移严重。
+    *   **提出方案：** 引入一种“块级注意力模式 (block-wise attention pattern)”，并结合“基于干净上下文的条件化 (conditioning on clean context)”。
+        *   **块级注意力 (block-wise attention)：** 在块间保持因果性 (causal across blocks)，而在每个块内部允许双向建模 (bidirectional modeling within each block)。这使得模型能够原生支持 KV caching，并且其块级因果性更接近预训练 AR 模型的 token 级因果性，从而更好地保留了 AR 模型的能力，减少了权重漂移（如图2(e)所示，与完全双向注意力相比，权重漂移更小）。
+        *   **基于干净上下文的条件化：** 解决了训练与测试之间的 gap。在测试时，已解码的上下文是干净的（不包含 masked token），而传统块级注意力（如图2(c)）在训练时每个块的上下文仍可能包含 masked token。为了模拟测试时的行为，训练时将当前噪声块 $\tilde{\mathbf{x}}_b^t$ 与其前面已解码的干净上下文 $\mathbf{x}_{<b}$ 进行拼接作为输入。注意力机制设计为：噪声块内的 token 可以相互注意，并且可以注意干净上下文；干净上下文内的 token 也可以相互注意。
+        *   **训练目标：** 形式化为：
+            $$ \mathcal{L}(\theta) = E_{t \sim \mathcal{U}[0,1]} E_{\tilde{\mathbf{x}}_b^t \sim q(\cdot|\mathbf{x}_b)} - \frac{1}{t} \sum_{b=1}^B \log p_\theta(\mathbf{x}_b | \tilde{\mathbf{x}}_b^t, \mathbf{x}_{<b}) $$
+            其中，$\mathbf{x}_b$ 是第 $b$ 个干净块，$\tilde{\mathbf{x}}_b^t$ 是其在噪声水平 $t$ 下的噪声版本，$q(\cdot|\mathbf{x}_b)$ 是腐蚀过程，$\mathbf{x}_{<b}$ 是第 $b$ 个块之前的干净上下文。模型 $\theta$ 在此目标下进行连续预训练，从预训练的 AR 模型（其训练损失为 $\mathcal{L}_{AR}(\theta) = - \sum_{l=1}^L \log p_\theta(x_l | x_{<l})$）进行初始化。
+    *   **去除 Token Shift：** 传统 AR 模型通过预测下一个 token 进行训练。早期 dLM 转换工作认为保留 Token Shift 有益。该研究发现，去除 Token Shift（即直接预测 masked token 本身，而非其下一个 token）反而能提高准确性，表明 AR 模型的 Token Shift 可以被更好地适应，并且直接预测 masked token 更加直接和容易。
+
+2.  **位置依赖的 Token Masking 策略：**
+    *   **训练-测试 Masking Gap：** 现有的 dLM 通常采用均匀 Token Masking，即 Masked token 的选择只依赖于噪声水平 $t$，与位置无关。然而，在推理时，基于置信度的采样 (confidence-based sampling) 过程显示出明显的从左到右的解码倾向（语言的自回归特性），导致后续 token 往往需要更多的去噪步骤（如图6(a)）。这意味着在推理结束时，Masked token 更可能出现在块的末尾。这种训练与测试行为的不一致造成了 gap。
+    *   **提出方案：** 引入位置依赖的 Token Masking 策略。对于一个序列 $\mathbf{x} = (\mathbf{x}_1, \dots, \mathbf{x}_L)$ 和给定的噪声水平 $t$，在块内相对位置 $i \in [L']$ 上的 Masking 概率 $w_i(t)$ 定义为：
+        $$ w_i(t) = \exp \left( \beta (1-t) i \right) $$
+        其中 $\beta \geq 0$ 是控制位置偏差强度的超参数。通过将其参数化为半衰期比率 $\lambda = \ln 2 / (\beta L')$，较低的 $\lambda$ 表示更强的位置先验。在去噪结束时（$t \to 0$），$w_i(t)$ 会给靠后的 token 赋予更大的权重，使得 Masked token 更可能出现在块的末尾，从而更好地模仿测试时的行为。这种策略能提高对块中较难（损失更大）的靠后 token 的 Masking 概率。
+
+3.  **训练动态分析：**
+    *   研究发现，dLM 的训练动态表现为：低训练成本（10B token 级别）即可从 AR 模型中恢复任务准确性；更长的训练（100B token 级别）能持续提高似然估计 (likelihood estimation)，并在下游任务上实现更高的准确性。更强的似然估计能生成更准确和可靠的置信度分数，从而在基于置信度的并行生成中提高生成质量，支持更激进的并行 token 生成。
+
+**Efficient-DLM 模型家族：**
+
+综合上述洞察，研究团队开发了 Efficient-DLM 模型家族（1.5B/4B/8B），分别从 Qwen2.5-1.5B、Qwen3 4B 和 Qwen3 8B 连续预训练而来。这些模型集成了：1) 块级注意力模式（带干净上下文，无 Token Shift）；2) 位置依赖的 Token Masking 策略（$\lambda = 0.1$）。模型经过更长时间的训练（1.5B/4B 训练 300B token，8B 训练 500B token）。
+
+**实验结果与优势：**
+<img width="883" height="218" alt="image" src="https://github.com/user-attachments/assets/c605fdf6-61c0-4a18-9d99-df28d839065d" />
+
+*   **性能提升：** Efficient-DLM 在精度-吞吐量权衡方面超越了 SOTA 的 AR 模型和 dLM。例如，Efficient-DLM 8B 与 Qwen3 8B 相比准确率相当（略好），与 Dream 7B 相比准确率提高 5.35%，吞吐量提高 4.5 倍；与 Qwen3 4B 相比准确率提高 2.68%，吞吐量提高 2.7 倍。
+*   **灵活性：** 单个 Efficient-DLM 模型能够通过调整置信度阈值在准确性和吞吐量之间进行平衡，实现“一劳永逸 (one-for-all)”的部署灵活性。
+*   **文本嵌入优势：** 由于其双向建模能力，Efficient-DLM 在文本嵌入任务上表现出明显优势。在 1.5B 和 4B 规模上，Efficient-DLM 平均比同尺寸的 AR Qwen 模型高出 7.71% 和 9.91% 的 MTEB 分数。
+
+**结论：**
+
+该研究为将预训练 AR 模型转换为高效 dLM 提供了系统性的框架，通过优化注意力模式、Masking 策略和理解训练动态，成功构建了兼具高准确性和高速度的 Efficient-DLM 模型家族。这为 dLM 的未来发展提供了重要的实践指导和研究方向。
+
+
 ## TurboDiffusion
 TurboDiffusion: Accelerating Video Diffusion Models by 100–200 Times
 
