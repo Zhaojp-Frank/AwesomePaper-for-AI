@@ -1,6 +1,59 @@
 # AwesomePaper-for-AI
 Awesome system papers for AI
 
+## TurboDiffusion
+TurboDiffusion: Accelerating Video Diffusion Models by 100–200 Times
+
+paper: https://arxiv.org/pdf/2512.16093 张金涛 清华 伯克利等 2025.12.18
+
+code : https://github.com/thu-ml/TurboDiffusion
+1. ✨ TurboDiffusion 是一种视频生成加速框架，能够在保持视频质量的同时，将端到端扩散生成速度提高 100-200 倍。
+2. 🚀 该框架集成4种优化：低比特 **SageAttention++**、可训练的 **Sparse-Linear Attention** (SLA)、用于**高效步长蒸馏的 rCM**，以及 **权重和激活的W8A8 INT8量化**, **优化版的kernel： LayerNorm 和 RMSNorm 等**操作多种核心技术实现加速。
+3. 💡 在多个 Wan 视频扩散模型上进行实验，结果显示 TurboDiffusion **在单张 RTX 5090 GPU** 上显著缩短了生成时间，从而使高质量视频生成更高效和实用。
+<img width="672" height="291" alt="image" src="https://github.com/user-attachments/assets/ac20eb5d-ed11-4d38-befd-511ae1f9f476" />
+<img width="676" height="227" alt="image" src="https://github.com/user-attachments/assets/4d3be692-cdae-42c8-a446-c818ffe074db" />
+
+TurboDiffusion 是一项旨在加速视频扩散模型的框架，能在保持视频质量的同时，将端到端扩散生成速度提升100至200倍。该框架主要通过算法和系统协同优化实现其显著的加速效果。
+
+**核心方法 (Main Techniques):**
+TurboDiffusion 主要整合了四种技术来加速扩散模型：
+1.  **Attention Acceleration (注意力加速):**
+    *   **Low-bit SageAttention:** TurboDiffusion 采用了 SageAttention，特别是其变体 SageAttention2++，用于实现低比特量化的注意力计算。SageAttention 家族（SageAttention, SageAttention2, SageAttention2++, SageAttention3）专注于对注意力机制进行8-bit或更低比特的量化，以利用 Tensor Core 的加速能力，并解决量化带来的精度损失问题。
+    *   **Sparse-Linear Attention (SLA):** 此外，TurboDiffusion 使用 Sparse-Linear Attention [5] 来加速稀疏注意力计算。SLA 允许对注意力机制进行稀疏化，减少计算量。由于稀疏计算与低比特 Tensor Core 加速是正交的，SLA 可以在 SageAttention 的基础上提供累积的加速效果。在推理阶段，SLA 会被专门的 CUDA 实现 SageSLA 替换，后者基于 SageAttention 构建。
+
+2.  **Step Distillation (步长蒸馏):**
+    *   **rCM (score-Regularized Continuous-time consistency):** TurboDiffusion 采用 rCM [6]（一种前沿的扩散模型蒸馏方法）来大幅减少采样步数。rCM 通过模型权重合并的方式，自然地继承了注意力层面的加速优化。通过 rCM 蒸馏，可以将原始模型通常需要100步的采样过程减少到极小的步数，例如3或4步，从而显著缩短生成时间。
+
+3.  **W8A8 Quantization (W8A8 量化):**
+    *   **Linear Layer Acceleration and Compression:** TurboDiffusion 对模型的参数（权重）和激活值都进行了8比特（INT8）量化。具体而言，线性层（Linear layers）的参数被量化为 INT8，量化粒度为 block-wise，块大小为 128 × 128。在推理过程中，线性层的激活值也实时量化为 INT8，并利用 INT8 Tensor Cores 进行计算。这种 W8A8 量化不仅加速了线性层的计算，还将模型大小压缩了约一半。
+
+4.  **Other Optimizations (其他优化):**
+    *   为了进一步提升效率，TurboDiffusion 还重新实现了如 LayerNorm 和 RMSNorm 等操作，使用 Triton 或 CUDA 进行优化。
+
+**训练流程 (Training Process):**
+TurboDiffusion 的训练流程基于一个预训练的视频扩散模型进行：
+1.  首先，将全注意力（full attention）替换为 Sparse-Linear Attention (SLA) 并对预训练模型进行微调，使其适应稀疏性。
+2.  同时，利用 rCM [6] 将预训练模型蒸馏成一个采样步数更少的学生模型。
+3.  最后，将 SLA 微调和 rCM 训练过程中产生的参数更新合并到一个模型中。整个训练过程可以利用真实数据或合成数据。
+
+**推理阶段 (Inference):**
+在推理阶段，通过上述训练得到的模型进行部署，并应用以下加速策略：
+*   **Attention acceleration:** 将训练后的 SLA 替换为优化过的 CUDA 实现 SageSLA。
+*   **Step distillation:** 将采样步数从100步减少到4步或3步。
+*   **Linear layer quantization:** 对线性层参数和运行时激活值执行 W8A8 量化，并利用 INT8 Tensor Cores 进行计算。
+
+**实验评估 (Evaluations):**
+TurboDiffusion 在 Wan2.2-I2V-A14B-720P、Wan2.1-T2V-1.3B-480P、Wan2.1-T2V-14B-720P 和 Wan2.1-T2V-14B-480P 等视频扩散模型上进行了实验。在单个 RTX 5090 GPU 上，TurboDiffusion 实现了以下显著加速：
+*   Wan2.2-I2V-A14B-720P：从 4549s 降至 38s，加速 120x。
+*   Wan2.1-T2V-1.3B-480P：从 184s 降至 1.9s，加速 97x。
+*   Wan2.1-T2V-14B-480P：从 1676s 降至 9.9s，加速 170x。
+*   Wan2.1-T2V-14B-720P：从 4767s 降至 24s，加速 199x。
+
+相比基线模型（如原始 Wan 模型和 FastVideo），TurboDiffusion 在保持可比视频质量的同时，实现了更高的效率。例如，在 Wan2.1-T2V-1.3B-480P 模型上，原始延迟为 184s，FastVideo 延迟为 5.3s，而 TurboDiffusion 仅需 1.9s。在 Wan2.1-T2V-14B-720P 模型上，原始延迟高达 4767s，FastVideo 为 72.6s，而 TurboDiffusion 仅需 24s。图4的分解实验表明，W8A8 & FusedNorm、rCM 以及 SageSLA 的组合贡献了累计的加速效果，将 Wan2.1-T2V-14B-720P 的推理延迟从 4767s 降低到 24s，实现了约 200 倍的端到端加速。
+
+**结论 (Conclusion):**
+TurboDiffusion 成功地将视频生成时间缩短至小于1分钟（在单个 RTX 5090 GPU 上），显著提高了高质量视频生成的效率和实用性。未来工作计划将该框架扩展到更多视频生成范式，例如自回归视频扩散。
+
 ## B200 microbenchmark
 Microbenchmarking NVIDIA’s Blackwell Architecture: An in-depth Architectural Analysis
 
