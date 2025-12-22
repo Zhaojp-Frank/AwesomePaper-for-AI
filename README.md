@@ -1,6 +1,73 @@
 # AwesomePaper-for-AI
 Awesome system papers for AI
 
+## RePo
+RePo: Language Models with Context Re-Positioning 
+https://www.arxiv.org/abs/2512.14391 SakanaAI, 2025.12.16
+https://github.com/SakanaAI/repo
+
+中文解读：https://mp.weixin.qq.com/s/NRgtlMGeSoFdKWHIUwpzQg
+
+1. ✨ 本文提出了一种名为REPO（Context Re-Positioning）的新机制，通过可微分模块fϕ根据令牌的内在关联性在连续、非线性空间中动态分配位置，以减少大型语言模型（LLMs）中固定上下文结构造成的额外认知负荷。
+2. 🚀 在**OLMo-2 1B**模型上进行的持续预训练实验表明，REPO在处理嘈杂上下文、结构化数据和长上下文任务时显著提升了模型性能，同时在通用短上下文任务上保持了竞争力。
+3. 💡 详细分析揭示，REPO能够成功地将更多注意力分配给遥远但相关的信息，打破了局部性偏见，并学习到能够捕捉输入上下文内在结构（如few-shot示例分割）的密集非线性位置模式。
+<img width="668" height="212" alt="image" src="https://github.com/user-attachments/assets/2508b6b6-73c3-464f-83f8-1bdff4d47e9a" />
+本文提出了一种名为 REPO（Context Re-Positioning）的新机制，旨在通过重新组织上下文来降低大型语言模型（LLMs）的额外认知负荷。现有的 LLMs 架构通常采用刚性且固定的上下文结构，通过分配线性或恒定的位置索引来处理信息。作者认为，这种非信息性的结构增加了外部认知负荷，消耗了有限的工作记忆容量，而这部分容量本应分配给深度推理和注意力分配。
+
+为了解决这个问题，REPO 引入了一个可微分模块 $f_\phi$，该模块根据上下文依赖性为每个 token 分配位置，而非依赖预定义的整数范围。$f_\phi$ 可以为 LLM 的每个注意力头独立学习。
+
+**核心方法 (REPO) 详解：**
+
+REPO 模块 $f_\phi$ 旨在根据 token 的相关性为其分配更合适的位置。它包含两个主要组件：
+
+1.  **位置表示 (Position Representation)**：
+    此组件负责从 token 的隐藏状态中显式提取位置信息。具体实现上，它使用一个轻量级的 SwiGLU 子层来完成此任务：
+    $r_i = \text{Swish}(h_i W_g) \odot (h_i W_c)$
+    其中，$r_i \in \mathbb{R}^{d_p}$ 是 token $x_i$ 的位置表示，$h_i \in \mathbb{R}^d$ 是其隐藏状态，$W_g, W_c \in \mathbb{R}^{d \times d_p}$ 是线性变换矩阵，$\text{Swish}(\cdot)$ 是激活函数。为了保持轻量级，通常设置 $d_p < d$。
+
+2.  **位置分配 (Position Assignment)**：
+    此组件在每个注意力头中为 token $x_i$ 分配一个新的位置值 $z_i$。它通过一个线性变换实现：
+    $z_i = r_i W_z$
+    其中，$W_z \in \mathbb{R}^{d_p \times 1}$ 是一个线性变换矩阵。
+
+通过结合这两个组件，REPO 模块 $f_\phi$ 的形式化定义为：
+$f_\phi(h_i) = \text{Swish}(h_i W_g) \odot (h_i W_c) W_z$
+
+当与现代可微分的位置编码方法（例如 RoPE）结合使用时，注意力分数的计算变为：
+$A_{\text{Repo}_{i,j}} = q_i^\top g_\theta (z_j - z_i) k_j$
+其中，$g_\theta$ 是位置编码函数。REPO 模块在实践中从第 $l$ 层（例如 $l=5$）开始应用，而较低层则保持标准位置编码。此设计基于 LLM 较低层主要捕获依赖局部信息的表面特征的发现。为了效率，REPO 仅使用分配的位置 $z_i$ 和 $z_j$ 来影响注意力计算中的位置编码，而保持 $q_i$ 或 $k_i$ 在上下文中的自回归顺序不变，从而避免了 KV 缓存的重新计算开销。
+
+**实验与结果：**
+
+研究人员在 OLMo-2 1B 模型的基础上，通过 50B token 的第二阶段数据持续预训练，将 REPO 与多种基线模型（ROPE, NOPE, R2N1, N2R1）进行了比较。评估涵盖了三个维度：
+
+1.  **噪声上下文 (Noisy Context)**：在 RULER 基准测试上进行评估，该基准测试故意在上下文中注入无关信息。REPO 在训练上下文长度（4K tokens）内，性能平均超过 ROPE 11.04 分，表明其在处理噪声和干扰信息时的鲁棒性。
+2.  **结构化数据 (Structured Data)**：在 NLGraph 和 HybridQA 数据集上进行评估，这些数据集涉及图和表格数据。REPO 在表格数据上表现出色，平均比标准 ROPE 提高了 1.94 EM 分。
+3.  **长上下文 (Longer Context)**：通过 YaRN 方法将测试上下文长度扩展到 16K tokens（训练期间未见），并在 RULER 子集和 LongBench 上进行评估。REPO 在 4K tokens 长度时就已超越所有基线，并在 8K 和 16K tokens 时性能差距进一步扩大，平均比其他基线至少高 5.48 分。
+
+此外，REPO 在广泛的通用基准测试（如 ARC-C, MMLU-Pro 等）上保持了与 ROPE 相当的性能，尽管其从线性位置分配转变为 REPO 导致预训练和持续训练之间存在不一致。这表明 REPO 在通用数据上具有良好的泛化能力。
+
+**分析：**
+
+1.  **注意力质量分配 (Attention Mass on Relevant Tokens)**：
+    在 Needle-in-a-Haystack (NIAH) 任务中，REPO 相比线性 (RoPE) 和常量 (NoPE) 位置分配策略，能将显著更多的注意力分配给距离较远但对生成至关重要的“needle”tokens，而对最近的“query”tokens 的注意力分配较少。这表明 REPO 能够动态调整注意力模式，打破典型的局部性偏置，更好地捕获长距离依赖关系。
+
+2.  **学习到的位置模式 (Position Patterns Learned by REPO)**：
+    *   **位置范围**：REPO 分配的位置距离 $d_{k,h} = \text{max}(z_{k,h}) - \text{min}(z_{k,h})$ 在较长上下文中更大，但仍远小于原始上下文长度。这暗示模型可能不需要将位置范围扩展到完整的输入上下文长度。
+    *   **局部模式**：将上下文分割成非重叠的 chunks，分析了三种模式：
+        *   **Constant**：分配的位置接近一个常量。
+        *   **Mono**：位置单调递增或递减。
+        *   **Hybrid**：其他混合模式。
+        研究发现，“Mono”模式非常罕见（占 4%），模型更偏爱“Constant”模式（占 22%），而“Hybrid”模式占据主导地位（约 70%）。这表明 REPO 学习到的位置模式与之前工作中预定义的不同，它能动态地在“Constant”和“Linear”模式之间选择或混合。
+
+3.  **案例研究**：在包含 few-shot 示例的 MMLU-Pro 基准测试中，REPO 分配的位置模式与 few-shot 示例的语义分割大致对齐，表明 REPO 能够捕获输入上下文的内在结构。此外，REOP 分配的位置可能出现负值，这在 RoPE 框架下可被解释为反向旋转。
+
+**效率：**
+REPO 机制非常轻量级，仅增加了 0.9% 的参数量，且在训练上下文长度内的推理时间与原始模型相当，FLOPs 增加也微乎其微（0.9%）。
+
+**总结：**
+REPO 通过引入一个可学习的可微分模块 $f_\phi$，允许 LLM 根据 token 的相关性动态地重新定位上下文信息，从而减少了由刚性位置编码带来的额外认知负荷。实验证明，REPO 在噪声上下文、结构化数据和长上下文任务上显著提升了性能，同时在通用短上下文任务上保持了竞争力。分析表明，REPO 能够有效地将注意力引向远距离但相关的信息，并在稠密非线性空间中分配位置，捕获输入上下文的内在结构。
+
 ## SuperOffload
 SuperOffload: Unleashing the Power of Large-Scale LLM Training on Superchips
 
