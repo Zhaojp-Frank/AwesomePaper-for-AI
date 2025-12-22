@@ -1,6 +1,73 @@
 # AwesomePaper-for-AI
 Awesome system papers for AI
 
+## FlashFuser
+FlashFuser: Expanding the Scale of Kernel Fusion for Compute-Intensive Operators via Inter-Core Connection
+https://arxiv.org/pdf/2512.12949 上海交大 2025.12.15
+1. 💡 FlashFuser是一个开创性的编译器框架，它利用现代GPU的**Distributed Shared Memory (DSM)** 机制，解决了现有**kernel fusion因SMEM容量限制**而无法处理大型中间结果的问题。
+2. 🛠️ 该框架的核心贡献包括**DSM-based communication abstractio**n、一个**量化跨内存层级数据移动成本的数据流分析器**，以及一个能高效发现最佳执行计划的统一搜索引擎。
+3. 🚀 在NVIDIA **H100 GPU**上的评估表明，FlashFuser将**内存访问减少了58%，实现了高达4.1倍的kernel speedup**，并带来了1.24倍的端到端性能提升。
+
+FlashFuser是一款突破性的编译器框架，旨在解决现代深度学习工作负载中日益突出的“内存墙”问题。鉴于计算吞吐量的增长速度持续超越内存带宽的提升，许多深度学习模型（特别是Transformer中的Feed Forward Network (FFN)层和卷积块）受限于内存带宽，表现为Memory-bound。现有的Kernel fusion技术受限于单SM（Streaming Multiprocessor）内的局部Scratchpad memory（如寄存器和SMEM），当中间结果量超出其有限容量时（如大型FFN），融合就会失败。现代GPU（如NVIDIA H100）引入了互连核心机制，即Distributed Shared Memory (DSM)，提供了一个**更大、高带宽、低延迟的片上内存池**。然而，这一硬件潜力尚未被现有软件框架充分利用。FlashFuser是首个利用互核连接（DSM）进行Kernel fusion的编译器框架，旨在弥合这一硬件与软件之间的鸿沟。
+<img width="826" height="299" alt="image" src="https://github.com/user-attachments/assets/940020af-694c-4847-9a42-dff87d135211" />
+<img width="409" height="260" alt="image" src="https://github.com/user-attachments/assets/01835b4c-e6a7-4560-9b73-d7b23a77e7a0" />
+<img width="453" height="224" alt="image" src="https://github.com/user-attachments/assets/83c02701-7fbd-4889-911a-1a492937a71c" />
+<img width="1009" height="249" alt="image" src="https://github.com/user-attachments/assets/5ae282c5-c957-4fc7-b035-49e3a9382c5e" />
+<img width="402" height="244" alt="image" src="https://github.com/user-attachments/assets/e05f9ea7-7ca5-44fd-8933-e3902ab783a6" />
+<img width="407" height="276" alt="image" src="https://github.com/user-attachments/assets/cfb90d4c-defe-43cc-88b7-2444323a1959" />
+
+FlashFuser通过三大核心贡献将现有融合技术扩展到DSM领域：
+
+1.  **DSM-based communication abstraction (dsm_comm primitive)**:
+    传统的GPU编程模型主要关注线程块（thread block）级别的单一分块层级。DSM的引入要求在线程块集群（thread block cluster）层面引入更高层级的Tiling，从而需要显式处理Cluster内部和Cluster之间的通信。
+    FlashFuser定义了一系列`dsm_comm`原语来形式化复杂的基于Cluster的数据交换模式，包括：
+    *   `dsm_all_exchange`：实现Cluster内的All-Reduce操作。例如，在两阶段GEMM链中，当K维度在Cluster内被空间分区到多个Blocks时，这些Blocks需要对中间结果执行Cluster内累加。`dsm_all_exchange`确保每个Block在继续下一步之前都持有完整的累加中间结果。它具有操作灵活性，可执行加法（如标准FFN）或乘法（如Gated FFN）。
+    *   `dsm_shuffle`：用于数据在GEMM计算过程中在Shuffle Group内进行交换。例如，计算输出矩阵E的某个Block需要访问中间矩阵C的整行数据，同一Shuffle Group内的Blocks通过此原语交换各自的C矩阵分片。
+    *   `dsm_reduce_scatter`：在Store阶段，用于将部分和进行两级层次化规约。首先进行Cluster内规约，多个贡献Shuffle Group通过此操作进行累加，并采用Scatter模式以避免数据冗余。
+    *   `inter_cluster_reduce`：通过NVIDIA Hopper架构的Tensor Memory Accelerator (TMA)的`cp.reduce.async.bulk`指令实现，用于异步聚合来自所有参与Cluster的部分和。
+    这些原语的定义依赖于两个关键参数：`clsi`（Cluster在维度$i$上的并行Blocks数量）和`blki`（Block在维度$i$上计算的数据粒度）。此外，还派生出`clsshuffle`（单个Shuffle Group中的Blocks数量，$clsshuffle = clsl / clsk$）和`clsreduce`（参与Reduce操作的Shuffle Groups数量，$clsreduce = clsn / clsshuffle$）。这些参数的灵活配置对于将不同大小的问题高效映射到硬件至关重要。
+    通过这些原语，复杂的融合Kernel可以被抽象为直观的Tile graph来描述数据流，例如支持标准FFN和更复杂的Gated FFN。
+
+2.  **Dataflow Analyzer**:
+    这个组件负责在给定参数集下，评估任何融合方案的可行性和数据移动成本，并确定中间数据如何在内存层次结构中高效放置以实现复用。它能够量化跨内存层级的数据移动量。与传统方法只需考虑寄存器和SMEM不同，FlashFuser的分析器还协调新引入的DSM层。
+    核心逻辑（如Algorithm 1所示）如下：
+    *   **Loop Scheduling**: 定义了操作链的循环执行顺序。它将所有操作符的相互依赖循环维度统一为一组独立的维度$X = \{x_0, x_1, \dots, x_{J-1}\}$。然后定义一个排列$s$来设置嵌套顺序，并将维度分区为Spatial（并行处理）或Temporal（顺序处理）。不同的循环调度会影响需要缓存的张量大小，从而决定是否需要将数据从寄存器溢出到SMEM、DSM，甚至L2/Global。
+    *   **Tile Selection**: 定义了三个层级的Tiling大小：`tile.cluster`（工作如何在Cluster间分布）和`tile.block`（每个Block计算的Tile大小）。这些Tiling直接影响内存使用和数据流模式。
+    *   **Resource Mapping**: 采用启发式方法将张量绑定到不同的内存层级。对于可重用张量，它首先获取其Footprint (`DF`)。然后，采用贪婪算法将张量放置在尽可能高层级的内存中。如果某个层级容量不足，剩余部分会溢出到下一个层级。在整个过程中，计算每个缓存层级的数据移动量(`DV`)，尤其关注DSM流量，并根据`dsm_comm`原语的Cluster大小和数据Footprint来计算DSM流量。最终输出总数据移动量和最终的执行计划（包括调度、Tiling和资源映射）。
+
+3.  **Fusion Search Engine**:
+    DSM的引入极大地扩展了融合的可能性，从而带来了巨大的搜索空间。该引擎通过分析成本模型和剪枝策略，高效地探索由Loop schedules、Tiling sizes和Resource mapping构成的巨大搜索空间，以发现最优融合计划。
+    *   **Cost Model**: 受到Chimera的启发，FlashFuser对L个内存层级的数据移动成本进行建模。将数据传输到层级$l$的成本$C_l$由所需数据量$V_l$和内存带宽$B_l$决定：
+        $$ C_l(T_l) = \frac{V_l(T_l)}{B_l} $$
+        为优化整体性能，目标是最小化所有内存层级中最慢的数据移动阶段，这被表述为一个minimax优化问题：
+        $$ \min_{T_1, \dots, T_L} \left( \max_{l=1, \dots, L} (C_l(T_l)) \right) $$
+        此优化受限于每个层级的内存容量约束：
+        $$ U_l(T_l) \le \text{Cap}_l, \forall l \in \{1, \dots, L\} $$
+    *   **Pruning Strategies**: 相比于先前工作（如MCFuser的$10^4$可能性），FlashFuser的初始搜索空间高达$2.75 \times 10^{13}$。因此，引入了更严格的剪枝策略：
+        *   Rule 1, Divisible Tile Sizes: Tile大小必须是硬件感知的，且能整除问题尺寸。
+        *   Rule 2, Cluster Size Constraint: 每个GEMM在M, N, K维度的Cluster维度乘积必须小于硬件限制（H100为16），且连续GEMM的Cluster维度必须一致。
+        *   Rule 3, Activation constraint: 为确保连续GEMM间激活的正确性，前一个GEMM的累加维度必须放在最内层循环。
+        *   Rule 4, Dependency constraint: 如果L维度被设为Spatial，且GEMM存在依赖，Spatial Tile需要中间张量但无法直接通信时，融合会失败。
+        *   Rule 5, Memory Capacity Limit: 张量不能超过其可溢出到的最低层级缓存容量。
+    *   **Search Algorithm**: (Algorithm 2) 首先利用剪枝策略过滤搜索空间。然后，合法候选通过Dataflow Analyzer进行详细分析，获取具体数据流细节和数据移动量。接着，使用成本模型评估每个配置，并维护一个top-K候选列表。最后，在硬件上对top-K候选进行Profiling以确定最终执行计划。为了提高效率，该搜索是离线进行的，运行时通过Binning和查表选择预编译的Kernel。
+
+**实现细节**:
+FlashFuser**基于NVIDIA CUTLASS构建**，前端是Python实现的搜索引擎，后端负责将优化计划翻译成高性能CUDA代码。Dataflow Analyzer的启发式计划通过计算理论寄存器使用量来决定寄存器和SMEM的使用，若SMEM不足，数据将溢出到DSM。`dsm_comm`原语的SHUFFLE, MUL, REDUCE操作通过TMA进行数据移动，并使用`mbarrier`内联函数进行多对多同步。通过**扩展CUTLASS Kernel的结构**（prologue, mainloop, epilogue），FlashFuser将**Cluster级数据流集成到Kernel中，例如在prologue中初始化DSM信号量**，mainloop中执行DSM Mul和Shuffle，epilogue中执行DSM Reduce。
+
+**评估**:
+在NVIDIA H100 GPU上进行评估，FlashFuser在多种Compute-intensive operator chains（GEMM链、卷积链、Gated FFN）上表现出色：
+*   **GEMM链**：相较于BOLT、Chimera、Relay、TASO、TensorRT和PyTorch，平均速度提升分别为5.4x、4.6x、4.7x、3.4x、2.4x和3.1x。
+*   **卷积链**：平均速度提升分别为6.3x、6.4x、5.6x、4.3x、3.3x和3.9x。
+*   **内存访问**：FlashFuser显著减少了全局内存访问，相比未融合方法（如PyTorch），平均减少了2.4倍的全局内存流量，确认减少Off-chip内存访问是性能提升的主要来源。
+*   **成本模型和搜索策略验证**：成本模型能够持续识别性能最优或接近最优的配置。实验表明选择Top-K=11能获得接近100%的预测准确率。搜索引擎相较于暴力搜索，编译时间加速12-864倍。
+*   **`dsm_comm`性能**：测得`dsm_comm`原语（Shuffle, Reduce, Mul）在不同Cluster Size下的带宽和利用率，发现带宽随Cluster Size增加而下降，但带宽利用率保持稳定。Shuffle原语性能优于Reduce和Mul，因为后者有额外计算开销。
+*   **Ablation Study**：对核心设计（dsm_comm (DC), Dataflow Analyzer (DA), Search Engine (SE)）进行消融实验，结果显示，完整系统(`All`)相较于无融合基线提升3.29x，仅`DC+DA`（随机配置）提升2.11x，仅`DA`（仅SMEM/全局内存融合）提升1.52x，证明了各组件的有效性。
+*   **端到端性能**：在SGLang框架下对真实LLM和CNN模型进行端到端推理性能评估，FlashFuser平均提升1.24x。
+
+FlashFuser提出的融合策略不局限于特定架构，其`dsm_comm`核心抽象是拓扑无关的集体通信概念。虽然目前实现主要针对H100，但对于具有Crossbar互连（如Graphcore IPU）或Mesh架构（如Cerebras WSE）的架构也具有潜在适用性。
+
+总结来说，FlashFuser通过引入DSM、创新的`dsm_comm`原语、精细的数据流分析器以及高效的融合搜索引擎，成功克服了现有Kernel fusion在处理大中间数据时的容量限制，显著提升了Compute-intensive operator chains在现代GPU上的性能，为深度学习编译领域带来了重要进展。
+
 ## Efficient-DLM
 Efficient-DLM: From Autoregressive to Diffusion Language Models, and Beyond in Speed
 
