@@ -1,6 +1,21 @@
 # AwesomePaper-for-AI
 Awesome system papers for AI
 
+## Prompt Repetition
+Prompt Repetition Improves Non-Reasoning LLMs
+https://arxiv.org/abs/2512.14982 Google 2025.12.17
+
+1. 💡 提出了一种名为 Prompt Repetition 的方法，即将输入查询 `<QUERY>` 重复为 `<QUERY><QUERY>`，结果显示在非reasoning模式下，该方法能显著提升 Gemini、GPT、Claude 和 Deepseek 等主流 LLM 在多项基准测试上的表现，**且不增加生成令牌或延迟**。reasoning模式下，中性略提升。
+2. ⚙️ 这种方法通过允许**每个提示令牌关注其他所有提示令牌来提高性能**，并且由于它仅影响并行化的 prefill 阶段，因此高效且可直接集成到现有系统中。
+3. 🎯 实验证明，Prompt Repetition 在47/70个**测试中表现出统计学上的显著优势**，尤其在“选项在前”的多项选择题和自定义任务上效果明显，而在启用推理时，其影响则趋于中性或略有积极。
+<img width="586" height="328" alt="image" src="https://github.com/user-attachments/assets/0e88e33e-3346-4640-8d7b-5291f5019e13" />
+<img width="724" height="454" alt="image" src="https://github.com/user-attachments/assets/8cb3d2c2-a4ae-42f4-95f3-4606f6a2d660" />
+<img width="736" height="406" alt="image" src="https://github.com/user-attachments/assets/dfffcd31-cd53-47c1-ae7a-5e32a9797fb2" />
+
+几乎是“免费”的。
+• 生成长度不变：重复输入Prompt并**不会让模型生成的答案变长**。
+• 延迟几乎不变：虽然输入的Prompt变长了，但这部分计算发生在**预填充阶段**（Prefill Stage）。现代推理引擎对预填充阶段有极高的并行优化能力。
+
 ## RePo
 RePo: Language Models with Context Re-Positioning 
 https://www.arxiv.org/abs/2512.14391 SakanaAI, 2025.12.16
