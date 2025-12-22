@@ -1,6 +1,30 @@
 # AwesomePaper-for-AI
 Awesome system papers for AI
 
+## SD Speed-of-Light
+Speculative Decoding Speed-of-Light: Optimal Lower Bounds via Branching Random Walks
+
+paper: https://arxiv.org/pdf/2512.11718 Dan ISTA, 2025.12.12
+1. 📚 该论文首次为大型语言模型（LLMs）的Speculative Decoding技术**建立了严格的运行时下限**，揭示了其加速的根本限制。
+2. 💡 通过将Token生成过程与Branching Random Walks（BRW）理论联系起来，研究证明了每次推测迭代中成功预测的Token期望数量 E[X] **与验证器容量 P 的对数呈线性关系**，并**与目标模型输出分布的预期熵 μ 呈反比**。
+3. ⚙️ 这一结果表明**并行度 P 的增加会带来收益递减**，并获得了Llama模型上经验评估的验证，为未来Speculative Decoding系统的设计提供了重要指导。
+<img width="853" height="503" alt="image" src="https://github.com/user-attachments/assets/c7ab5357-acd0-49e7-9422-aa2b518f52a6" />
+
+实验验证
+
+论文在Llama 3.1 8B Instruct、Llama 3.3 70B Instruct、DeepSeek R1 Distill Llama 8B和Qwen3 8B等流行模型上，通过HumanEval、MT-bench、GSM8K、CNN/Daily Mail和Natural Questions等基准测试，评估了\muμ\muμ和\mu^{(2)}μ(2)\mu^{(2)}μ(2)参数。
+结果显示，更大的模型（如Llama 3.3 70B）具有更低且更稳定的熵（\muμ\muμ）和二阶矩（\mu^{(2)}μ(2)\mu^{(2)}μ(2)），表明其并行化潜力更高。Qwen3相比Llama 3.1在大多数基准测试中表现出更低的期望熵。
+通过将引理7的下限与EAGLE-3（一种先进的推测解码技术）在不同模型上的实际性能进行比较，实验结果显示出清晰的线性关系，验证了理论预测的紧密性。
+图2展示了EAGLE-3的加速比随推测大小PPPP的变化。理论上的精确上限（定理1的蓝色虚线）与EAGLE-3的实际性能（实黑线和星形标记）之间存在差距。这种差距主要归因于：a) 理想分析中假设的最优推测器与EAGLE-3实现中的实际推测器之间的差距；b) 完美知识与不完美知识之间的差距。这表明在设计更优的实用推测算法方面仍有改进空间。
+
+局限性
+
+I.i.d. 假设：语言模型的上下文依赖性是固有的，输出熵会随上下文变化，i.i.d.假设是对实际情况的简化。
+简化时序模型：忽略了KV缓存增长导致的延迟增加和草稿器的计算开销。
+完美知识和确定性草稿：上限是为具有完美知识的最优确定性草稿策略推导的，未考虑随机推测策略。
+
+总而言之，该论文通过将推测解码与BRW理论联系起来，为推测解码算法的性能提供了严格的理论上限。其核心发现是，加速比与并行度呈对数关系，并与目标模型的期望熵呈负相关，揭示了大规模并行本身无法克服概率瓶颈的根本限制。这些理论洞察得到了实验验证，并为未来的推测解码系统设计提供了指导，强调了优化模型特性（降低有效熵）比单纯增加并行预算更为重要。
+
 ## FlashFuser
 FlashFuser: Expanding the Scale of Kernel Fusion for Compute-Intensive Operators via Inter-Core Connection
 https://arxiv.org/pdf/2512.12949 上海交大 2025.12.15
