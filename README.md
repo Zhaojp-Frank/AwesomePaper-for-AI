@@ -1,6 +1,19 @@
 # AwesomePaper-for-AI
 Awesome system papers for AI
 
+## SuperOffload
+SuperOffload: Unleashing the Power of Large-Scale LLM Training on Superchips
+
+https://arxiv.org/abs/2509.21271 2025.9.25
+
+针对超节点例如GH200的offload方案.集成到DeepSpeed.
+
+中文解读：https://mp.weixin.qq.com/s/fj_XLlnNnNEAWI7fzXFEFw
+<img width="674" height="387" alt="image" src="https://github.com/user-attachments/assets/b4ec6edc-9331-459c-99e5-ab94f0c82ac5" />
+
+针对超节点例如GH200的offload方案.
+
+
 ## SD Speed-of-Light
 Speculative Decoding Speed-of-Light: Optimal Lower Bounds via Branching Random Walks
 
