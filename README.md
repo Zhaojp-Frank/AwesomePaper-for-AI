@@ -1,6 +1,11 @@
 # AwesomePaper-for-AI
 Awesome system papers for AI
 
+## who is Adam?
+Blog: https://www.notion.so/sagnikm/Who-is-Adam-SGD-Might-Be-All-We-Need-For-RLVR-In-LLMs-1cd2c74770c080de9cbbf74db14286b6
+
+中文：https://mp.weixin.qq.com/s/kDnLL7qZyGw7P7_w5w3XXg
+
 ## Prompt Repetition
 Prompt Repetition Improves Non-Reasoning LLMs
 https://arxiv.org/abs/2512.14982 Google 2025.12.17
