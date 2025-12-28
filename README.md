@@ -1,6 +1,65 @@
 # AwesomePaper-for-AI
 Awesome system papers for AI
 
+## BLASST
+BLASST: Dynamic BLocked Attention Sparsity via Softmax Thresholding
+
+https://arxiv.org/pdf/2512.12087 2025.12.12 NVDIIA, MIT
+kernel集成到flashInfer 但未见开源；e2e评测基于 https://github.com/NVIDIA-NeMo/Skills
+
+
+1. 💡 BLASST 是一种即插即用的 sparse attention 方法，通过利用 FlashAttention 的在线 softmax 机制和固定阈值，在不进行预计算或使用代理分数的情况下，动态剪枝 negligible attention scores，从而跳过计算和 Value block 加载。
+2. 🚀 该方法在保持高准确度的同时，在现代 GPU 上实现了显著的加速，Prefill 阶段最高可达 **1.62×，Decode 阶段最高可达 1.48×**，并在所有 attention 变体和预填充/解码阶段提供统一的解决方案。
+3. 🛠️ 为确保其鲁棒部署，BLASST 引入了**自动校准程序以确定最优阈值**，并探索了 sparsity-aware training 作为扩展，进一步提升了 accuracy-sparsity frontier。
+
+<img width="396" height="533" alt="image" src="https://github.com/user-attachments/assets/078ecc45-d707-4a18-ba21-de5823451175" />
+<img width="406" height="487" alt="image" src="https://github.com/user-attachments/assets/4e6651a3-1e4d-4c09-9a54-c4b2dad50b1c" />
+<img width="1102" height="468" alt="image" src="https://github.com/user-attachments/assets/aae9b41e-393c-41e9-b575-d914b1b7266f" />
+<img width="1090" height="264" alt="image" src="https://github.com/user-attachments/assets/4cf89e71-b30a-47ca-8586-206f91d263ba" />
+<img width="1092" height="498" alt="image" src="https://github.com/user-attachments/assets/b7d03cb8-f46a-4e06-918c-89dfe9535971" />
+<img width="526" height="416" alt="image" src="https://github.com/user-attachments/assets/4e7066fa-f943-441e-8816-0cd1d316dc3d" />
+![Uploading image.png…]()
+
+**核心方法学：动态 Attention 稀疏性与 Softmax 阈值**
+
+BLASST 的核心思想在于，在 FlashAttention 的块级在线 Softmax 计算过程中，可以**利用已有的信息动态识别并跳过那些对最终输出贡献可以忽略的** Attention 块。
+
+1.  **关键洞察与剪枝原理**:
+    在 FlashAttention 的分块计算中，对于每个 Query $Q_i$ 而言，其对 Key-Value 块 $K_j, V_j$ 的 Attention 分数 $S_{ij} = Q_i K_j^\top$ 会参与 Softmax 运算，最终得到 Attention 权重 $P_{ij}$。标准的 Softmax 运算定义为：
+    $P_{ij} = \frac{\exp(S_{ij})}{\sum_k \exp(S_{ik})}$
+    FlashAttention 为了数值稳定性和内存效率，采用了在线 Softmax 算法，该算法在处理每个块时会维护一个运行最大值 $m^{(j)}_i$ 和一个行和 $l^{(j)}_i$。对于当前处理的块 $j$，计算其内部 Attention 分数的局部最大值 $\tilde{m}^{(j)}_i = \max_{p,q} S_{ipq}$。
+    BLASST 的关键观察是，如果一个块的局部最大值 $\tilde{m}^{(j)}_i$ 显著小于当前的运行最大值 $m^{(j)}_i$，即满足条件 $\tilde{m}^{(j)}_i - m^{(j)}_i < \ln(\lambda)$，其中 $\lambda$ 是一个预设的阈值。根据指数函数的性质，这意味着 $\exp(\tilde{m}^{(j)}_i - m^{(j)}_i) < \lambda$。由于 Softmax 的指数项通常会除以一个大的归一化因子（$\exp(m^{(j)}_i)$），如果一个块的最大 Attention 分数与行最大值之差小于 $\ln(\lambda)$，那么该块内所有分数经 Softmax 后的值都将非常接近零，对最终 Attention 输出的贡献微乎其微。
+
+2.  **剪枝操作与节省**:
+    当满足上述剪枝条件 $\tilde{m}^{(j)}_i - m^{(j)}_i < \ln(\lambda)$ 时，BLASST 会对当前 Attention 块跳过以下三种高开销操作（对应于 Algorithm 1 的第 7-12 行）：
+    *   **计算节省（CUDA Cores）**:
+        *   跳过计算 Attention 权重 $\tilde{P}_{ij} = \exp(S_{ij} - m^{(j)}_i)$ 所需的昂贵 $\exp(\cdot)$ 操作。
+        *   跳过用于归一化 Attention 权重的行和（rowsum）规约操作。
+        *   这节省了数千个 CUDA core 指令。
+    *   **计算节省（Tensor Cores）**:
+        *   跳过 Attention 权重与 Value 块的矩阵乘法 $\tilde{P}_{ij} V_j$ (BMM2)。在 Prefill 阶段，该操作是计算瓶颈。
+    *   **内存带宽节省**:
+        *   跳过从高带宽内存 (HBM) 加载 Value 块 $V_j$ 到 SRAM 的操作。这在 Decode 阶段尤为关键，因为 Attention 通常是内存瓶颈。
+
+**内核设计**
+
+BLASST 针对 Prefill 和 Decode 阶段的不同计算特性，设计了专门优化的 CUDA 内核。设计目标是最小化开销并复用 FlashAttention 已计算的统计信息。
+
+*   **Prefill 内核（计算密集型优化）**:
+    Prefill 阶段通常受限于计算吞吐量（CUDA Cores 和 Tensor Cores），而非内存带宽。因此，BLASST Prefill 内核主要跳过 Softmax 计算和 MMA (Matrix Multiply Accumulate) 操作。尽管 Value 块仍会从 HBM 加载，这是因为内存带宽不是瓶颈，且预取流水线受益于可预测的内存访问模式，同时有条件地加载 Value 会引入额外延迟。这种优化使得 Prefill 速度提升几乎与稀疏度呈线性关系。
+
+*   **Decode 内核（内存密集型优化）**:
+    Decode 阶段通常受限于 HBM 带宽，因为 Attention 涉及单个 Query 与所有 Key 的比较（KV Cache）。BLASST Decode 内核的核心优化是跳过内存密集型的 Value 矩阵 $V_j$ 加载。通过减少内存流量，显著提升了速度。对于像 MLA (Multi-head Latent Attention) 这样在 Decode 阶段也计算密集型的 Attention 机制，BLASST 还会额外跳过 Softmax 操作以进一步加速。
+
+**关键技术与增强**
+
+1.  **稀疏度校准**:
+    为了在不同上下文长度下保持一致的稀疏度和准确性，BLASST 引入了自动化校准程序。研究发现，最优阈值 $\lambda$ 与上下文长度 $L$ 之间存在简单的反比关系：$\lambda = a/L$，其中 $a$ 是模型特定的常数。该校准过程通过在不同上下文长度下，经验性地寻找达到目标稀疏度 $S$ 的最佳阈值 $\lambda_{best}$，然后对数据点 $(1/L_k, \lambda_{best})$ 进行线性回归来确定参数 $a$。这确保了在不同上下文长度下，可以预测性地控制稀疏度并获得一致的计算加速。
+
+2.  **稀疏感知训练 (Sparsity-Aware Training)**:
+    BLASST 进一步探索了稀疏感知训练作为其自然延伸。在微调阶段，在前向传播中应用 BLASST 阈值剪枝。由于跳过的块在后向传播中不会收到梯度，这鼓励模型在训练过程中将重要信息集中到高分 Attention 块中，从而使其 Attention 模式更适应稀疏性。这种方法不需要架构修改或辅助损失函数，只需在训练时使用与推理时相同的稀疏 Attention 机制。
+
+
 ## who is Adam?
 Blog: https://www.notion.so/sagnikm/Who-is-Adam-SGD-Might-Be-All-We-Need-For-RLVR-In-LLMs-1cd2c74770c080de9cbbf74db14286b6
 
