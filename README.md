@@ -1,6 +1,57 @@
 # AwesomePaper-for-AI
 Awesome or inspiring papers for AI
 
+## SpecFormer 
+Scaling LLM Speculative Decoding: Non-Autoregressive Forecasting in Large-Batch Scenarios
+
+paper: https://arxiv.org/pdf/2511.20340 小米 武汉大学等 2025.11.25
+
+code: https://github.com/ShiLuohe/SpecFormer 待开源 基于HF, Medusa
+
+1. 📝 现有 Speculative Decoding (SD) 方法在存在**大batch场景下效率低下**，因为 batching 减少了可用计算资源，并且其 draft 模型过度依赖 position-dependent 参数，导致难以扩展。
+2. 🚀 针对此问题，本文提出 SpecFormer，这是一种结合了 unidirectional 和 bidirectional attention 的新颖架构，旨在通过**更精准的 draft 生成** 在有限的 draft token 预算下实现**高效并行预测**。
+3. ⚡ 实验证明，SpecFormer 在多种模型规模和 batch size 下均能提供稳定的加速效果，尤其在 draft token 预算受限时，其吞吐量 (TPS) 和转换效率 (κ-to-TPS) 均优于基线方法。
+<img width="393" height="264" alt="image" src="https://github.com/user-attachments/assets/6c8d5604-4f95-4599-9de2-e2a02c444588" />
+<img width="850" height="436" alt="image" src="https://github.com/user-attachments/assets/195e6ae2-c18f-43f0-a9c4-6c544ca826bb" />
+
+<img width="673" height="370" alt="image" src="https://github.com/user-attachments/assets/7d4c2d0d-4665-4503-98e7-32679e1aa021" />
+这篇论文提出了一种名为 SpecFormer 的新型 Speculative Decoding (SD) 架构，旨在解决现有 SD 方法在大型批处理（large-batch）场景下的效率瓶颈。
+
+**1. 背景与问题**
+大型语言模型（LLMs）的推理通常采用自回归（autoregressive）解码，即逐个生成 token。这种方式的缺点是算术强度（arithmetic intensity, AI）低，导致计算资源（尤其是 GPU）在等待内存-芯片数据传输时大量闲置。Speculative Decoding (SD) 通过利用这些闲置资源，同时生成多个 draft token 来加速推理，并通过一个大型模型（LLM）进行验证。
+然而，主流的 LLM 推理系统广泛采用 batching 等技术来提高 GPU 利用率，这反而压缩了 SD 可用的闲置计算资源。在 batch size 增大的情况下，每个参数的计算强度更高，用于生成 draft token 的计算周期随之减少。现有的 SD 方法，无论是自回归还是非自回归，都通常依赖生成复杂且大规模的 draft tree 来提高预测准确率。这些方法的问题在于其大量的“位置依赖参数”（position-dependent parameters），这使得它们难以有效扩展以适应更少的可用计算资源和更严格的效率要求。因此，如何在低验证资源和低调度成本下进行 SD 成为一个重要研究问题。
+
+**2. SpecFormer 方法**
+SpecFormer 的核心思想是提高 draft generation 模型的预测能力，使其在有限的 draft token 预算下也能高效运行。它结合了自回归模型从整个输入序列中提取信息的能力，以及非自回归模型并行生成 token 的优势。该架构集成了单向（unidirectional）和双向（bidirectional）注意力机制，从而消除了对大型 prefix tree 的依赖。
+<img width="1509" height="471" alt="image" src="https://github.com/user-attachments/assets/0357157d-998d-4325-a84d-d0e44f0a97b0" />
+<img width="1518" height="263" alt="image" src="https://github.com/user-attachments/assets/dc9fd3c6-b782-4557-9267-50e30a8eafc8" />
+
+
+**2.4 实现优化**
+*   **高效 Grouped RMS Norm**: 为解决 RMS Normalization 的性能瓶颈，使用了定制的 Triton GPU kernel。
+*   **批内梯度累积 (Intra-batch Gradient Accumulation)**: 在 LM Head 周围采用梯度累积策略，顺序计算每个位置的损失，避免了昂贵的 softmax 存储开销。
+
+**3. 实验与结果**
+*   **训练语料**: 在 UltraChat-200K (UC) 数据集上进行训练，并强调了“自蒸馏”（self-distillation）的重要性。通过使用基础 LLM 重新生成补全部分，确保 draft 模型学习到的分布与基础模型严格对齐。
+*   **基础 LLM**: 评估了 Qwen2.5-3B, Qwen3-8B, Qwen3-14B 和 LLaMA-3.1-8B。
+*   **评估**: 使用 UC 测试集以及 MT-Bench, HumanEval, GSM8K, Alpaca, CNN/DM 等流行基准进行评估，关注无损加速下的性能，即保持输出与原模型一致。
+
+**3.1 吞吐量比较 (Table 1)**
+在受限的 draft token 预算下，SpecFormer 在不同 batch size 设置下始终优于基线方法 (HASS, EAGLE-3)。论文指出，基线方法未达到其宣称的性能，是因为在实验中强制限制了 draft token 预算，以模拟计算冗余有限的场景。SpecFormer 在高吞吐量的同时，不需要大量的 draft tokens，这得益于其卓越的预测能力和更高的 $\kappa$-to-TPS 转换效率，表明其非自回归设计带来了更高的算术强度和更低的平均每 token 开销。
+
+**3.2 特殊案例研究**
+*   **自蒸馏的影响 (Table 2)**: 结果显示，没有自蒸馏的模型加速效果可以忽略不计，因为其学习到的 token 分布与基础模型不符。自蒸馏是确保 draft 模型与基础模型输出严格对齐的关键步骤。
+*   **基础 LLM 大小 (Table 3)**: 随着模型尺寸增大，预测器准确预测未来 token 的能力有所削弱，导致加速收益略有下降（例如，4B 模型加速比为 1.56×，而 14B 模型为 1.47×）。然而，较大模型展现出更有利的 $\theta$ 值（$\kappa$-to-TPS 转换比），意味着预测器引入的相对开销更小。这归因于较大模型层数增加使得预测器参数占比更小，以及大模型中更大的权重矩阵稀释了调度开销。
+
+**3.3 模块消融研究 (Table 4)**
+在 Qwen3-4B 模型上进行消融研究，结果表明：
+*   双向注意力对模型能力有提升，但提升不显著。但考虑到其对推理时间影响可忽略，保留该结构。
+*   Positional FFN 对性能提升贡献很大，符合预期（因其参数量较大）。
+*   更大的模型尺寸能带来显著的性能提升。这暗示，在基础模型总参数量更大的情况下，扩大 draft 模型尺寸可以抵消其负面影响，并提升 draft 模型预测能力。
+
+**4. 结论**
+SpecFormer 提出了一种创新的 SD 方法，通过结合单向和双向注意力机制，在有限的 draft token 预算下实现了高效的未来 token 并行生成。该方法通过从完整上下文提取信息，并以参数高效的方式注入位置信息，解决了现有 SD 方法在 large-batch 场景下因计算资源受限和位置依赖参数过多而导致的扩展性问题。实验证明，SpecFormer 在不同 batch size 和不同 LLM 规模下均能提供持续的加速效果，且对较小模型尤其有效，为 LLM 推理的扩展性设定了新标准。
+
 ## Step-level verifier
 **Step-level verifer-guided hybrid test-time scaling for LLM**
 paper: https://aclanthology.org/2025.emnlp-main.931 EMNLP25 东北大学 字节等
