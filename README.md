@@ -1,6 +1,26 @@
 # AwesomePaper-for-AI
 Awesome or inspiring papers for AI
 
+## ThinkARM
+Schoenfeld's Anatomy of Mathematical Reasoning by Language Models
+
+paper: https://arxiv.org/abs/2512.19995 马里兰大学等 2025.12.23
+
+code: https://github.com/MingLiiii/ThinkARM
+
+中文解读：https://mp.weixin.qq.com/s/otEp-SPfRiDfoTHG4k0zzw 
+
+对LLM数学推理的结构分析和深入挖掘。采用了 Alan Schoenfeld 于 1985 年提出的片段理论（Episode Theory）。Schoenfeld 的理论最初用于分析人类（学生与数学家）解决数学问题的过程，将其概念化为一系列功能性片段。
+研究将大语言模型（LLM）的推理思维链（CoT）抽象为理解 规划 执行 探索 验证/反思等基础能力，具体包括 Read、Analyze、Plan、Implement、Explore、Verify、Monitor 和 Answer 等八个功能性片段。
+<img width="944" height="330" alt="image" src="https://github.com/user-attachments/assets/38b85e68-2370-4a6f-a85c-6e54e4867d35" />
+
+通过对 15 个模型（包括 DeepSeek-R1、OpenAI o1/o3-mini 等）的推理轨迹进行句子级标注与量化分析，研究揭示了推理模型与非推理模型在结构上的本质差异：
+- 推理模型呈现出一种从抽象分析到具体执行再到评估控制的“心跳”模式（Heartbeat Pattern），并包含大量的迭代循环。
+- Explore（探索）片段**是不确定性的关键分支点**，其**后续流向（转向 Monitor 还是继续 Implement）与最终答案的正确性高度相关**。
+- 此外，**效率导向的模型优化（如蒸馏或长度惩罚）往往倾向于压缩评估性片段**，从而改变了基础模型的推理拓扑结构。
+<img width="1044" height="577" alt="image" src="https://github.com/user-attachments/assets/fbc2f1f2-4e83-428d-aa25-a1545ee31c6a" />
+<img width="1034" height="490" alt="image" src="https://github.com/user-attachments/assets/ef45eb74-d343-4f23-b3f9-eb35b6493cb0" />
+
 ## Mesh-Attention
 Mesh-Attention: A New Communication-Efficient Distributed Attention with Improved Data Locality
 
