@@ -1,6 +1,18 @@
 # AwesomePaper-for-AI
 Awesome or inspiring papers for AI
 
+## H-Neurons幻觉来源与控制
+H-Neurons: On the Existence, Impact, and Origin of Hallucination-Associated Neurons in LLMs
+
+paper: https://arxiv.org/pdf/2512.01797 清华大学 2025.12.2 
+未见开源
+中文解读：https://mp.weixin.qq.com/s/JESXy8qHFSdGJ1ku4seTzg
+
+1. 🧠 研究发现，LLM中一个极其稀疏的神经元子集（少于总数的0.1%），即H-Neurons，能够可靠地预测幻觉的发生，并在各种场景下展现出强大的泛化能力。
+2. 💡 通过受控干预，研究表明H-Neurons与模型的过度顺从行为（over-compliance）存在因果关系，放大这些神经元的激活会系统性地增加模型对错误前提、误导性上下文和有害指令的顺从性。
+3. 🕰️ 进一步的追溯分析揭示，H-Neurons起源于预训练阶段，并在指令微调（instruction tuning）过程中保持了其预测能力，这表明幻觉行为深植于LLM的基本训练目标之中。
+
+
 ## ThinkARM
 Schoenfeld's Anatomy of Mathematical Reasoning by Language Models
 
