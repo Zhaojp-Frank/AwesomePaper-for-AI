@@ -1,12 +1,30 @@
 # AwesomePaper-for-AI
-Awesome system papers for AI
+Awesome or inspiring papers for AI
+
+## Mesh-Attention
+Mesh-Attention: A New Communication-Efficient Distributed Attention with Improved Data Locality
+
+https://arxiv.org/pdf/2512.20968v1 清华 普渡 字节等 2025.12.24 
+基线不做overlap？自己的做overlap？
+
+1. 💡 Mesh-Attention通过引入新的矩阵基（AM）模型，重新思考分布式注意力机制设计空间，将二维计算块（tiles）分配给每个GPU，旨在解决现有分布式注意力（如Ring-Attention）因过度通信而限制LLM上下文窗口扩展的问题。
+2. ⚙️ 该方法通过优化通信-计算（CommCom）比率显著降低通信复杂度，并提出一种贪婪算法来高效调度GPU内的计算与通信，从而实现最大化重叠，同时支持前向/后向传播和因果掩码。
+3. 🚀 实验结果显示，与Ring-Attention相比，Mesh-Attention在**多达256个GPU上实现了高达3.4倍的加速（平均2.9倍）和高达85.4%的通信量减少**（平均79.0%），展现出卓越的扩展性和效率。
+
+<img width="1077" height="325" alt="image" src="https://github.com/user-attachments/assets/d71ce5d5-4ab6-4828-b69d-401def4320de" />
+<img width="699" height="444" alt="image" src="https://github.com/user-attachments/assets/cc69901a-01a4-48f6-a486-8754c4016936" />
+<img width="523" height="323" alt="image" src="https://github.com/user-attachments/assets/1d876924-05bd-4841-a62a-558212f6071f" />
+<img width="541" height="477" alt="image" src="https://github.com/user-attachments/assets/bf89a707-6d00-46d0-bdc8-28b93f5c23c4" />
+<img width="539" height="587" alt="image" src="https://github.com/user-attachments/assets/42292be8-8caf-4b72-9302-1a3478c8f8dd" />
+<img width="531" height="269" alt="image" src="https://github.com/user-attachments/assets/22dccd8e-15fc-4b09-80ec-4347006f69d5" />
+
 
 ## BLASST
 BLASST: Dynamic BLocked Attention Sparsity via Softmax Thresholding
 
 https://arxiv.org/pdf/2512.12087 2025.12.12 NVDIIA, MIT
-kernel集成到flashInfer 但未见开源；e2e评测基于 https://github.com/NVIDIA-NeMo/Skills
 
+kernel集成到flashInfer 但未见开源；e2e评测基于 https://github.com/NVIDIA-NeMo/Skills
 
 1. 💡 BLASST 是一种即插即用的 sparse attention 方法，通过利用 FlashAttention 的在线 softmax 机制和固定阈值，在不进行预计算或使用代理分数的情况下，动态剪枝 negligible attention scores，从而跳过计算和 Value block 加载。
 2. 🚀 该方法在保持高准确度的同时，在现代 GPU 上实现了显著的加速，Prefill 阶段最高可达 **1.62×，Decode 阶段最高可达 1.48×**，并在所有 attention 变体和预填充/解码阶段提供统一的解决方案。
