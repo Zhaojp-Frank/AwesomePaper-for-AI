@@ -1,6 +1,35 @@
 # AwesomePaper-for-AI
 Awesome or inspiring papers for AI
 
+## Step-level verifier
+**Step-level verifer-guided hybrid test-time scaling for LLM**
+paper: https://aclanthology.org/2025.emnlp-main.931 EMNLP25 东北大学 字节等
+
+code: https://github.com/Lucky-259/Hybrid_TTS
+
+中文解读：https://mp.weixin.qq.com/s/RUKY-1_8Vh3d047PsE3_Hw?poc_token=HKYSUWmj_5Obo6wRroDVmf0mgxYGriyB_Vv7gaux
+
+1. ✨ 本文提出了一种名为 Step-level Verifier-guided Hybrid Test-Time Scaling 的新推理范式，旨在通过结合**多种训练无关的 Test-Time Scaling (TTS) 方法来提升大型语言模型在推理任务上的探索性能**。
+2. 💡 该方法首先引入了 Conditional **Step-level Self-refinement** 以实现细粒度顺序缩放 +～3分；并在此基础上，将并行缩放（如 Best-of-N 和 MCTS）与该顺序缩放方法在**步级别进行融合**，所有过程均由高质量的 **Process Reward Model** (PRM) 指导。
+3. 🚀 广泛的实验表明，该混合策略显著提升了不同规模和系列的 instruction-tuned LLM 的推理能力，例如在 GPQA Diamond 数据集上使 Qwen2.5-3B-Instruct 模型超越了经 RL 增强的 DeepSeek-R1-Distill-Qwen-7B 模型，凸显了训练无关 TTS 的巨大潜力。
+
+按步生成： 模型每生成一个推理步骤就暂停
+实时验证： PRM 给这一步打分
+按需反思： 只有分数低（没信心）时才触发反思；如果分数高，直接跳过，避免画蛇添足
+择优录取： 只有修正后的步骤得分更高，才采纳；否则保留原样
+<img width="1080" height="794" alt="image" src="https://github.com/user-attachments/assets/d04e421d-377e-4626-99cd-473225d7ed46" />
+
+MCTS (蒙特卡洛树搜索) 框架下的深度扩展，遵循 “Best-of-the-Best” 原则，每一个推理步骤都经过了“千锤百炼”：
+
+广度探索：通过 Best-of-N 采样多个candidate steps
+
+深度优化：对 Best candidate step 进行 Conditional Step-level Self-Refinement
+
+动态选择：基于 PRM 评分选择 Best step 作为叶节点，以构建最优推理路径
+
+就像是让模型在每走一步棋时，既考虑了多种走法 (Best-of-N)，又对选定的走法进行了仔细推敲 (Self-refinement)，不仅保证了广度，也保证了深度。
+
+https://mmbiz.qpic.cn/sz_mmbiz_png/djrV8EtuicU2kuDtnVnxLa3IfJGFBQ0lSbludFBHzicdR8SCEGdhACT8IiclvQxWmibvwKIfBHUd3VhEToqbUIT4Rg/640?wx_fmt=png&from=appmsg&tp=webp&wxfrom=5&wx_lazy=1#imgIndex=4
 ## UCCL-EP 
 UCCL-EP: Portable Expert-Parallel Communication
 
