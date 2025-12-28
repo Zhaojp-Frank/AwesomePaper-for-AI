@@ -1,6 +1,84 @@
 # AwesomePaper-for-AI
 Awesome or inspiring papers for AI
 
+## UCCL-EP 
+UCCL-EP: Portable Expert-Parallel Communication
+
+paper: https://arxiv.org/abs/2512.19849 伯克利，AWS 等，2025.12.22 
+
+code: https://github.com/uccl-project/uccl/tree/main/ep
+
+在DeepEP代码基础上修改，增加2万行c++和1K行python，API保持和DeepEP兼容。支持了2类GPU（NV，AMD）X 3家网卡（NV Mellanox，AWS EFA，Broadcom），支持LL和HT模式，总体吞吐相比原生DeepEP接近（-5%）； 延迟差于PPLX。
+现在移植到新的GPU/NIC只需要3人月 ：）
+
+1. 📄 本文提出UCCL-EP，旨在解决DeepEP等现有高性能专家并行 (EP) 通信系统在**异构GPU和NIC平台之间移植性差**的问题，其根源在于**GPU直接操作NIC导致紧密耦合**。
+2. 💡 UCCL-EP的核心思想是**利用CPU作为中间层解耦GPU与NIC**，通过一个**高吞吐量GPU-CPU控制通道**，将**GPU发起的token路由指令传递给多线程CPU代理**，再由**代理执行GPUDirect RDMA操作**。
+3. 🚀 UCCL-EP在NVIDIA+EFA和AMD+Broadcom等异构平台上实现了DeepEP级别的性能，在dispatch和combine吞吐量上最高提升2.1倍，并使SGLang和DeepSeek-V3训练吞吐量分别提高了40%和45%。
+<img width="519" height="246" alt="image" src="https://github.com/user-attachments/assets/2b98d3fe-cd39-46bd-ace6-58e593fd093e" />
+<img width="756" height="321" alt="image" src="https://github.com/user-attachments/assets/43713a75-9185-445d-9092-a0072b8f9504" />
+
+本文提出了一种名为UCCL-EP的通信系统，旨在解决稀疏MoE模型中`Expert Parallelism (EP)`通信的`可移植性 (portability)`问题，同时保持高性能。
+<img width="1078" height="321" alt="image" src="https://github.com/user-attachments/assets/263f858e-27e5-46ba-bab2-d3298c59702d" />
+<img width="1229" height="229" alt="image" src="https://github.com/user-attachments/assets/06e47631-b6c1-4e34-be4d-7a5eb06808d2" />
+
+**问题背景：**
+大型语言模型（LLMs），如`DeepSeek-V3`，越来越多地采用`Mixture-of-Experts (MoE)`架构，以在保持计算效率的同时实现巨大的参数容量。`MoE`层中的`专家并行 (EP)`需要将`token activations`在GPU之间进行`all-to-all`通信，这构成了`MoE`性能的关键瓶颈。传统的`all-reduce`或`pipeline-parallel`通信模式不适用于`MoE`的细粒度（`fine-grained`）、不规则（`irregular`）和`token-level`传输特性。`DeepEP`等`state-of-the-art`系统通过`GPU-initiated token-level communication`解决了这一问题，利用NVIDIA的`IBGDA (InfiniBand GPUDirect Async)`技术，允许GPU直接操作`RDMA NICs`。这种方法实现了高效的`token`去重（`deduplication`）和分层`reduce`，但其设计导致了极差的`可移植性`。核心问题在于GPU直接写入`NIC`的`driver/MMIO`接口，造成GPU与`NIC`之间的紧密耦合，以及GPU内核对网络层严格的`排序 (ordering)`和交付语义假设（例如`write-then-atomic`），这在异构`NICs`（如AWS EFA）上难以满足。现有解决方案需要`O(m × n)`的开发工作来支持`m`种GPU和`n`种`NIC`。
+<img width="767" height="386" alt="image" src="https://github.com/user-attachments/assets/fa0f9c88-7a0c-4616-894c-7228c612e919" />
+
+**核心思想与方法：**
+UCCL-EP的核心思想是利用CPU作为`可移植`的中间层，打破GPU和`NIC`之间的紧密耦合。CPU通过`libibverbs`库与各种`NIC`兼容，并通过`PCIe`/`NVLink-C2C`等高速互连与GPU通信。UCCL-EP将通信的`启动 (initiation)`与`执行 (execution)`解耦：GPU负责启动细粒度的`token`控制，但将实际的通信任务委托给`host CPU`上的`CPU proxy`。这样，UCCL-EP实现了`O(m)`的`可移植性`工作量。
+
+**主要设计和技术细节：**
+<img width="639" height="393" alt="image" src="https://github.com/user-attachments/assets/925a5d6f-2d39-48ac-a433-ede8e99bb9b7" />
+<img width="587" height="291" alt="image" src="https://github.com/user-attachments/assets/aed4e3e6-29d3-4983-9201-f048be1ac004" />
+
+1.  **高效GPU-CPU通信通道 (`Efficient CPU-GPU Communication Channel`)：**
+    *   **`TransferCmd`：** GPU将轻量级、固定大小的命令描述符`TransferCmd`（128位，16字节）排队到共享的`lock-free FIFO channels`中。16字节可通过单个GPU指令和`MMIO doorbell`写入，减少开销。
+    *   **FIFO通道设计：** GPU写入`FIFO`尾部，CPU`proxy`作为消费者从`FIFO`头部读取。通道大小由`kMaxInflight`参数限制，用于控制GPU发送速率。
+    *   **内存一致性：** `FIFO`的头部（`head`）放置在CPU内存，尾部（`tail`）放置在GPU内存，以优化各自的访问效率。通过绕过GPU硬件缓存和CPU L2缓存刷新确保内存一致性。
+    *   **GPU侧争用：** 采用多个`FIFO channels`，并引导不同GPU线程写入对应的通道，减少争用。`TransferCmds`在同一`FIFO`内保证有序。
+    *   **通道API：**
+        *   CPU侧：`Poll`（读取但不移除命令），`Pop`（移除命令）。
+        *   GPU侧：`Push`（推入命令并获取`Idx`），`Check-completion(Idx)`（检查命令是否被CPU侧移除）。
+    *   **`TransferCmd`类型：**
+        *   `Write`：委托CPU`proxy`执行写入请求（包含源/目的地址偏移、长度、目的`rank`）。
+        *   `Atomics`：委托CPU`proxy`执行独立的`atomic`操作（包含目的偏移、`atomic`值、目的`rank`）。
+        *   `Drain`：委托CPU`proxy`清空`RDMA completion queue`，确保所有未完成的`RDMA`操作完成。
+        *   `Barrier`：委托CPU`proxy`建立同步`barrier`（支持`all-peer barrier`和`same-rail barrier`）。
+
+2.  **灵活的CPU代理 (`Flexible CPU proxy`)：**
+    *   **多线程设计：** 每个GPU对应一个CPU`proxy`，该`proxy`包含多个不共享状态的线程，实现并发处理，提高小消息吞吐量。
+    *   **对称内存 (`Symmetric Memory`)：** CPU`proxy`在初始化时注册内存区域并交换基地址，实现了对称内存的抽象。GPU只需传递偏移量，CPU`proxy`负责地址转换，减少控制消息大小，并消除对`NVSHMEM`等特定供应商库的依赖。
+    *   **处理交付语义 (`Addressing Delivery Semantics`)：**
+        *   **问题：** 异构`NICs`可能不保证`RDMA`写入的`有序交付 (in-order delivery)`。
+        *   **解决方案：** CPU`proxy`在每次`RDMA`写入中通过`immediate data`（`RoCEv2`包头中的32位字段）嵌入序列号。接收方CPU`proxy`解析`immediate data`，如果消息乱序到达，则暂时将其`atomic`消息缓冲在`control buffer`中。只有当所有先前的写入都完成并应用后（例如，`Low-Latency (LL)`模式中的`partial completion fence`，或`High-Throughput (HT)`模式中的`per-channel locally ordered`），才应用`atomic`更新。这种`receiver-side`的语义强制比`sender-side`更高效。
+
+**实现细节与可移植性：**
+
+*   UCCL-EP在`DeepEP`基础上扩展，保持API兼容性。
+*   通过去除GPU供应商特定的软件栈（如`NVSHMEM`）和将CUDA特定的`PTX intrinsics`迁移到`ROCm`替代方案，并适应AMD `wavefront`编程模型，实现了对NVIDIA和AMD GPU的广泛支持。
+*   **EFA支持：** EFA `NICs`不支持硬件`RDMA atomics`。UCCL-EP通过软件模拟`atomics`：发送方发出负载写入后，跟着一个带有编码`counter`或`flag`的`immediate value`的微小`RDMA`写入。接收方CPU`proxy`检测到`immediate data`后更新主机内存上的本地`completion counter`。
+
+**性能评估：**
+
+*   **测试平台：** 涵盖了NVIDIA GPU（H200, B200, H100, GH200）和AMD GPU（MI300X），以及AWS EFA、NVIDIA ConnectX-7 IB和Broadcom Thor-2等多种`NICs`。
+*   **微基准测试：**
+    *   **NVIDIA+EFA平台 (AWS)：** 在`dispatch`和`combine`吞吐量上，UCCL-EP在处理大量`tokens`时，比`PPLX`（第二好的`EP`解决方案）性能提升高达2.1倍。对于小批量`tokens`，`PPLX`可能略有优势，因为UCCL-EP/DeepEP默认发送7KB的`token`粒度消息，而EFA固件对小消息处理效率不高。
+    *   **NVIDIA+CX7 IB平台：** UCCL-EP在`HT`模式下实现了与原始`DeepEP`相当的性能（`dispatch`性能在5%以内），同时优于`PPLX`和`CPU-assisted IBGDA`。
+    *   **GH200 (NVLink-C2C)：** UCCL-EP在`LL`模式下实现了比原始`DeepEP`更低的传输延迟，表明其在`cache-coherent CPU-GPU`互连上表现出色。
+    *   **AMD+Broadcom/CX7平台：** UCCL-EP在异构`NICs`（Broadcom和IB）上表现相似，验证了其在AMD平台上的`可移植性`。
+*   **应用性能：**
+    *   **SGLang推理 (NVIDIA+EFA)：** 在`SGLang`中，UCCL-EP在`DeepSeek R1`和`Qwen3`模型上的`token`吞吐量比`NCCL`提高高达40%，且在更大`EP`配置下表现更佳。
+    *   **DeepSeek-V3训练 (AMD Primus/Megatron-LM)：** 在16节点`AMD+Broadcom`平台上，UCCL-EP使`DeepSeek-V3`训练吞吐量比`RCCL`提高了高达45%。
+*   **设计剖析：**
+    *   UCCL-EP FIFO的延迟远小于网络延迟，能够处理高`QPS`（例如8 Mops）。
+    *   CPU线程数量对性能有显著影响，增加CPU线程（例如到4个）可显著提升性能。CPU利用率适度增加。
+<img width="589" height="469" alt="image" src="https://github.com/user-attachments/assets/c10c8d3f-6592-49e2-8095-2aa20d5a5013" />
+<img width="581" height="285" alt="image" src="https://github.com/user-attachments/assets/68fbfbde-50cd-47f1-9277-e9dac2cc98f5" />
+
+**讨论与未来工作：**
+UCCL-EP的设计为未来的改进提供了基础，例如在CPU`proxy`中实现更灵活的`拥塞控制 (congestion control)`和`流控制 (flow control)`机制，以处理`tail latency`和`incast`问题。此外，CPU`proxy`可以支持`弹性EP (Elastic EP)`，**在不影响GPU内核逻辑的情况下处理故障和伸缩事件**。未来的优化可能包括进一步优化`LL`模式下`token`打包以提升小消息处理效率，以及扩展到`TPUs`和`AWS Trainium`等其他AI加速器。
+
 ## H-Neurons幻觉来源与控制
 H-Neurons: On the Existence, Impact, and Origin of Hallucination-Associated Neurons in LLMs
 
