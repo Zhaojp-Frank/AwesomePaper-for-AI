@@ -1,6 +1,68 @@
 # AwesomePaper-for-AI
 Awesome or inspiring papers for AI
 
+## BuPO
+Bottom-up Policy Optimization: Your Language Model Policy Secretly Contains Internal Policies
+
+paper: https://arxiv.org/abs/2512.19673 中科院自动化所，腾讯等 2025.12.22
+
+code: https://github.com/Trae1ounG/BuPO
+
+1. 💡 本文将大型语言模型（LLM）策略分解为内部层策略和内部模块策略，揭示了Transformer**残差流中隐藏的推理机制**。
+2. 📈 通过对内部策略熵的分析，研究发现LLM具有**从探索到收敛的通用推理结构，而Qwen系列（尤其是Qwen3）展现出分阶段的、类似人类**的渐进式推理模式。
+3. 🚀 受此启发，作者提出了Bottom-up Policy Optimization (BuPO)，一种新的强化学习范式，通过在早期训练阶段优化内部层策略，显著提高了LLM在复杂推理任务上的性能。
+主要关注dense模型，FFN。没有MoE，没有Attn等机理。
+
+<img width="372" height="541" alt="image" src="https://github.com/user-attachments/assets/2dc92ba2-f726-4f42-b0ab-fa85042e806f" />
+这篇论文题为“Bottom-up Policy Optimization: Your Language Model Policy Secretly Contains Internal Policies”，深入探讨了大型语言模型（LLMs）内部的策略演变机制，并基于这些发现提出了一种新颖的强化学习（RL）优化范式。
+<img width="876" height="388" alt="image" src="https://github.com/user-attachments/assets/07b2ad36-1caa-4dcc-9dbc-a1e775454959" />
+<img width="878" height="575" alt="image" src="https://github.com/user-attachments/assets/8e45b041-2342-47dd-97ff-83510a2cc441" />
+
+**核心问题与背景**
+现有的强化学习方法通常将LLM视为一个单一的、统一的策略，忽略了其复杂的内部机制。理解策略如何在Transformer的不同层和模块中演化，对于实现更具针对性的优化和揭示复杂的推理机制至关重要。论文指出，虽然奖励构造和熵正则化等表面算法设计是RLVR（Reinforcement Learning with Verifiable Rewards）研究的焦点，但LLM策略的内在性质及其内部残差流中的信息却常被忽视。Logit lens框架提供了初步见解，但并未从策略角度深入探讨。img width="879" height="380" alt="image" src="https://github.com/user-attachments/assets/49a2a533-bc50-4f56-bcd0-ce98938d5ef1" />
+
+**论文贡献与核心方法**
+
+1.  **内部策略分解 (Internal Policy Decomposition)**
+    *   **基础洞察：** 论文基于两个核心洞察来分解LLM策略。
+        *   **残差流的加性分解：** Transformer的残差连接天生支持加性分解。这意味着任何子模块（attention或FFN）的输入等于所有前序输出之和加上原始嵌入。第 $l$ 层的隐藏状态 $H_l$ 可以表示为初始嵌入 $H^{(0)}$ 加上所有前 $l$ 个注意力模块 ($A_i$) 和FFN模块 ($F_j$) 的输出之和：$H_l = H^{(0)} + \sum_{i=1}^l A_i + \sum_{j=1}^l F_j$。
+        *   **隐藏状态与可采样策略的等价性：** 论文提出，任何内部隐藏状态 $H$ 与 unembedding matrix $E_u$ 结合都可以生成一个可采样的策略（即词汇空间上的概率分布）。最终的语言模型策略 $\pi_\theta$ 等同于 $P = \text{softmax}(\text{LN}(H^{(2L)})E_u^T)$。
+    *   **定义：** 基于上述洞察，论文形式化定义了两种粒度的内部策略：
+        *   **内部层策略 (Internal Layer Policy) $\pi_l^{\text{Layer}}$：** 利用来自每个层 $l$ 的隐藏状态 $H_l$ 与 $E_u$ 结合形成：$\pi_l^{\text{Layer}} \equiv P_l^{\text{Layer}} = \text{softmax}(H_l E_u^T)$。这捕获了截至第 $l$ 层的累积推理。
+        *   **内部模块策略 (Internal Modular Policy) $\pi_l^{\text{Module}}$：** 将 $E_u$ 与特定模块（attention或FFN）的隐藏状态结合，隔离了它们各自的贡献：
+            *   注意力模块：$\pi_l^{\text{ATTN}} = \text{softmax}(A_l E_u^T)$
+            *   FFN模块：$\pi_l^{\text{FFN}} = \text{softmax}(F_l E_u^T)$
+    *   **与Logit Lens的区别：** 论文强调其内部策略定义与Logit Lens不同，后者通常在应用层归一化（LN）之后进行解码以检查离散 token，而本论文的定义更侧重于可采样的概率分布，并且出于经验考量，有意省略了LN以获得更稳定的熵动态。
+
+2.  **基于内部策略熵的分析 (Internal Policy Entropy-based Analysis)**
+    *   **度量：** 论文采用熵作为主要指标，因为它与RL中的策略行为密切相关。内部策略熵定义为：$H_l^{\text{Layer}} = -\sum_{j=1}^{|V|} P_{l,j}^{\text{Layer}} \cdot \log(P_{l,j}^{\text{Layer}})$。
+    *   **熵变化 (Entropy Change) $\Delta H_l$：** 为量化信息增益或损失，定义为模块输入和输出之间内部策略熵的差异，例如 $\Delta H_l^{\text{FFN}} = H_l^{\text{Output}} - H_l^{\text{Input}}$。
+        *   $\Delta H_l^{\text{FFN}} > 0$ 表示探索空间扩展。
+        *   $\Delta H_l^{\text{FFN}} \approx 0$ 表示内部知识整合。
+        *   $\Delta H_l^{\text{FFN}} < 0$ 表示推理过程中的预测收敛。
+    *   **发现：**
+        *   **一致的内部推理结构：** 所有模型都展现出通用模式：早期层保持高熵以探索解决方案空间，而顶层收敛到接近零熵以进行最终预测。
+        *   **独特的内部推理模式：**
+            *   Llama系列：预测空间在最后三层才突然收敛，FFN的熵变化持续为正，表明探索贯穿始终，中间整合有限。
+            *   Qwen系列（特别是Qwen3）：展现出渐进式的收缩。Qwen3的FFN表现出明显的“探索-整合-收敛” (EIC) 三阶段模式：较低层（1-6）熵增加（$\Delta H_l^{\text{FFN}} > 0$）进行探索，中间层（7-26）熵变化接近零（$\Delta H_l^{\text{FFN}} \approx 0$）整合参数知识，上层（27-36）熵减小（$\Delta H_l^{\text{FFN}} < 0$）逐渐收敛。这种模式与人类推理的阶段性过程类似。
+        *   **残差余弦相似度分析：** Qwen3的自注意力持续增强残差流，与其正熵变化和扩展探索行为一致。FFN在不同阶段以不同方式调制残差流：较低层注入正交特征以支持探索，中间层抑制模糊信号并整合参数知识，上层则放大并整合特征以推动收敛。
+
+3.  **自下而上的策略优化 (Bottom-up Policy Optimization, BuPO)**
+    *   **动机：** 由于推理是自下而上逐步出现的，BuPO提出从底部视角进行优化。通过前期实验发现，单独优化内部策略会导致模型内部状态的显著特征细化，即优化后的底层会预先捕获高级推理信息，为后续推理提供更稳健的基础。
+    *   **优化目标：** BuPO分阶段优化。首先优化内部层策略 $\pi_l^{\text{Layer}}$，然后优化整体语言模型策略 $\pi_\theta$。训练目标 $J_{\text{BuPO}}$ 定义为：
+        $J_{\text{BuPO}}(\pi_\theta, \pi_l^{\text{Layer}}) = \begin{cases} J_{\text{InterGRPO}}(\pi_\theta, \pi_l^{\text{Layer}}), & \text{当前步 } s_{\text{cur}} \le s_{\text{inter}} \\ J_{\text{GRPO}}(\pi_\theta), & \text{当前步 } s_{\text{cur}} > s_{\text{inter}} \end{cases}$
+        其中，$s_{\text{inter}}$ 是内部层策略的训练步数。
+    *   **InterGRPO目标：** 在第一阶段，BuPO通过修改GRPO目标来直接优化选定的内部层策略 $\pi_l^{\text{Layer}}$。其目标函数为：
+        $J_{\text{InterGRPO}}(\pi_\theta, \pi_l^{\text{Layer}}) = E_{q \sim Q,\{o_i\}_{i=1}^G \sim \pi_{\theta}^{\text{old}}(\cdot|q)} \left[ \frac{1}{G} \sum_{i=1}^G \frac{1}{|o_i|} \sum_{t=1}^{|o_i|} \min \left( \hat{r}_{i,t} \hat{A}_{i,t}, \text{clip}(\hat{r}_{i,t}, 1 - \epsilon, 1 + \epsilon) \hat{A}_{i,t} \right) \right]$
+        其中，$\hat{r}_{i,t} = \frac{\pi_l^{\text{Layer}}(o_{i,t}|q,o_{i,<t})}{\pi_l^{\text{Layer,old}}(o_{i,t}|q,o_{i,<t})}$ 是针对当前优化策略 $\pi_l^{\text{Layer}}$ 的重要性采样比率，而采样仍然来自旧的整体语言模型策略 $\pi_{\theta}^{\text{old}}$。
+    *   **梯度流控制：** 在InterGRPO优化第 $l$ 层时，梯度只会更新第 $0$ 层到第 $l$ 层的参数以及 unembedding matrix $E_u$，而不会影响更高层 ($k > l$) 的参数。这确保了内部策略优化对所选层及其以下层提供直接监督，强化基础推理能力。
+    *   **实验结果：** 在MATH、AMC23、AIME24、AIME25等复杂推理基准测试中，BuPO在Qwen和Llama系列模型上始终优于GRPO、PPO等RL基线算法，平均性能表现卓越。例如，在Qwen3-4B上，BuPO在AIME24和AIME25上分别比GRPO提高了4.58和0.76个点。对Llama系列模型也观察到类似提升。Pass@K评估显示BuPO在不同K值下均保持领先。
+    *   **训练动态分析：** BuPO训练初期能增强熵探索。适度的底层优化能够促进整体模型学习能力，但过度优化会导致模型崩溃。这表明选择合适的 $s_{\text{inter}}$ 至关重要。
+
+<img width="884" height="429" alt="image" src="https://github.com/user-attachments/assets/d6093ca7-9f24-4154-beed-43703769eb44" />
+![Uploading image.png…]()
+
+
 ## SpecFormer 
 Scaling LLM Speculative Decoding: Non-Autoregressive Forecasting in Large-Batch Scenarios
 
