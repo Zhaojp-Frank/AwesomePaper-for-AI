@@ -1,6 +1,30 @@
 # AwesomePaper-for-AI
 Awesome or inspiring papers for AI
 
+## FUSCO
+FUSCO: High-Performance Distributed Data Shuffling via Transformation-Communication Fusion
+
+paper: https://www.arxiv.org/abs/2512.22036 清华,无问芯穹 ；2025.12.26
+
+code: https://github.com/infinigence/FUSCO
+
+中文解读：https://mp.weixin.qq.com/s/3SMExYsXdINkop8-_qxUVw 
+
+核心是libfusco.so：基于NCCL修改（2.26， 2K c++/cuda)暴露API gather-send和scatter-recv（类似allreduce), + 1K python实现planner和LB；其他～500LOC接入到Megatron—LM和SGLang。
+
+1. 💡 FUSCO针对大型Mixture-of-Experts (MoE) 模型中分布式**数据shuffle**效率低下的问题，通过融合数据转换和通信来解决MoE专家布局与设备布局冲突导致的冗余操作。
+2. ⚙️ 该库引入了Data-Fused Communication Engine (**dComm**) 以及**Communication Planner**和Online Load Balancer机制，实现了细粒度的数据布局捕获和流水线式传输，**无需中间数据重新排列**。
+3. ⚡️ FUSCO在通信基准测试中实现了高达3.84倍和**2.01倍的NCCL和DeepEP加**速，并在端到端MoE训练和推理任务中分别将延迟降低了1.17-1.39倍和1.06-1.19倍。
+
+<img width="474" height="463" alt="image" src="https://github.com/user-attachments/assets/b07ea0fe-fca7-4b16-aee1-0bfe74c42953" />
+<img width="412" height="479" alt="image" src="https://github.com/user-attachments/assets/9ac49d76-cb36-4db6-8586-506f1f127443" />
+<img width="464" height="305" alt="image" src="https://github.com/user-attachments/assets/5fdfface-babd-4020-90a8-b34dda65c5a5" />
+<img width="490" height="386" alt="image" src="https://github.com/user-attachments/assets/0573afd4-c707-4f51-a1a9-1dbf8459115e" />
+<img width="481" height="343" alt="image" src="https://github.com/user-attachments/assets/ff449e3a-f26a-4614-b6c9-291a93030d98" />
+<img width="473" height="314" alt="image" src="https://github.com/user-attachments/assets/9198b67a-c570-4711-89c9-99a57affc0e7" />
+FUSCO 的核心思想是融合数据转换与通信 (fused data transformation and communication)。它不再将数据布局的改变视为本地预处理和后处理，而是将细粒度的数据布局语义直接嵌入到通信操作中。FUSCO 将待交换的结构化数据（如 MoE 中的 tokens）建模为一系列 segments，每个 segment 代表一个连续的逻辑工作单元。为了捕获结构化数据的移动，FUSCO 引入了 segment descriptor，它记录了每个 segment 的内存信息（地址和大小），指示如何从非连续内存中收集数据或将数据分散到指定非连续位置。
+FUSCO 的核心是 Data-Fused Communication Engine (dComm)。dComm 能够根据 segment descriptor 高效地重排数据 segments，其通过流水线设计 (pipelined design) 实现内存操作与网络传输的重叠。具体而言，对于 intra-node 传输，dComm 利用 GPUDirect P2P 实现 GPU 到 GPU 的直接复制，将 descriptor 解释嵌入到复制路径中，从而在数据传输过程中同步完成布局转换，避免额外的内存拷贝。对于 cross-node 传输，dComm 以 slices（包含多个逻辑 segments）为单位发送数据，以摊销 descriptor 处理开销并保持 NIC 持续饱和。GPU 作为生产者，根据 descriptors 获取 segments 并执行布局转换（在从 GPU 全局内存到 ring buffer 的复制中 piggybacked），NIC 作为消费者，一旦数据就绪便通过网络传输。这种 producer-consumer 模式确保了数据准备与网络传输的完全流水线化。
+
 ## BuPO
 Bottom-up Policy Optimization: Your Language Model Policy Secretly Contains Internal Policies
 
