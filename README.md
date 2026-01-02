@@ -1,6 +1,13 @@
 # AwesomePaper-for-AI
 Awesome or inspiring papers for AI
 
+## qTTT 
+Let's (not) just put things in Context: Test-Time Training for Long-Context LLMs
+
+paper：https://arxiv.org/pdf/2512.13898 Meta 2025.12.30
+
+中文解读： https://mp.weixin.qq.com/s/1OA61YW28D_Pribdg1Eaiw 
+
 ## TTT-E2E 
 End-to-End Test-Time Training for Long Context
 paper：https://arxiv.org/abs/2512.23675 Astera 研究所 NVIDIA 斯坦福等， 2025.12.31 
