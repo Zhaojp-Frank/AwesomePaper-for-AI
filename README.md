@@ -1,6 +1,118 @@
 # AwesomePaper-for-AI
 Awesome or inspiring papers for AI
 
+## RL TP确定性计算
+Rice Univ以及 明尼苏达大学等
+
+Understanding and Mitigating Numerical Sources of Nondeterminism in LLM Inference
+https://openreview.net/pdf?id=Q3qAsZAEZw (NeurIPS 2025, Oral)
+
+Deterministic Inference across Tensor Parallel Sizes That Eliminates Training–Inference Mismatch 针对TP不同size引入的差异性 提出统一的tree based GEMM和AllReduce kernel “TBIK”, trition实现，vLLM/FSDP集成，kernel开销有点大；通信影响更大。E2E下降50%
+https://arxiv.org/pdf/2511.17826 2025.11.21 
+
+code： https://github.com/nanomaoli/llm_reproducibility
+
+官方blog：https://festive-clam-15f.notion.site/Enabling-Large-Scale-True-on-Policy-RL-by-Bringing-Tensor-Parallelism-to-Order-2b039f5cabfa807b9770fcbe339f0f9b
+
+论文1
+1. 🔍 该研究揭示，LLM推理的重现性在系统配置变化（如GPU数量、批处理大小）下表现出脆弱性，尤其对于推理模型影响显著，其根本原因在于有限数值精度下的浮点算术非结合性。
+2. 📊 实验表明，BF16精度下的**贪婪解码（greedy decoding）导致显著的输出变异**，而F**P32则提供近乎完美的重现性**，表明数值精度对LLM输出稳定至关重要。
+3. 💡 为平衡内存效率和重现性，该文提出LayerCast，一种混合精度推理方案，其将**模型权重存储为BF16但在计算时上转换为FP32**，实现了接近FP32的确定性。
+<img width="815" height="323" alt="image" src="https://github.com/user-attachments/assets/c832ac7f-8f0f-48c5-8a14-cd4f625e5bad" />
+
+**主要发现**：
+**贪婪解码的非确定性**：BF16 精度下的贪婪解码表现出显著的不稳定性。例如，DeepSeek-R1-Distill-Qwen-7B 在 AIME’24 上，BF16 精度可导致高达9%的准确率标准差，而 FP32 几乎为零。BF16 还会导致响应长度显著波动（可达9,000 token），这严重影响了长文本推理和高效推理研究。
+
+**数值精度影响**：FP32 提供了近乎完美的确定性，**FP16 表现出中等可变性**，而 **BF16 表现出显著的可变性**。这是因为 BF16 具有有限的尾数位（7位，FP16为10位），导致概率计算中引入更大的误差。当这些波动与 top-1 和 top-2 token 概率之间的微小差距重叠时，token 翻转的可能性增加。FP32 的高精度（23位尾数位）使运行时变化几乎可以忽略不计。
+
+**分歧点**：FP32 显著减少了分歧的例子数量，并将分歧点推迟到序列的更晚位置。例如，在 MATH500 上，**BF16 有超过90%的例子在早期就出现分歧**，而 FP32 只有2.2%的例子出现分歧。
+
+**随机采样的不稳定性**：即使在随机采样设置下，数值精度也引入了额外的变异来源。**BF16 等低精度格式往往产生更高的输出方差**。这意味着在低精度下，研究人员可能需要更多的运行次数才能达到与高精度格式相同的统计置信度。
+
+运行时配置的影响：
+**GPU数量**：**4个GPU通常比2个GPU表现出更高的 top-1 token 概率变异**，可能是因为并行计算的增加引入了更多变化的浮点操作顺序。
+**批处理大小**：**较小的批处理大小反而导致更高的 token 概率方差**，而较**大的批处理则通过CUDA优化内核的并行计算限制了误差积累**。
+GPU类型：**A100 GPU通常比L40S GPU表现出略高的概率方差**，这可能归因于硬件级浮点实现和内存层次结构的差异。这些影响在BF16精度下最为显著。
+
+**解决方案 LayerCast**：鉴于 FP32 的高内存和推理时间成本，论文提出了 LayerCast，一种混合精度方法。
+模型参数**最初以 FP32 **精度加载。所有**线性层权重和偏置明确地转换为 BF16 存储**。推理运行时，每个权重在矩阵乘法之前即时（just-in-time）地向上转换为 FP32。
+
+**论文2**:
+1. 💡 针对大型语言模型（LLM）推理中存在的非确定性问题，特别是**不同Tensor Parallel (TP) 大小导致的结果不一致（同batch内 通过ThinkMachine等方法可实现一致）**，本文旨在解决这一关键挑战，该问题在RL训练中尤为突出。
+2. ⚙️ 本文提出了**Tree-Based Invariant Kernels** (TBIK)，通过**统一的层次化二叉树结构对MatMul和All-Reduce操作进行编排**，确保无论TP大小如何，都能实现**比特级相同的浮点计算结果**。
+3. ✅ TBIK已在**Triton中实现并集成到vLLM和FSDP中**，实验证明其在不同TP尺寸下能实现零概率发散和比特级可复现性，成功**消除了vLLM和FSDP之**间在RL训练中的精度不匹配问题。具体是：
+   1）linear层：对QKV_proj, up/gate和lm_head激活BIO对batch不变；对Out-proj, down-proj采用列切的TBIK
+   2）attn：关闭vLLM的prefix-cache; 训推采用相同的TritonAttn（固定tile大小）
+   3）RMSNorm，Silu，RopE embedding：FSDP中采用列vLLM的实现。
+没测MoE模型；没测改进后的分数？
+<img width="716" height="257" alt="image" src="https://github.com/user-attachments/assets/93beeee3-f5ab-4c90-80fa-2a3911a60d32" />
+
+<img width="832" height="331" alt="image" src="https://github.com/user-attachments/assets/ac0c7424-39d7-4423-bfc1-814d25d3fcc6" />
+<img width="817" height="339" alt="image" src="https://github.com/user-attachments/assets/d30c22f2-972b-42ca-88fb-f97a1faa3365" />
+<img width="486" height="193" alt="image" src="https://github.com/user-attachments/assets/58410b22-ad28-4ea0-bff5-d2f55189e9d1" />
+<img width="481" height="323" alt="image" src="https://github.com/user-attachments/assets/c2c6a589-2cb8-4ee2-bd92-e4c7974d1222" />
+<img width="452" height="298" alt="image" src="https://github.com/user-attachments/assets/7d0a2252-94f2-4ca8-b362-738e1d743227" />
+<img width="996" height="386" alt="image" src="https://github.com/user-attachments/assets/32132450-4554-4e98-b6e3-eac5bf829707" />
+<img width="1007" height="467" alt="image" src="https://github.com/user-attachments/assets/a8f162fc-b1e0-4066-8eb0-edd0bc354136" />
+<img width="476" height="339" alt="image" src="https://github.com/user-attachments/assets/9d007a1d-a163-4559-acf5-98f2b66ddc6f" />
+<img width="493" height="632" alt="image" src="https://github.com/user-attachments/assets/01697d25-ff56-448c-8be9-dfe6574ccb19" />
+
+<img width="481" height="389" alt="image" src="https://github.com/user-attachments/assets/b521f842-efc2-48d0-92ba-f32fa05473da" />
+<img width="514" height="570" alt="image" src="https://github.com/user-attachments/assets/b66e9c40-0cce-4d53-8485-31388cbe167b" />
+
+**核心问题与挑战：**
+LLM 推理的非确定性源于浮点运算的非结合性，即计算顺序的变化会导致累积的舍入误差，从而产生不同的结果。现有系统中的多种因素都会改变浮点运算顺序，包括：
+1.  **连续批处理 (Continuous Batching)**：动态改变批次中的请求集和批次大小。
+2.  **不同操作实现**：例如，MatMul 中 Split-K 与 Non-Split-K 的使用。
+3.  **操作超参数**：如 MatMul 和 Flash-Attention 的 Block Size。
+4.  **并行系统中的集合操作 (Collective Operations)**：特别是 All-Reduce。
+5.  **并行策略**：尤其是张量并行 (TP)，它将工作负载分片到多个 GPU 上。
+6.  **不同 GPU 架构**：可能使用不同的底层指令集。
+
+先前的研究，如 Batch-Invariant Operations (BIO)，通过沿批次维度并行化计算，解决了批次大小引起的非确定性问题。但 BIO 仅限于消除批次大小的方差，**无法解决由 TP 引起的非确定性**。
+
+**TP 导致非确定性的具体原因：**
+在张量并行 (TP) 中，模型的权重矩阵被分片。对于行并行层（如自注意力中的 `o_proj` 和前馈网络中的 `down_proj`），输入和权重矩阵在 K 维度上被分片到不同的 GPU。每个 GPU 计算部分结果 $X_i W_i$，最终结果通过跨 GPU 的求和（All-Reduce）聚合得到。
+问题在于，当 TP 配置改变时，All-Reduce 操作的参与设备数量和通信模式（如 NCCL 的 ring 或 tree 归约）也会改变，这导致浮点数累积顺序的变化。例如，标准的 **cuBLAS GEMM 会先在每个 GPU 上沿 K 维度顺序执行局部归约，然后通过 NCCL 进行跨 GPU 归约**。这种两阶段的归约顺序会**随 TP 大小而异，从**而产生不同的输出。
+
+**TBIK 方法论：**
+该论文的核心思想是通过**统一的、分层的二叉树结构来对齐** GPU 内部 (intra-GPU) 和 GPU 之间 (inter-GPU) 的归约顺序。无论 TP 大小如何，这种方法都能确保计算顺序的一致性。
+
+1.  **树形归约 MatMul 内核 (Tree-Based MatMul Kernel)**：
+    *   **设计理念**：将每个矩阵乘法分解为沿归约维度 K 的 `tiles`。然后，这些 `tiles` 的累积严格遵循一个固定的、预定义的二叉树结构。
+    *   **实现细节** (基于 Triton，参考 Algorithm 1)：
+        *   每个 GPU 负责总瓦片数量 $T$ 中的 $T/C$ 块，其中 $C$ 是 GPU 数量。
+        *   为了实现树状累积，中间的部分结果被存储在一个名为 `S` 的累加器缓冲区中，其形状为 $[L, \text{BlockM}, \text{BlockN}]$，其中 $L = \log_2(T / \text{Kfirst})$ 是二叉归约树的深度。`Kfirst` 是在第一次进位前累积的瓦片数量。
+        *   `Count` 数组 `Count[L]` 用于记录每个级别已合并的瓦片数量。
+        *   当某个级别 `l` 的计数器达到 `Kfirst` (对于第一级) 或 2 (对于其他级别) 时，触发进位操作：该级别对应的两个部分和被归约到下一级别 (`S[l+1] = S[l+1] + S[l]`)，然后当前级别的值和计数器被清零。
+        *   这个过程重复进行，直到 K 维度上的所有瓦片都被处理，最终归约结果存储在 `S[L]` 中。
+
+2.  **树形 All-Reduce (Tree All-Reduce)**：
+    *   **设计理念**：在每个 GPU 完成本地 MatMul 累积后，使用 All-Gather 集体操作同步各 GPU 的部分结果。然后，这些收集到的结果通过两两求和的方式进行归约，确保跨 GPU 的归约也遵循相同的固定树结构。
+    *   **实现细节** (参考 Algorithm 2)：
+        *   论文明确指出，不直接使用 NCCL 内置的树形 All-Reduce，因为 NCCL 仅允许在节点间指定树形拓扑，而节点内部仍默认为链式归约。
+        *   因此，论文实现了一个自定义的树形 All-Reduce 算法，确保节点内的归约也严格遵循树状拓扑。
+
+**理论证明 (Theorem 1)：**
+如果总瓦片数 $N$ 可以被 TP 大小 $C$ (且 $C$ 是 2 的幂) 整除，并且瓦片在 GPU 间均匀分布，那么在定义的树形操作符 $T(\cdot)$ 下，分层归约顺序是固定的，与 TP 大小无关。这意味着计算结果将是位级别相同的。
+
+**实验评估：**
+论文通过在 Qwen3-8B/32B、Mistral-7B-Instruct 和 Llama-3.1-8B-Instruct 模型上，使用 AIME24 和 AMC23 数据集进行了评估。
+
+1.  **可复现性**：
+    *   **唯一输出计数 (Count of Unique Outputs)**：对于相同的输入，输出序列不同的情况数。BIO+TBIK 始终达到 1，表示在所有测试配置（不同 TP 大小、批次大小）下，模型产生位级别相同的推理结果。
+    *   **最大概率偏差 (Maximum Probability Divergence)**：衡量 Top-5 预测概率的差异。BIO+TBIK 实现了严格的零偏差，验证了位级别的确定性。
+
+2.  **性能开销**：
+    *   **核函数层面**：TBIK MatMul 核函数在 BF16 模式下比 cuBLAS 慢，吞吐量约为其 63%。
+    *   **端到端延迟**：在 Qwen3-8B 模型上，BIO+TBIK 相比 vanilla BF16 引入了 56% 到 135% 的显著开销。
+    *   **开销分解**：树形 MatMul 核函数仅占总开销的 3-14%，因为它在模型总计算量中占比小。树形 All-Reduce 操作贡献了更大的开销 (28-50%)，主要由于其当前的未优化实现以及测试环境中缺少 NVLink，导致通信效率低下。
+
+3.  **弥合 RL 中的概率鸿沟**：
+    *   通过将 TBIK 集成到 vLLM 和 FSDP 中，并确保所有相关核函数（如 Attention、RMSNorm、RoPE）和超参数的一致性，甚至禁用了 vLLM 中的 chunked prefill 以避免隐式调度行为的影响。
+    *   结果显示，vLLM (TP=4) 和 FSDP (TP=1) 之间预测的 `token` 概率达到了位级别相同，完全消除了训练和推理引擎之间的精度不匹配问题。
+
+
 ## FUSCO
 FUSCO: High-Performance Distributed Data Shuffling via Transformation-Communication Fusion
 
