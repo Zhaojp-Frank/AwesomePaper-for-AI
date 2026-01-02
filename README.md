@@ -1,13 +1,27 @@
 # AwesomePaper-for-AI
 Awesome or inspiring papers for AI
 
-## RL TP确定性计算
-Rice Univ以及 明尼苏达大学等
+## TTT-E2E 
+End-to-End Test-Time Training for Long Context
+paper：https://arxiv.org/abs/2512.23675 Astera 研究所 NVIDIA 斯坦福等， 2025.12.31 
 
-Understanding and Mitigating Numerical Sources of Nondeterminism in LLM Inference
+code：https://github.com/test-time-training/e2e
+
+中文解读：https://mp.weixin.qq.com/s/30ysdCrari7V2Rd9SUF4Kg
+针对长序列，提出一种混合模型（训练3B），结合SWA，full-attn，精度优于混合线形；128k时速度比full-attn 快2.7x。总体比较复杂。
+TTT-E2E 的核心思想是将模型在测试阶段（推理阶段）的行为定义为一个在线优化过程。当模型读取长上下文时，它不仅仅是在做前向传播，还**在同步进行梯度下降**。方法基于这样一个逻辑：如果我们将上下文看作一份学习资料，那么模型在预测下一个 token 之前，可以先在已经读过的 token 上进行自监督学习。
+通过这种方式，上下文中的信息就被编码进了**模型的权重 W 中，而不是存储在外部的 KV Cache 里**。这就像是在阅读一本书时，你不断根据新读到的内容修正自己的认知模型。
+
+首先是元学习（Meta-Learning）。传统的模型在预训练时并未考虑测试时的更新逻辑，这会导致训练与测试的脱节。TTT-E2E 通过外层循环（Outer Loop）优化模型的初始化参数，使得模型「学会如何学习」，即经过少量测试时梯度更新后，能达到最优的预测效果。
+其次是架构的微调与滑动窗口的结合。该团队意识到，如果完全摒弃注意力机制，模型会丧失局部精确记忆能力。因此，TTT-E2E 采用了一种混合架构：使用一个固定大小（如 8K）的滑动窗口注意力（SWA）来处理短期记忆，确保局部逻辑的严密；而对于超出窗口的长期记忆，则交给 TTT 更新后的 MLP 层来承担。
+
+## RL TP确定性计算
+Rice Univ以及 明尼苏达大学等的两篇相关论文，论文2是最新版。
+
+论文1: Understanding and Mitigating Numerical Sources of Nondeterminism in LLM Inference
 https://openreview.net/pdf?id=Q3qAsZAEZw (NeurIPS 2025, Oral)
 
-Deterministic Inference across Tensor Parallel Sizes That Eliminates Training–Inference Mismatch 针对TP不同size引入的差异性 提出统一的tree based GEMM和AllReduce kernel “TBIK”, trition实现，vLLM/FSDP集成，kernel开销有点大；通信影响更大。E2E下降50%
+论文2: Deterministic Inference across Tensor Parallel Sizes That Eliminates Training–Inference Mismatch 针对TP不同size引入的差异性 提出统一的tree based GEMM和AllReduce kernel “TBIK”, trition实现，vLLM/FSDP集成，kernel开销有点大；通信影响更大。E2E下降50%
 https://arxiv.org/pdf/2511.17826 2025.11.21 
 
 code： https://github.com/nanomaoli/llm_reproducibility
