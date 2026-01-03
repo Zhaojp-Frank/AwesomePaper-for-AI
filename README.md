@@ -1,6 +1,58 @@
 # AwesomePaper-for-AI
 Awesome or inspiring papers for AI
 
+## Mirage Persistent Kernel(MPK)
+Mirage Persistent Kernel: A Compiler and Runtime for Mega-Kernelizing Tensor Programs
+
+paper: https://arxiv.org/pdf/2512.22219 CMU 2025.12.22
+
+code: https://github.com/mirage-project/mirage
+
+1. 🚀 Mirage Persistent Kernel (MPK): 新的编译器和运行时系统，旨在自动将 **multi-GPU 模型**推理**自动的**转化为单个高性能 mega-kernel。
+2. 💡 MPK 引入了 **SM-level 的 tGraph** 表示来捕获细粒度数据依赖，并通过其编译器生成优化的任务图，同时 **in-kernel parallel runtime 采用去中心化调度**在 SMs 上执行这些任务。
+3. 📈 MPK引入了新的pipeling和overlap机会，在**PyTorch中作为一个**`kernel backend`实现：torch.compile(backend=MPK)。A100/H100/B200的单卡/多卡推理实验表明，MPK 显著优于现有的系统，将推理**延迟降低高达 1.7 倍**。
+- 实现：40K行C++, 84K行CUDA，10K python。生成kernel，通信的底层调用的是nvshmem接口。每卡预留了4个SM做scheduler（4*4=16 warps）。为了模型推理e2e评测，实现了continous batch和paged attn。
+- Qwen和Llama系列模型，dense最大8b，MoE采用Qwen-30b-a3b，offline模式 64->1024 对标了SGLang，vLLM。模型越小 加速越大（1.5x+）；batch越小 越明显；H100/B200 8b最多1.2x（A100上有1.5x），MoE 1.1x
+  
+  
+MPK解决了现有`kernel-per-operator`（每个操作一个核）执行模式的局限性，例如`kernel barrier`限制`cross-operator software pipelining`和`fine-grained compute-communication overlap`，以及频繁的`kernel launch overhead`。
+<img width="622" height="294" alt="image" src="https://github.com/user-attachments/assets/332749a9-fdac-4637-8179-d94aca5df99e" />
+
+<img width="1353" height="507" alt="image" src="https://github.com/user-attachments/assets/40a7145f-ef61-4009-815c-61d5ee31e54d" />
+<img width="1206" height="375" alt="image" src="https://github.com/user-attachments/assets/70320b43-aace-4754-b446-9a8aee9541df" />
+<img width="1337" height="620" alt="image" src="https://github.com/user-attachments/assets/6a3f385d-473e-4cbf-b339-f9a7de983fc0" />
+<img width="636" height="450" alt="image" src="https://github.com/user-attachments/assets/821cad02-a87c-453a-90c7-bdd572f3e2bc" />
+<img width="653" height="416" alt="image" src="https://github.com/user-attachments/assets/11a43af0-a230-493f-ae9d-e337fc126567" />
+<img width="642" height="435" alt="image" src="https://github.com/user-attachments/assets/d7de9a47-b04b-44df-a081-ba8684503bc2" />
+
+MPK的核心思想是将**计算和GPU间通信的粒度细化**到单个`streaming multiprocessor` (SM)。为此，MPK引入了`SM-level graph representation`，称为`tGraph`。`tGraph`的节点表示在单个SM上执行的任务（`task`）或同步点（`event`），边表示任务之间的细粒度依赖关系。这种表示方式揭示了额外的并行性，并使得跨操作符的软件流水线和细粒度核重叠成为可能。
+
+MPK系统包含两个主要组件：
+1.  **MPK Compiler**: 将`tensor program`和推理配置作为输入，自动将其计算图转换为针对给定配置和GPU架构优化的`SM-level tGraph`。编译器采用多种优化技术来减少同步开销并最大化生成的`tGraph`的性能。
+    *   **Operator decomposition**: 将输入计算图的每个操作符分解为一组任务，通过划分操作符的输出张量，使所有任务计算输出的互不相交的子集，从而在SM之间并行执行。分区策略旨在最小化从`device memory`到`shared memory`的数据加载。
+    *   **Dependency analysis**: MPK使用`event`来捕获任务间的依赖关系。对于共享张量的两个操作符，MPK会遍历这两个操作符的所有任务对($t_1, t_2$)。如果任务$t_1$产生的输出区域与任务$t_2$消耗的输入区域有重叠，则在$t_1$和$t_2$之间引入一个`event` $e$。该`event`作为同步点，确保$t_2$在$t_1$完成其所需数据生成之前不会开始执行。相应的，MPK会在`tGraph`中插入两条边$(t_1, e)$和$(e, t_2)$。这种细粒度的依赖分析在保留`producer-consumer`依赖的同时，暴露了独立任务之间的最大并行度。
+    *   **Event fusion**: 消除冗余同步点并简化`tGraph`。
+        *   `Successor-set fusion`: 合并作为同一组消费任务先决条件的`event`。若`OutTasks(e1) = OutTasks(e2)`，则将$e_1, e_2$融合成新的`event` $e'$，其`InTasks(e') = InTasks(e1) \cup InTasks(e2)`，`OutTasks(e') = OutTasks(e1)`。
+        *   `Predecessor-set fusion`: 合并依赖于相同生产任务集的`event`。若`InTasks(e1) = InTasks(e2)`，则将$e_1, e_2$融合成新的`event` $e'$，其`InTasks(e') = InTasks(e1)`，`OutTasks(e') = OutTasks(e1) \cup OutTasks(e2)$。
+    *   **tGraph normalization**: 解决任务具有任意数量依赖/触发`event`的内存开销问题。通过引入新的`event`和不执行计算的“空”任务（`empty new tasks`），确保每个任务最多只有一个依赖`event`和一个触发`event`（如图6所示）。
+    *   **tGraph linearization**: 解决`event`触发大量任务时的存储问题。使用基于`BFS`的算法（Algorithm 1）来线性化`tGraph`，确保所有由同一`event`触发的任务在最终任务排序中被分配连续的索引。这样，`event`的`fan-out`可以通过存储第一个和最后一个任务索引来紧凑地编码，而无需存储显式依赖任务列表。
+    *   **Task Implementation Generation**: 利用现有的`superoptimization`技术，如`Mirage superoptimizer`，自动为**每个任务生成高性能的CUDA实现**，包括`intra-SM optimizations`。
+
+2.  **In-Kernel Parallel Runtime**: 在单个`mega-kernel`内执行`SM-level tGraph`。这种设计消除了`kernel launch overhead`，并实现了**对调度、同步和执行顺序的细粒度控制**。
+    *   **SM Partitioning**: 将GPU的**SMs划分为**`workers`和`schedulers`。每个`worker`运行在一个物理SM上，维护一个独立的任务队列并以`FIFO`顺序执行任务。`schedulers`则维护任务间的依赖关系，并在先决条件满足时分配任务。`schedulers`以`warp`粒度组织。
+    *   **Event-Driven Execution**: 运行时采用`event-driven model`执行`tGraph`。一个`tGraph`从一个无先决条件的`start event`开始。当一个`event`被`scheduler`取出后，`scheduler`会启动所有依赖于它的任务。每个启动的任务被分派给一个`worker`，`worker`执行任务并在完成后通知该任务所关联的触发`event`。一个`event`在其所有先决条件任务完成并触发它达到所需次数后被激活。
+    *   **Hybrid Task Launch**: 结合了`Just-in-time` (JIT) 和`Ahead-of-time` (AOT) **两种任务启动机制**。
+        *   `JIT`: `scheduler`仅在依赖`event`完全激活后才将任务分配给`worker`。这使得MPK能够适应工作负载不平衡（如注意力操作的数据依赖性），实现动态负载均衡，但引入了额外的`worker`–`scheduler`通信延迟。
+        *   `AOT`: 运行时在先决`event`激活之前预先将任务排队到`worker`。`worker`只需等待`event`激活。这减少了任务启动延迟，但对静态工作负载更有效。
+        *   混合策略: 编译器根据任务执行时间是否具有数据依赖性和是否可能导致运行时不平衡来分类。具有数据依赖性的操作符（如注意力）被标记为`JIT`，直到遇到全局屏障；其他则标记为`AOT`以最小化调度开销。`workers`优先处理`JIT`任务，当`JIT`队列为空时检查`AOT`任务。`AOT`任务在执行前预先以`round-robin`方式分配到`workers`。
+    *   **Runtime Optimizations**:
+        *   `Paged shared-memory abstraction`: 将`shared memory`划分为固定大小的页面。任务根据需要获取和释放页面。这使得`cross-task software pipelining`成为可能，即当前任务的计算可以与后续任务的数据预加载重叠。
+        *   `Cross-task software pipelining`: 将每个任务分解为`pre-loading phase`和`compute phase`。在当前任务的`compute phase`执行期间，可以同时启动下一个任务的`pre-loading phase`，从而在**SM上实现跨任务的流水线**并行。
+        *   `Pre-fetching task descriptions`: 将即将到来的任务描述预取到`shared memory`，以减少`device memory`访问延迟和`enqueue/dequeue`延迟。
+        *   轻量级`worker`和`scheduler`，`event`和任务队列实现为`circular buffers`，利用`atomicAdd`指令，以及`decentralized scheduling`以避免全局协调开销。
+
+实验结果表明，MPK显著优于现有`kernel-per-operator` LLM服务系统，端到端推理延迟最高可降低1.7倍，将LLM推理性能推向接近硬件极限。MPK在**PyTorch中作为一个**`kernel backend`实现，只需少量代码修改即可将PyTorch模型编译为MPK `mega-kernel`。
+
 ## qTTT 
 Let's (not) just put things in Context: Test-Time Training for Long-Context LLMs
 
@@ -953,9 +1005,12 @@ SonicMoE通过内存高效的算法、I/O感知型GPU kernels和创新的token r
 ## ParallelKittens 
 ParallelKittens: Systematic and Practical Simplification of Multi-GPU AI Kernels 
 
-https://arxiv.org/abs/2511.13940 2025.11.17
+paper: https://arxiv.org/abs/2511.13940 斯坦福 Christopher团队，2025.11.17
+
+code: https://github.com/HazyResearch/ThunderKittens 
 
 blog: https://hazyresearch.stanford.edu/blog/2025-11-17-pk
+
 1. 🚀 ParallelKittens (PK) 提出并实现了一套基于**传输机制、调度策略和设计开销**三大原则的 CUDA 框架，旨在系统性地简化和优化 multi-GPU AI kernels 的开发。
 2. ✨ 该框架通过利用 Tensor Memory Accelerator (TMA) 和 register-level instructions 等高效数据传输方式，支持 **intra-SM 和 inter-SM 两种 overlapping 调度策略**，并大幅减少了现有通信库的同步和缓冲开销。
 3. ⚡ PK 在 Hopper 和 Blackwell 架构上展示了卓越性能，相较于 baseline 和现有 hand-tuned 以及 compiler-based 方法，为 data-、tensor-、sequence- 和 expert-parallel workloads 带来了**显著的性能提升，且代码量极少~50LOC。**
