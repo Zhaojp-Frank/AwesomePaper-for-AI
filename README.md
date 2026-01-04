@@ -1,6 +1,23 @@
 # AwesomePaper-for-AI
 Awesome or inspiring papers for AI
 
+## MSched
+MSched: GPU Multitasking via Proactive Memory Scheduling 
+
+https://arxiv.org/pdf/2512.24637 陈海波团队 2025.12.31
+
+1. 🤔 针对GPU HBM容量有限导致多任务下传统需求分页性能严重下降的问题，MSched提出通过主动调度工作集来扩展GPU上下文切换。
+2. 💡 为实现此目标，MSched采用了基于模板的方法对kernel工作集进行精确的空间预测，并设计了任务调度器与内存管理器之间的协同机制，利用调度器的时间线推断全局内存访问序列以优化页面放置。
+3. 🚀 基于XSched实现，5080GPU（16GB PCIGen5*16）实验证明，MSched在内存超额订阅下显著优于传统需求分页（LLM推理高达57.88倍），并通过减少RT任务延迟和提高BE任务吞吐量来提升并发GPU任务的整体性能和效率。
+人为精心设计的场景
+
+<img width="582" height="300" alt="image" src="https://github.com/user-attachments/assets/38506e44-7ebf-4ffd-a453-78b5fdfc4045" />
+<img width="1205" height="429" alt="image" src="https://github.com/user-attachments/assets/f28cc987-129f-42c7-a5eb-4449ec804598" />
+<img width="581" height="325" alt="image" src="https://github.com/user-attachments/assets/b3bd45cf-6157-4703-8fe2-1f35eda7a65b" />
+<img width="1226" height="270" alt="image" src="https://github.com/user-attachments/assets/9135a9fd-aa22-4762-8d9d-14d583a520f2" />
+<img width="1213" height="621" alt="image" src="https://github.com/user-attachments/assets/c6d5fe51-c65a-452c-a34a-3fb7c75c3239" />
+
+
 ## Mirage Persistent Kernel(MPK)
 Mirage Persistent Kernel: A Compiler and Runtime for Mega-Kernelizing Tensor Programs
 
