@@ -1,6 +1,51 @@
 # AwesomePaper-for-AI
 Awesome or inspiring papers for AI
 
+## ShinkaEvolve
+ShinkaEvolve: Towards Open-Ended And Sample-Efficient Program Evolution
+
+https://arxiv.org/pdf/2509.19349 Sakana AI 2025.12.31
+
+https://github.com/SakanaAI/ShinkaEvolve
+
+1. 🚀 ShinkaEvolve是一个开源框架，通过结合**父程序采样、代码新颖性拒绝采样**和bandit-based LLM ensemble selection等创新算法，显著提升了LLM驱动程序进化的样本效率。
+2. 💡 该框架在多个任务中取得了SOTA成果，包括仅用150次评估就找到新的圆堆积（Circle Packing）解决方案，设计高性能AIME数学推理Agentic harnesses，改进ALE-Bench竞争编程方案，并发现新型Mixture-of-Expert load balancing loss functions。
+3. 🌐 ShinkaEvolve的广泛适用性和卓越样本效率，以及其开源特性，旨在促进开放式科学发现的民主化和可及性。
+<img width="918" height="417" alt="image" src="https://github.com/user-attachments/assets/aa11616d-5ab2-4899-a096-91bc799f22f0" />
+<img width="921" height="330" alt="image" src="https://github.com/user-attachments/assets/88d17153-f5ed-4b8b-ab16-2ec43ee36ee1" />
+<img width="935" height="415" alt="image" src="https://github.com/user-attachments/assets/4cbe6dc8-3c68-4610-99b1-7d891a6f519e" />
+![Uploading image.png…]()
+![Uploading image.png…]()
+
+论文提出了一种名为 ShinkaEvolve 的新型开源框架，旨在通过利用大语言模型（LLMs）显著**提升程序演化过程的样本效率和解决方案质量**，以加速科学发现。该框架旨在克服现有 LLM 驱动的代码演化方法在样本效率低下（通常需要数千次评估）和闭源限制方面的缺点。
+
+ShinkaEvolve 通过三项核心算法创新实现其目标：
+1.  **父程序和启发式程序采样（Parent and inspiration sampling）**：ShinkaEvolve 维护一个固定大小的已评估程序档案，其中包含程序的适应度分数和元信息。它采用“岛屿模型”（island model）方法，通过独立的子群体并行演化以增强多样性并防止过早收敛。父程序选择策略平衡了探索与利用：
+    *   **幂律采样（Power Law Sampling）**：程序根据适应度排名$r_i$（最佳程序$r_i=1$），选择概率遵循$p_i = \frac{r_i^{-\alpha}}{\sum_{j=1}^{n} r_j^{-\alpha}}$。其中，$\alpha$控制利用强度，$\alpha=0$为均匀采样（纯探索），$\alpha \to \infty$为爬山算法（纯利用）。
+    *   **加权采样（Weighted Sampling）**：融合了性能和新颖性。性能分量$s_i = \sigma(\lambda \cdot (F(P_i) - \alpha_0))$，其中$\alpha_0$是所有程序的适应度中位数，$F(P_i)$是程序$P_i$的适应度，$\sigma(x) = \frac{1}{1+e^{-x}}$是Sigmoid函数，$\lambda$控制选择压力。新颖性分量$h_i = \frac{1}{1+N(P_i)}$，偏好具有较少子代的程序。最终概率为$p_i = \frac{w_i}{\sum_{j=1}^n w_j}$，其中$w_i = s_i \cdot h_i$。
+
+2.  **程序变异和新颖性评估（Program mutation and novelty assessment）**：
+    *   **LLM 引导的程序变异（LLM-Guided Program Mutations）**：ShinkaEvolve 从预设的 LLM 池中选择一个 LLM 和采样参数。它采用三种变异方法：
+        *   **Diff-Based Edits**：利用 LLMs 进行目标性修改。
+        *   **Full Rewrites**：允许对程序进行完全重写，同时确保不可变代码块保持不变。
+        *   **Crossover Mutation**：采样一个额外的档案程序，并提示 LLM 将其与父程序结合。
+    *   **新颖性拒绝采样（Novelty Rejection Sampling）**：为增强生成代码提案的创造性，ShinkaEvolve 使用一个嵌入模型（如 `text-embedding-3-small`）来嵌入程序的可变代码部分。如果新生成程序与岛屿子群体中现有程序的最大余弦相似度超过某个阈值（例如$\eta = 0.95$），则会查询另一个 LLM 来进一步评估该程序是否具有有意义的新颖性，以避免冗余变异。
+
+3.  **执行和世界反馈（Execution and world feedback）**：
+    *   **多目标评估与文本反馈（Multi-Objective Optimization & Textual Feedback）**：执行程序后，ShinkaEvolve 进行多目标评估，得到标量适应度值$r_i$、一组“公共指标”和文本反馈，并将这些信息存储在程序档案中，作为未来 LLM 变异的上下文。
+    *   **自适应 LLM 采样演化（Adaptive LLM sampling evolution）**：不同 LLMs 在不同问题领域和不同演化阶段的表现各异。ShinkaEvolve 采用基于 UCB1 算法（Auer et al., 2002）的自适应策略，根据 LLM 生成变异的性能来更新其采样概率。LLM 的奖励$r_u^i = \exp(\max(r_i - r_b^i, 0)) - 1$，其中$r_b^i$是基线奖励（父程序或初始程序中的最大值），这促进了能够提出大胆、高风险、高回报变异的 LLMs。
+    *   **元草稿本和在线优化（Meta-Scratchpad & Online Refinement）**：ShinkaEvolve 实现了元草稿本系统，每$T$代周期性分析成功的解决方案，总结优化策略和设计原则，并将这些见解综合为可操作的建议，附加到变异提示中，为 LLM 提供高层次的指导。
+
+实验结果表明，ShinkaEvolve 在多个任务中表现出色：
+*   **圆盘堆积问题（Circle Packing）**：ShinkaEvolve 仅用 150 次评估就发现了一个新的 State-of-the-Art 圆盘堆积解决方案，比现有方法所需的数千次评估显著提高了样本效率。其发现的算法结合了复杂的初始化策略、SLSQP 梯度优化与模拟退火（Simulated Annealing）的混合优化方法，以及智能扰动机制。
+*   **AIME 数学推理任务（AIME Mathematical Reasoning Tasks）**：ShinkaEvolve 能够演化出高效的 Agent Scaffold 设计，在 10 次 LLM 查询限制下，显著超越了人工设计的基线方案。其最终方案是三阶段架构，包含多样化的专家角色、严格的同行评审和合成机制。
+*   **ALE-Bench 竞技编程（ALE-Bench Competitive Programming）**：ShinkaEvolve 成功改进了 ALE-Agent 发现的高性能解决方案，平均提升约 2.3%。例如，在 ahc039 任务中，解决方案排名从第 5 位提升至第 2 位。
+*   **MoE 负载均衡损失函数（Mixture-of-Expert Load Balancing Loss）**：ShinkaEvolve 发现了一种创新的 MoE 负载均衡损失函数，其在保持模型表达力的同时，有效激励了专家之间的效率和特化。其发现的损失函数$L_{\text{LBL}}$是对已有的“全局批次负载均衡损失”（Global-batch LBL）的扩展，引入了一个新项以正则化那些未充分特化的专家：
+    $L_{\text{LBL}} = N_E \cdot \frac{1}{L} \sum_{\ell=1}^L \sum_{i=1}^{N_E} f_{\ell,i} P_{\ell,i} + 0.1 \sum_{\ell=1}^L s(P_\ell) \sum_{i=1}^{N_E} \max(0, \tau - f_{\ell,i})$
+    其中，$N_E$是专家数量，$L$是层数，$f_{\ell,i}$是专家$i$在层$\ell$的令牌分配频率，$P_{\ell,i}$是路由器的平均软分配概率，$s(P_\ell) = 0.5 + (\frac{1 - H(P_\ell)}{\log N_E})$是路由熵$H(P_\ell)$的归一化补数，$\tau = 0.064/N_E$是最小使用阈值。该新项在层路由熵较低、路由器集中于少数主导专家时，会更强地推动那些令牌分配低于阈值的专家。
+
+通过开源实现和卓越的样本效率，ShinkaEvolve 旨在普及开放式发现，降低计算资源门槛。
+
 ## MSched
 MSched: GPU Multitasking via Proactive Memory Scheduling 
 
