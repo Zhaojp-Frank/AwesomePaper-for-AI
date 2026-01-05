@@ -1,6 +1,56 @@
 # AwesomePaper-for-AI
 Awesome or inspiring papers for AI
 
+## MIT RLM
+Recursive Language Model 
+
+https://arxiv.org/pdf/2512.24601 MIT 2025.12.31
+
+<img width="820" height="378" alt="image" src="https://github.com/user-attachments/assets/da963468-608f-4439-9b46-4e266beef503" />
+1. 💡 本文提出了递归语言模型 (RLMs)，这是一种通用的推理策略，允许大型语言模型 (LLMs) 将长**提示作为外部环境的一部分进行处理，并通过 REPL 环境以编程方式检查、分解并递归调**用自身。
+2. 📈 实验表明，RLMs 能够有效处理**超出模型上下文窗口两个数量级的输入**，并且在四项长上下文任务中，其性能显著优于基础 LLMs 和现有长上下文方法，同时保持相似或更低的查询成本。
+3. 🔍 RLMs 展示了过滤输入信息、分块递归调用 LLMs 以及通过变量传递递归输出等新兴行为，这使得它们在信息密集型任务上表现出色，并能有效应对上下文长度和问题复杂性带来的性能下降。
+大型语言模型（LLMs）在推理和工具使用方面取得了迅速进展，但仍面临上下文窗口有限的问题，且即使在这些限制内，模型质量也会随着上下文长度增加而显著下降，即“上下文腐烂”（context rot）。为了应对LLM处理任意长提示的挑战，本文提出了Recursive Language Models (RLMs)，一种通用的推理策略。
+<img width="823" height="446" alt="image" src="https://github.com/user-attachments/assets/cf27fd2f-ec5d-4466-9265-40ce77da02a9" />
+<img width="817" height="632" alt="image" src="https://github.com/user-attachments/assets/0e6888ee-7d5e-44bb-89ad-3f3f44e583eb" />
+<img width="823" height="303" alt="image" src="https://github.com/user-attachments/assets/1037f02d-ef13-4166-a5e5-27bfa1459f85" />
+<img width="837" height="687" alt="image" src="https://github.com/user-attachments/assets/7eb4e2f4-33cc-497c-b810-3649926dc976" />
+
+**核心思想与方法论 (Core Idea and Methodology):**
+RLMs的核心思想是将长提示（arbitrarily long prompts）视为外部环境（external environment）的一部分，而非直接馈送给神经网络（如Transformer）。如图2所示，RLM接收一个任意结构和长度的字符串提示 $P$，并产生一个字符串响应。其工作机制如下：
+1.  **环境初始化 (Environment Initialization):** RLM初始化一个Python Read-Eval-Print Loop (REPL) 编程环境 $E$。
+2.  **提示作为变量 (Prompt as a Variable):** 输入提示 $P$ 被设置为环境 $E$ 中的一个变量（例如，名为 `context`）。LLM会获得关于该REPL环境的通用上下文信息（如变量 $P$ 的长度）。
+3.  **程序化交互 (Programmatic Interaction):** LLM被允许编写Python代码，通过执行这些代码来与`context`变量进行交互。这些代码可以实现：
+    *   **检查和分解 (Examine and Decompose):** LLM可以编写代码来“窥视”（peek into）`context`变量的不同部分，对其进行分解（decompose），例如通过切片、正则表达式（regex queries）或按行/块划分。
+    *   **观察副作用 (Observe Side Effects):** LLM可以迭代地观察代码执行的任何副作用，并利用`print()`语句将信息输出给自身进行推理。
+    *   **递归调用自身 (Recursive Self-Calling):** 关键在于，RLM鼓励LLM在其生成的代码中程序化地构造子任务（sub-tasks），并使用一个特殊的`llm_query`函数来递归调用（invoke recursively）自身（即sub-LLM）来处理这些子任务。例如，LLM可以将`context`的某个片段传递给`llm_query`函数，要求sub-LLM对该片段进行分析或提炼。
+
+这种设计将上下文管理隐式地交由LLM自身处理，通过编程逻辑和迭代反馈循环，使得RLM能够处理远超其内部模型上下文窗口限制的输入长度。与传统上将所有输入直接送入模型（导致“上下文腐烂”）或使用有损压缩（lossy compression）方法（如概括或截断）不同，RLM通过程序化地选择性访问和处理上下文片段，从而在不丢失细粒度信息的前提下实现长上下文处理。
+
+**实验与发现 (Experiments and Findings):**
+本文在四项多样化的长上下文任务上评估了RLMs：S-NIAH (简单信息检索)、BrowseComp-Plus (多跳问答，需要信息聚合)、OOLONG (复杂推理，需要语义转换和聚合) 和 OOLONG-Pairs (信息密度极高的配对推理任务，处理成本呈二次方增长)。实验使用了前沿的闭源模型GPT-5和开源模型Qwen3-Coder-480B-A35B，并与直接LLM调用、上下文压缩（Summary Agent）、以及带工具（BM25检索）的代码生成代理（CodeAct）等基线进行比较。
+
+**主要发现 (Key Observations):**
+1.  **大规模长上下文处理能力 (Scalability to 10M+ tokens):** RLMs能够成功处理高达千万甚至亿级别令牌（10M+ token）的输入，比基础模型的上下文窗口大两个数量级，并在所有任务上显著优于基线模型，性能提升高达2倍，同时保持了相当或更低的平均查询成本。
+2.  **对复杂任务的卓越表现 (Strong Performance on Complex Tasks):** 在OOLONG和OOLONG-Pairs等信息密集型任务上，RLMs的性能相较于基础模型有巨大飞跃（例如，OOLONG-Pairs上GPT-5的F1分数从不到0.1%提升至58.00%），展示了处理极端信息密度任务的 emergent capability。
+3.  **REPL环境与递归调用的作用 (Role of REPL and Recursive Calls):** REPL环境本身使得模型能够处理超长输入。而递归子调用对于信息密集型任务至关重要，它允许RLM对上下文进行细粒度的语义转换和聚合。在某些任务中，即使没有子调用能力，REPL环境也能让RLM超越基础模型的上下文限制，但在信息密集型任务上，有子调用能力的RLM性能明显更好（10%-59%的提升）。
+4.  **成本与复杂性 (Cost and Complexity):** RLM的推理成本与基础模型调用相当，但在某些情况下成本较高，因为任务复杂性导致轨迹长度差异大。虽然RLM的尾部成本（tail end costs）可能很高，但其中位数成本通常与或低于基础模型。RLM能够选择性地查看上下文，使其比Summary Agent等完全摄取输入的基线更高效。
+5.  **模型行为差异 (Model-Agnostic but Different Behaviors):** 尽管RLM是一种模型无关的推理策略，但不同模型（如GPT-5和Qwen3-Coder）作为RLM时，在上下文管理和子调用决策上展现出不同行为模式。例如，Qwen3-Coder倾向于更频繁地进行子调用，有时会导致效率低下。
+
+**涌现模式 (Emergent Patterns):**
+RLMs无需显式训练就展现出有趣的上下文管理和问题分解行为：
+*   **信息过滤 (Information Filtering):** RLM能够通过代码执行（如正则表达式查询）过滤输入信息，结合模型先验知识缩小搜索空间，只处理少量相关令牌。
+*   **分块与递归 (Chunking and Recursive Sub-calling):** RLM将无限制长度的推理链下放到子R(LM)调用。常见的分解策略包括统一分块和关键词搜索。
+*   **答案验证 (Answer Verification):** RLM通过子LM调用或代码执行进行答案验证，有时会隐式避免上下文腐烂。
+*   **处理长输出任务 (Handling Long Output Tasks):** RLM通过在REPL中迭代构建变量来生成超出基础LM限制的任意长度输出，结合程序化输出和子R(LM)输出。
+
+**局限性与未来工作 (Limitations and Future Work):**
+目前RLMs仍有改进空间：
+*   **同步子调用 (Synchronous Sub-calls):** 当前实现采用同步/顺序子调用，导致运行时较慢。异步调用和沙盒REPL有望显著降低运行时和成本。
+*   **递归深度 (Recursion Depth):** 本文主要探索了最大递归深度为1的情况，未来可研究更深层次的递归。
+*   **模型训练 (Model Training):** 现有模型并非为作为RLM而设计，显式训练模型（作为root或sub-LM）可能带来显著性能提升。RLM轨迹可视为一种推理形式，可通过自举（bootstrapping）现有模型进行训练。
+
+  
 ## ShinkaEvolve
 ShinkaEvolve: Towards Open-Ended And Sample-Efficient Program Evolution
 
