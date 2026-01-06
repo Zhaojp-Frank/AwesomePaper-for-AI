@@ -1,6 +1,64 @@
 # AwesomePaper-for-AI
 Awesome or inspiring papers for AI
 
+## ASA
+Optimizing Native Sparse Attention with Latent Attention and Local Global Alternating Strategies
+
+https://arxiv.org/pdf/2511.00819 美团 人大；2025.11.2
+
+1. 🤔 本文系统分析了Native Sparse Attention (NSA) 的组成部分，发现其滑动窗口注意力在常识推理中起主导作用，而压缩和选择性注意力则主要用于丰富全局上下文信息。
+2. ✨ 基于此洞察，文章提出了Alternating Sparse Attention (ASA)，通过在Transformer层间**交替使用局部（滑动窗口）和全局（压缩/选择性）注意力**，并引入Multi-head Latent Attention (**MLA**) 和Group-head Latent Attention (**GLA**) 来优化效率和表达能力。
+3. 🚀 实验结果表明，ASA在通用**常识推理和长文本理解任务上均达到或超越了全注意力与原生稀疏注意力**，同时将KV-cache**内存占用比NSA降低了50%**。
+<img width="526" height="355" alt="image" src="https://github.com/user-attachments/assets/60dc3397-3409-4284-820f-0c2333928978" />
+<img width="898" height="332" alt="image" src="https://github.com/user-attachments/assets/b8c1cdf5-81c9-4567-a634-4251248dfe25" />
+<img width="814" height="346" alt="image" src="https://github.com/user-attachments/assets/f6280af4-94d2-4213-a5a9-49b86982c04f" />
+<img width="1063" height="321" alt="image" src="https://github.com/user-attachments/assets/f157e205-832b-44a5-81c6-5fae5ec063a8" />
+<img width="515" height="770" alt="image" src="https://github.com/user-attachments/assets/5c79a316-d83c-4d74-b161-80438240e450" />
+
+本文提出了一种名为 Alternating Sparse Attention (ASA) 的新型稀疏注意力架构，旨在优化大型语言模型 (LLMs) 中的长上下文建模，同时显著降低 KV-cache 的内存消耗。ASA 基于对现有 Native Sparse Attention (NSA) 机制的深入分析，并对其进行了多项针对性改进。
+
+**1. NSA 功能分析与洞察**
+NSA 机制将传统注意力分解为三个分支：滑动窗口注意力 (sliding-window attention)、压缩注意力 (compressed attention) 和选择性注意力 (selective attention)。通过消融实验，作者发现：
+*   **滑动窗口注意力**主要影响模型的通用常识推理能力。移除该分支会导致常识推理任务性能显著下降。
+*   **选择性注意力**在增强长上下文检索能力方面发挥关键作用。移除选择性注意力会导致上下文检索任务性能大幅下降。
+*   **压缩注意力**主要作为选择性注意力的辅助机制。即使使用更细粒度的压缩注意力，也无法有效弥补移除选择性注意力造成的检索性能损失。
+*   滑动窗口注意力与选择性注意力同时存在时，可能会“捷足先登”地学习到局部依赖，从而降低选择性注意力在检索任务中的有效性。
+
+此外，作者还发现，在不同层之间交替使用不同的注意力模式，相比于在所有层使用统一的稀疏度设置，能带来更好的长上下文检索性能，同时保持可比的常识推理能力，并能将 KV-Cache 存储开销减少一半。
+
+**2. ASA 核心方法**
+基于上述洞察，ASA 提出了以下核心改进：
+
+*   **分层注意力模式交替 (Alternating Layer-wise Attention Patterns)**:
+    ASA 将 NSA 中原本集成在每个注意力层内的三个注意力分支重新分配到不同的层中。具体而言，模型的连续注意力层将严格地以一对一模式交替使用两种互补的注意力类型：
+    *   一类层专注于处理**压缩注意力与选择性注意力**，旨在高效捕捉长距离全局上下文信息。
+    *   另一类层则专注于**滑动窗口注意力**，有效建模局部上下文信息。
+    这种分层策略确保了每个注意力头专注于单一的稀疏模式，从而减少了干扰并提高了表示聚焦。
+
+*   **引入 Latent Attention 机制**:
+    ASA 用 Latent Attention 机制取代了 NSA 中原有的 Grouped Query Attention (GQA)，以增强模型的表达能力。
+    *   **Multi-head Latent Attention (MLA)** 增强了滑动窗口分支。MLA 最初由 DeepSeek-V2 引入，在训练时行为与 Multi-head Attention (MHA) 相同，但在推理时通过存储低维度的 Latent states $c$ 而表现出 Multi-query Attention (MQA) 的内存效率。
+        MLA 的形式化表达为：
+        $$ \text{MLA}(q_{i,t}, c_{\le t}) = \text{Softmax}(q_{i,t}(c_{\le t}W_{i,k})^\top)c_{\le t}W_{i,v}W_{i,o} $$
+        其中，$H$ 是注意力头数量，$q_{i,t}$ 是头 $i$ 在时间步 $t$ 的查询，$c_{\le t}$ 是直到时间步 $t$ 的 Latent states。
+
+    *   **Grouped-head Latent Attention (GLA)** 应用于压缩和选择性分支。由于 MLA 在训练时独立投影键值，与需要共享键值表示的稀疏注意力机制不兼容，因此 ASA 在 MLA 中引入了分组机制，形成了 GLA。在 GLA 中，多个查询头共享相同的键和值投影矩阵，同时保留独立的输出投影，这使得 MLA 能够更好地适应需要共享 KV 存储的稀疏注意力。
+        GLA 的形式化表达为：
+        $$ \text{GLA}(q_{i,t}, c_{\le t}) = \frac{1}{H/G} \sum_{i=1}^{H/G} \sum_{j=1}^{G} \text{Softmax}(q_{iG+j,t}(c_{\le t}W_{j,k})^\top)c_{\le t}W_{j,v}W_{iG+j,o} $$
+        其中，$G$ 是分组大小，每组 $G$ 个头共享相同的键值投影 $W_{j,k}$ 和 $W_{j,v}$，但保持不同的输出投影 $W_{iG+j,o}$。
+
+*   **内核优化 (Kernel Optimization)**:
+    为了提高训练效率，NSA 改进了 Flash Attention 内核。ASA 在此基础上，进一步优化了内核，允许在一个块内的所有查询共享第一个查询所选择的 KV 块。实验表明，该优化将前向计算时间减少了约 30%，后向计算时间减少了约 13%，同时对模型性能影响甚微。
+
+**3. 实验结果**
+ASA 在 340M 和 1.3B 参数量的模型上进行了广泛评估，训练数据集为 SlimPajama（15B 和 100B tokens）。
+*   **常识推理任务**: ASA 的性能略优于 GQA 和 NSA，这得益于 MLA 对 GQA 的替代。
+*   **上下文检索任务**: ASA 显著优于 NSA，尤其是在 Needle-In-A-Haystack (NIAH) 基准测试中，这证明了交替使用混合窗口注意力和选择性注意力的有效性。GLA 的集成通过增加注意力计算过程中的键值维度，使得 ASA 在 S-NIAH-2 任务上甚至超越了 GQA 基线。
+*   **长上下文理解任务**: ASA 在几乎所有 LongBench 基准测试中都始终优于 GQA 和 NSA。
+
+**4. 贡献**
+ASA 提供了一种实用且可扩展的内存高效语言模型解决方案，通过将局部（滑动窗口）和全局（压缩/选择性）注意力机制与 Latent Attention 增强相结合，实现了高效的长上下文建模。它在性能上与 GQA 和 NSA 持平或超越，同时将 KV-cache 存储减少了 50%。
+
 ## MIT RLM
 Recursive Language Model 
 
