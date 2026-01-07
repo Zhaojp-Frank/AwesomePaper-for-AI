@@ -1,6 +1,14 @@
 # AwesomePaper-for-AI
 Awesome or inspiring papers for AI
 
+## CLO
+https://arxiv.org/pdf/2511.14510 中科大 华为等 2025.11.18
+
+https://github.com/CommediaJW/CLO
+1. 🚀 CLO提出了一种算法-系统协同设计的方法，旨在解决现有LLM KVCache卸载系统中存在的CPU瓶颈，包括细粒度缓存管理开销、PCIe带宽利用率低以及CPU中心化同步导致的GPU停滞。
+2. 💡 该系统通过引入粗粒度、头粒度的近似GPU缓存策略、零拷贝传输引擎和GPU中心化同步机制来优化KVCache管理和数据传输。
+3. ⚡ 实验结果表明，CLO在保持与SOTA系统相当的准确性下，显著降低了CPU开销，充分利用了PCIe带宽，并将解码吞吐量提高了9.3%至66.6%。
+
 ## RetrievalAttn
 RetrievalAttention: Accelerating Long-Context LLM Inference via Vector Retrieval
 
