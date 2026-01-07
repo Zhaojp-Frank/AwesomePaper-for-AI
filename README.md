@@ -1,6 +1,56 @@
 # AwesomePaper-for-AI
 Awesome or inspiring papers for AI
 
+## RetrievalAttn
+RetrievalAttention: Accelerating Long-Context LLM Inference via Vector Retrieval
+
+https://chenc10.github.io/assets/pdf/2025_neurips_retrievalattention.pdf 微软 NIPS25
+
+https://github.com/microsoft/RetrievalAttention 
+
+1. 🚀 RetrievalAttention是一种训练无关方法，通过为固定上下文预构建KV向量索引并将其存储在CPU内存中以供高效检索，从而加速长上下文LLM推理并减少GPU内存消耗。
+2. 💡 该方法创新性地将近似最近邻搜索 (ANNS) 集成到注意力计算中，并提出了一种“**注意力感知向量索引**”来解决查询 (Q) 和键 (K) 向量之间的分布不一致 (OOD) 问题。
+3. ⚡ 实验结果表明，RetrievalAttention在保持接近全注意力精度的同时，仅访问**1-3%的数据**，显著降低了推理成本，使得8B参数的LLM在单张RTX4090 (24GB) 上能处理128K tokens，解码速度达到0.107秒/token。
+
+RetrievalAttention是一项旨在加速长上下文大型语言模型（LLM）推理并降低GPU内存消耗的无训练方法。该方法通过为固定上下文预构建Key-Value (KV) 向量索引并将其保存在CPU内存中以供高效检索，从而解决了Transformer-based LLM在处理长上下文时面临的推理速度慢和KV缓存内存占用高的问题。
+
+**核心思想与挑战：**
+传统上，KV缓存方法在解码阶段仍需所有KV向量参与注意力计算，导致GPU内存和推理延迟随上下文长度线性增长。RetrievalAttention的核心洞察在于注意力机制的内在稀疏性：对于当前查询向量，只有一小部分关键（critical）Key-Value向量对输出有显著贡献。作者提出将近似最近邻搜索（ANNS）整合到注意力计算中，以高效地识别这些关键tokens。然而，现有的ANNS技术常因注意力机制中查询（Q）向量和键（K）向量之间的**分布外（Out-of-Distribution, OOD）**特性而失效。研究发现，Q向量与K向量之间的Mahalanobis距离显著大于K向量彼此之间的距离（超过10倍），导致传统ANNS索引在Q-K搜索中性能不佳，需要扫描超过30%的数据才能达到高召回率。
+
+**RetrievalAttention方法详解：**
+
+1.  **近似注意力 (Approximated Attention)：**
+    RetrievalAttention基于以下假设近似全注意力输出：$o_t$ 可以通过只关注那些注意力权重超过阈值 $\epsilon$ 的KV向量（即定义为 $I_{t,\epsilon}$ 的token索引子集）来高效近似。数学上，这表示为：
+    $$o_t = \sum_{i \in I_{t,\epsilon}} a_{t,i} \cdot v_i + \sum_{i \notin I_{t,\epsilon}} a_{t,i} \cdot v_i \approx \sum_{i \in I_{t,\epsilon}} \tilde{a}_{t,i} \cdot v_i \quad \text{where} \quad \tilde{a}_{t,i} = \frac{e^{z_i}}{\sum_{j \in I_{t,\epsilon}} e^{z_j}}$$
+    其中，$z_i = q_t \cdot K_i^T / \sqrt{d}$ 是点积，$\tilde{a}_{t,i}$ 是在稀疏上下文 $I_{t,\epsilon}$ 下重新归一化的注意力权重。
+
+2.  **注意力感知向量索引 (Attention-aware Vector Index)：**
+    为了克服Q-K OOD问题，RetrievalAttention构建了一种特殊的向量索引。
+    *   **索引构建：** 在离线阶段，不再仅仅基于Key向量的相似性构建索引。相反，它显式地建立从查询向量到其最近邻Key向量（精确K-Nearest Neighbors, KNN）的连接。这些KNN连接充当了弥合Q和K分布差异的“桥梁”（如图4b所示）。
+    *   **投影技术 (Projection Technique)：** 进一步地，该方法借鉴了跨模态ANNS索引RoarGraph的投影技术。它将KNN连接“投影”到Key向量之间，即如果两个Key向量连接到同一个查询向量，则认为它们是相关的并建立连接。这消除了在索引中存储和访问查询向量的需要，同时仍能保留查询到Key的内在关系。这种投影后的索引使得在解码查询时，能够首先在“查询视角”下找到相关的Key向量，然后利用传统的图索引遍历策略进行高效搜索。该策略使得索引在搜索时仅需扫描1-3%的Key向量即可达到高召回率。
+
+3.  **CPU-GPU协同执行 (CPU-GPU Co-Execution)：**
+    RetrievalAttention将注意力计算分解为两部分，并利用CPU和GPU的优势：
+    *   **持久性KV向量 (Persistent KV Vectors)：** 一小部分“静态”KV向量（例如，初始tokens和最近滑动窗口内的tokens，如640个tokens的固定模式）被预测为始终重要，并常驻在GPU内存中。
+    *   **动态检索KV向量 (Dynamically Retrieved KV Vectors)：** 剩余的固定上下文的KV向量及其注意力感知索引被卸载到CPU内存中。
+    *   **预填充阶段 (Prefill Phase)：** 对于用户查询，固定上下文的KV缓存从CPU加载到GPU以计算第一批tokens。此阶段结束后，除静态tokens外，其余KV缓存被丢弃以节省GPU内存。
+    *   **解码阶段 (Decoding Phase)：** 在每个解码步骤中：
+        1.  GPU并行计算静态模式KV向量的局部注意力输出（利用FlashAttention等高效内核）。
+        2.  同时，当前查询向量被发送到CPU侧。CPU利用注意力感知向量索引高效检索最相关的动态KV向量，并计算这部分KV向量的局部注意力输出。
+        3.  CPU和GPU的局部注意力输出（$o_W$ 和 $o_\Omega$）被合并以得到最终的近似注意力输出 $o_t$。合并过程类似于FlashAttention，通过重新缩放因子 $\gamma_1, \gamma_2$ 来确保结果的准确性：
+            $$o_t = \gamma_1 \cdot o_W + \gamma_2 \cdot o_\Omega$$
+            其中，$o_W = \text{Attn}(q_t, K[W,:], V[W,:])$ 且 $o_\Omega = \text{Attn}(q_t, K[\Omega,:], V[\Omega,:])$。缩放因子根据局部最大点积 $\tilde{z}_1, \tilde{z}_2$ 和全局最大点积 $\tilde{z}$ 进行计算：
+            $$\gamma_1 = \frac{e^{\tilde{z}_1 - \tilde{z}} \cdot \sum_{i \in W} e^{z_i - \tilde{z}_1}}{\sum_{j \in I_{t,\epsilon}} e^{z_j - \tilde{z}}} \quad \text{and} \quad \gamma_2 = \frac{e^{\tilde{z}_2 - \tilde{z}} \cdot \sum_{i \in \Omega} e^{z_i - \tilde{z}_2}}{\sum_{j \in I_{t,\epsilon}} e^{z_j - \tilde{z}}}$$
+    这种CPU-GPU协同执行实现了计算重叠和极低的数据传输量，显著减少了PCIe带宽的瓶颈。
+
+**实验评估：**
+RetrievalAttention在Llama-3-8B-Instruct-262k、Yi-9B-200K和Yi-6B-200K等长上下文LLM上进行了评估。
+*   **准确性：** 在RULER、∞-Bench和Needle-in-a-haystack等基准测试中，RetrievalAttention保持了与全注意力（full attention）几乎相同的任务准确性（例如，在Llama-3-8B上，RULER平均准确率仅下降2.21%）。这显著优于其他零训练（training-free）的稀疏注意力方法，如StreamingLLM、SnapKV等，这些方法通常会经历显著的准确性下降。
+*   **推理延迟：** 对于128K上下文，在NVIDIA RTX4090 GPU（24GB）上，RetrievalAttention实现了7.93倍于精确KNN（Flat）和2.80倍于传统ANNS索引（IVF）的解码延迟降低，每token解码速度达到0.107秒。延迟随上下文长度的增长缓慢，体现了其亚线性时间复杂度。
+*   **内存效率：** 得益于将大部分KV缓存和索引卸载到CPU内存，RetrievalAttention使得8B参数模型在单张RTX4090 GPU上处理128K tokens成为可能，解决了商品级GPU的内存限制。
+*   **可扩展性：** 吞吐量随batch size的增加而提高，并能受益于更多的CPU核心，进一步验证了其CPU-GPU协同架构的效率。
+*   **索引质量：** 注意力感知索引仅需扫描1-3%的Key向量即可达到高召回率（recall@100高于0.95），显著优于传统方法。
+
 ## ASA
 Optimizing Native Sparse Attention with Latent Attention and Local Global Alternating Strategies
 
