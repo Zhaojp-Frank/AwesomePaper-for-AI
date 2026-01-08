@@ -1,6 +1,13 @@
 # AwesomePaper-for-AI
 Awesome or inspiring papers for AI
 
+## ClusterFusion
+ClusterFusion: Expanding Operator Fusion Scope for LLM Inference via Cluster-Level Collective Primitive 
+https://arxiv.org/abs/2508.18850 2025.8.26 上海交大 DSM，H100单卡
+
+https://github.com/xinhao-luo/ClusterFusion 
+
+
 ## ToolOrchestra
 ToolOrchestra: Elevating Intelligence via Efficient Model and Tool Orchestration 
 
