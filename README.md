@@ -1,6 +1,84 @@
 # AwesomePaper-for-AI
 Awesome or inspiring papers for AI
 
+## Jisi
+Beyond Gemini-3-Pro: Revisiting LLM Routing and Aggregation at Scale
+
+paper: https://arxiv.org/abs/2601.01330v1 上海AI Lab；港中文等。2026.1.4
+
+code:  https://github.com/magent4aci/openJiSi
+
+中文概述：https://mp.weixin.qq.com/s/79moEaUM1c0DQr30t-f7lg 
+
+<img width="1018" height="428" alt="image" src="https://github.com/user-attachments/assets/0356ae71-b906-4220-88ce-79e6d68b131b" />
+<img width="584" height="111" alt="image" src="https://github.com/user-attachments/assets/63c11dd4-3479-4349-a7af-70d184977af2" />
+<img width="950" height="482" alt="image" src="https://github.com/user-attachments/assets/5a455045-b547-4be3-8848-ff9cfc72199e" />
+
+
+1. 💡针对现有LLM **Routing仅依赖查询相似性、Aggregation方法静态以及Routing与Aggregation互补性不足**的瓶颈，本文提出了JiSi框架。
+2. ⚙️JiSi框架引入了Query-Response Mixed Routing、Support-Set-based Aggregator Selection和Adaptive Routing-Aggregation Switch三大创新，以更有效地编排开源LLM的协作。
+3. 🏆在九个基准测试中，JiSi通过**编排十个开源LLM，仅用47%的成本就超越了Gemini-3-Pro，平均性能提升1.15%**，并显著优于主流基线，展示了集体智慧的巨大潜力。
+本文提出了一种名为 JiSi 的新型框架，旨在通过协调开源大型语言模型（LLMs）的协作，超越包括 Gemini-3-Pro 在内的领先闭源模型，探索集体智能作为单体模型无限扩展的替代路径。
+
+**1. 现有路由和聚合方法的瓶颈：**
+作者首先指出当前多 LLM 协作方法存在以下三个主要瓶颈：
+*   **训练自由（training-free）路由器受限：** 现有路由器主要基于查询（query-based）范式，仅侧重于文本相似性，无法捕捉深层语义或问题难度。
+*   **聚合方法静态且非自适应：** 近期聚合方法大多是静态的，难以针对不同任务自适应选择合适的聚合器（aggregator），导致在关键响应生成时受限。
+*   **路由和聚合的互补性未充分利用：** 路由提供了稳定性但受限于单一模型，聚合可以超越个体模型限制但易受低质量输出和噪声影响，二者之间的互补性未被有效协同。
+<img width="1002" height="397" alt="image" src="https://github.com/user-attachments/assets/c348d085-2fd4-4b37-818f-3c90b712e6b5" />
+<img width="1015" height="416" alt="image" src="https://github.com/user-attachments/assets/372b0b46-3f22-47d1-a1cb-78525dbd87be" />
+<img width="999" height="383" alt="image" src="https://github.com/user-attachments/assets/d656f9b9-190f-4126-a161-ff64ed90b85e" />
+<img width="1025" height="505" alt="image" src="https://github.com/user-attachments/assets/8268c11e-5e1d-4ade-985e-91adc7202335" />
+
+**2. JiSi 框架的核心创新：**
+为解决上述瓶颈，JiSi 引入了三项核心创新，基于一个预构建的嵌入库（embedding bank）：
+
+*   **2.1. Query-Response Mixed Routing（查询-响应混合路由）:**
+    *   **问题：** 传统的基于查询嵌入的路由方法，仅捕获查询文本的表面相似性，忽略了深层语义和任务难度。例如，“证明每个大偶数都是两个素数之和”和“证明每个大偶数都是两个奇数之和”在词语上高度相似，但难度天壤之别，查询嵌入难以区分。
+    *   **解决方案：** JiSi 利用 LLM 生成的响应嵌入和令牌消耗（token costs）来优化路由过程。
+        *   **响应嵌入：** LLM 生成的响应包含潜在的语义信息，可以帮助区分语义相似但难度或深层含义不同的问题。例如，对于上述两个问题，LLM 可能会生成截然不同的响应，从而使得嵌入模型能够有效区分它们。
+        *   **令牌消耗：** 难度更大的问题通常需要 LLM 消耗更多的令牌来生成响应。JiSi 将令牌消耗作为衡量问题难度的一种直观启发式指标。
+    *   **技术细节：** 通过加权整合查询、响应和令牌消耗的相似性，JiSi 实现了更精确的模型路由。在模型推理时，对给定查询 $x$，首先通过候选 LLM 生成响应 $\hat{y}_k$ 和相应的推理成本 $c_k$。接着，将查询和响应映射到嵌入空间：$e = f^1(x)$ 和 $r_k = f^1(\hat{y}_k)$。
+        *   用于过滤支持集的相似度得分 $s_{flt}$ 综合了查询相似度 $s$、响应相似度 $s_{res}$ 和成本相似度 $s_{cost}$：
+            $s_{flt} = \epsilon s + \sigma s_{res} + \delta s_{cost}$
+            其中，$s_{res,i} = \sum_{j=1}^K r_{i,j}^T r_j$，表示第 $i$ 个训练集问题下所有候选 LLM 响应与当前查询响应的相似度总和；$s_{cost,i} = \sum_{j=1}^K (1 - |c_{i,j}^2 - c_j^2| / c_{m,j})$，表示第 $i$ 个训练集问题下所有候选 LLM 响应成本与当前查询响应成本的相似度总和，其中 $c_{m,j}$ 是标准化因子。$\epsilon, \sigma, \delta$ 是预定义的权重，且 $\epsilon + \sigma + \delta = 1$。
+        *   这种混合相似度用于计算细粒度模型得分 $g_f$，使得路由能更准确地匹配查询与 LLM 的能力。
+
+*   **2.2. Support-Set-based Aggregator Selection（基于支持集的聚合器选择）:**
+    *   **问题：** 现有聚合方法通常静态地选择聚合器，基于其整体性能。然而，一个聚合器在通用能力上表现出色，不代表其在特定领域也具有最佳聚合能力。理想的聚合器应在领域特定能力和综合聚合能力之间取得平衡。
+    *   **解决方案：** JiSi 通过结合大规模嵌入支持集中的先验分数，动态选择合适的聚合器。
+    *   **技术细节：** 对于给定查询 $x$，首先从嵌入库中选择一个支持问题集。该支持集的选择基于查询 $x$ 的嵌入 $e = f^1(x)$ 与嵌入库中所有问题嵌入 $E_Q$ 的余弦距离 $s$。
+        *   通过预定义的参数 $N_{base}$ 和 $\gamma$，确定支持集中的问题数量 $N_{sup}$ 和具体索引 $I$：$I = \{i \in [N] | s_i \ge \gamma \cdot f^2_{N_{base}}(s)\}$。
+        *   利用支持集 $I$ 中的问题及其对应的 LLM 正确性向量 $v_j$，计算粗粒度模型得分 $g \in \mathbb{R}^M_+$，其中 $g = v_{sup} s_{sup}$，$v_{sup}$ 是 LLM 在支持集上的正确性。
+        *   最终，选择得分最高的 LLM 作为聚合器 $A_{agg} = A_k$，其中 $k$ 是 $g$ 中最大值的索引。这种方法确保了聚合器在更广泛的查询集上表现出良好的综合能力，同时也能兼顾不同领域的聚合需求。
+
+*   **2.3. Adaptive Routing-Aggregation Switch（自适应路由-聚合切换）:**
+    *   **问题：** 路由和聚合各有利弊。路由稳定但受限于单一模型性能上限；聚合能超越个体限制但易受低质量或噪声输入的干扰。简单地将二者结合可能无法有效利用各自优势。
+    *   **解决方案：** JiSi 引入了一个自适应切换机制，根据模型响应的先验得分动态选择输出策略。
+    *   **技术细节：** 在路由阶段，基于预构建的嵌入库，为每个候选响应计算精确的先验得分（即上面提到的细粒度模型得分 $g_f$）。
+        *   通过预设的阈值 $t$，确定最终的聚合器（aggregatees）集合 $A_{fm}$：
+            $A_{fm} = \left\{A_i \in A \mid i \in [M], g_{f,i} \ge [f^2(K)](g_f) \text{ and } \left(\frac{g_{f,i}}{[f^2(1)](g_f)}\right) \ge t\right\}$
+            其中，$[f^2(K)](g_f)$ 表示 $g_f$ 向量中第 $K$ 大的值，确保至少选择 $K$ 个模型作为候选，然后通过阈值 $t$ 进一步筛选。
+        *   **动态策略：**
+            *   如果 $N_{fm} = 1$（只有一个响应的得分超过阈值），系统将跳过聚合过程，直接采用该单一响应作为最终输出（即退化为 Top-1 路由）。这显著提高了推理效率。
+            *   如果 $N_{fm} > 1$（多个响应的得分超过阈值），则执行聚合操作。此时，由 $A_{agg}$ 对集合 $A_{fm}$ 中的 LLM 响应进行聚合：$\hat{y} = A_{agg}(\bar{x})$，其中 $\bar{x} = f^3(\{A_i(x) \mid A_i \in A_{fm}\})$ 是聚合器所需的所有响应的连接。
+        *   这种机制能够剪除低质量或噪声响应，保证在触发聚合时其输入质量高，从而实现高效且高质量的决策。
+
+**3. 嵌入库的构建：**
+嵌入库是 JiSi 的基础，它存储了 LLM 的能力画像。它通过收集来自异构来源的大量查询，并获取候选 LLM 对这些查询的响应，包括响应文本、令牌消耗和正确性信息。所有查询和响应都通过预训练的嵌入模型 $A_{emb}$ 映射到连续嵌入空间：
+$E = E_Q \cup E_R$
+$E_Q = \{e_i = f^1(x_i) \mid i \in [N]\}$
+$E_R = \{r_{i,j} = f^1(\hat{y}_{i,j}) \mid i \in [N], j \in [M]\}$
+其中 $f^1(a) = A_{emb}(a) / \|A_{emb}(a)\|_2$。此外，每个 LLM $A_j$ 都对应一个能力向量 $v_j \in \{0, 1\}^N$，用于衡量其在所有问题上的正确性。
+
+**4. 实验结果：**
+*   **数据集和模型：** 在 OpenRouterBench 上使用九个基准测试集，十个开源 LLM（M=10）作为候选模型，并与七个闭源 LLM 和多种主流的路由及多智能体基线方法进行比较。
+*   **性能卓越：** JiSi 在所有闭源和开源 LLM、路由器方法以及多智能体方法中平均性能排名第一。相较于最强大的开源 LLM (DeepSeek-V3.2-Speciale)，性能提升了 6.56%。甚至比最先进的闭源 LLM Gemini-3-Pro 性能提高了 1.15%。
+*   **成本效率：** 尽管 JiSi 涉及多智能体聚合，但与领先的闭源 LLM 相比，它显著降低了总成本，同时保持了卓越的性能。例如，JiSi 相比 Gemini-3-Pro 节省了 53.23% 的成本。这得益于开源 LLM API 价格更低以及自适应路由-聚合切换机制减少了聚合工作量。
+*   **可扩展性：** JiSi 表现出强大的可扩展性，随着候选 LLM 数量的增加，在推理与知识、编码与工程、通用聊天与事实性三大领域均展现出稳定且持续的性能提升，证实了其作为动态系统的潜力。
+*   **LLM 选择分布：** JiSi 倾向于选择高性能 LLM，同时保持任务感知的专业化和丰富的使用多样性。例如，在推理密集型任务中偏爱 DeepSeek-V3.2-Speciale，而在事实性问答中偏向 Qwen3-235B-A22B。同时，它避免了系统过度依赖单一 LLM 的问题，保证了聚合的互补性。
+
+
 ## CLO
 https://arxiv.org/pdf/2511.14510 中科大 华为等 2025.11.18
 
