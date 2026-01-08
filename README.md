@@ -1,6 +1,68 @@
 # AwesomePaper-for-AI
 Awesome or inspiring papers for AI
 
+## ToolOrchestra
+ToolOrchestra: Elevating Intelligence via Efficient Model and Tool Orchestration 
+
+paper: https://arxiv.org/abs/2511.21689 NVIDIA, 港大 2025.11.26
+
+code:  https://github.com/NVlabs/ToolOrchestra
+<img width="1033" height="337" alt="image" src="https://github.com/user-attachments/assets/35e89638-c42f-48d7-bc31-6c2bbe0199ad" />
+<img width="1049" height="464" alt="image" src="https://github.com/user-attachments/assets/807bcce5-e284-423f-a631-13521a49df10" />
+
+1.  ⚙️ 针对大型语言模型在处理复杂任务时面临的效率和成本挑战，本文引入ToolOrchestra方法，通过训练一个**小型编排模型8b来高效协调多种智能工具和模型**。
+2.  🚀 该方法通过强化学习端到端地**训练这个8B参数的编排模型**，其奖励设计综合考虑了任务结果的准确性、资源使用效率和用户工具偏好。
+3.  💡 实验证明，其训练出的Orchestrator模型在HLE、𝜏2-Bench和FRAMES等基准测试上**超越了GPT-5等前沿模型，以显著更低的成本**实现了更高的准确率，并能稳健泛化到未见工具。
+
+<img width="440" height="426" alt="image" src="https://github.com/user-attachments/assets/31a4c1f5-1bd7-46f4-9557-ee310acead6e" />
+<img width="1052" height="380" alt="image" src="https://github.com/user-attachments/assets/e74fb31d-1b25-4957-8d69-c0b079ca2ae8" />
+<img width="1052" height="358" alt="image" src="https://github.com/user-attachments/assets/58d6c541-3756-46f8-8c2f-43ce3ae3f084" />
+本文介绍了ToolOrchestra，一种通过训练小型编排模型（orchestrator model）来高效协调多样化模型和工具，以解决复杂agentic任务的方法。尽管大型语言模型（LLMs）能力强大，但在处理如“人类终极考试”（Humanity's Last Exam, HLE）等深层次复杂问题时，仍面临概念性和计算成本高的挑战。ToolOrchestra旨在通过一个轻量级编排器来管理其他智能工具和模型，从而提高智能上限并提升效率。
+
+**核心方法（ToolOrchestra）**
+
+ToolOrchestra通过强化学习（RL）端到端地训练一个小型语言模型（例如8B参数），使其作为异构工具使用agent的“大脑”，动态地选择和利用各种外部工具。
+
+1.  **统一工具调用（Unified Tool Calling）**：
+    与现有工具使用agent不同，ToolOrchestra扩展了工具集，不仅包含传统工具（如网页搜索、代码解释器），还包括领域专用模型（specialized LLMs）和通用大模型（generalist LLMs）。所有工具都通过一个统一的JSON接口暴露，包含工具名称、描述和类型化参数schema。当LLM作为工具使用时，其描述通过以下步骤自动生成：随机抽取10个训练任务，获取LLM完成这些任务的轨迹，然后由另一个LLM根据任务指令、LLM轨迹以及LLM是否完成任务来编写描述。
+
+2.  **端到端Agentic强化学习（End-to-End Agentic Reinforcement Learning）**：
+    将多轮工具使用agentic任务形式化为一个马尔可夫决策过程（MDP）$\mathcal{M} = (\mathcal{U}, \mathcal{S}, \mathcal{A}, \mathcal{O}, \mathcal{T}, \mathcal{Z}, r, \rho, \gamma)$。Orchestrator通过迭代rollout生成解决方案，交替进行工具使用和环境反馈。每次交互遵循“思维链（chain-of-thought）-行动（tool call）-观察（tool response）”循环，直到任务解决或达到最大轮次。
+
+    *   **奖励设计（Reward Design）**：为了平衡任务解决的正确性、资源使用效率和用户偏好，ToolOrchestra引入了三类奖励：
+        1.  **结果奖励（Outcome Reward）**：对于每个rollout轨迹$\tau$，如果成功解决任务，则获得二元奖励$r_{outcome}(\tau) \in \{0, 1\}$。任务正确性由GPT-5作为裁判进行评估。
+        2.  **效率奖励（Efficiency Reward）**：为鼓励高效解决方案，模型会因过度的计算或延迟受到惩罚，奖励表示为$r_{compute}(\tau) = -\$(\tau)$和$r_{latency}(\tau) = -\text{Clock}(\tau)$，其中$\$(\tau)$是轨迹的货币成本，$\text{Clock}(\tau)$是消耗的实际时间。为了统一计算开源模型和专有模型的成本，输入和输出token都转换为货币成本。
+        3.  **偏好奖励（Preference Reward）**：鼓励模型在每一步选择工具时考虑用户偏好。对于一个轨迹$\tau$，构建一个向量$M^\tau = [m^\tau_{t_1}, m^\tau_{t_2}, \dots, m^\tau_{t_n}, r_{outcome}(\tau), r_{compute}(\tau), r_{latency}(\tau)]$，其中$m^\tau_{t_\cdot}$是工具$t_\cdot$被调用的次数。在RL训练中，$M^\tau$的每个元素在rollout批次T中进行归一化：$M^\tau_{normalized}[k] = (M^\tau[k] - M^{\text{T}}_{\text{min}}[k])/(M^{\text{T}}_{\text{max}}[k] - M^{\text{T}}_{\text{min}}[k])$。最终奖励计算为：
+            $$R(\tau) = M^\tau_{normalized} \cdot P \quad \text{if } r_{outcome}(\tau)=1 \quad \text{else } 0$$
+            其中$P = [p_{t_1}, p_{t_2}, \dots, p_{t_n}, p_{outcome}, p_{compute}, p_{latency}]$是用户偏好向量。
+
+    *   **训练过程（Training Procedure）**：Orchestrator使用策略梯度强化学习算法Group Relative Policy Optimization (GRPO) [21]进行微调。对于批次中的每个任务，策略$\pi_\theta$生成一批轨迹T，每个轨迹$\tau \in \text{T}$获得一个标量奖励$R(\tau)$。GRPO在组内对奖励进行归一化以计算优势函数：
+        $$A(\tau) = \frac{R(\tau) - \text{mean}_{\tau \in \text{T}} R(\tau)}{\text{std}_{\tau \in \text{T}} R(\tau)}$$
+        策略通过最大化裁剪的代理目标函数进行更新：
+        $$\mathcal{L}_{\text{GRPO}}(\theta) = \mathbb{E}_{\tau \sim \pi_\theta} \left[ \min \left( \text{ratio}_\theta(\tau)A(\tau), \text{clip}(\text{ratio}_\theta(\tau), 1-\epsilon, 1+\epsilon)A(\tau) \right) \right]$$
+        其中$\text{ratio}_\theta(\tau) = \frac{\pi_\theta(\tau)}{\pi_{old}(\tau)}$是当前策略和旧策略的似然比。
+
+    *   **训练技巧（Training Techniques）**：为了稳定RL训练，采用了同质性过滤（homogeneity filtering）、格式一致性过滤（format consistency filtering）和无效输出过滤（invalid output filtering）。
+
+3.  **数据合成（Data Synthesis）- ToolScale**：
+    由于可验证的agentic工具调用数据稀缺，ToolOrchestra开发了一个两步数据合成流程ToolScale：
+    1.  **模拟丰富环境**：选择一个领域D，LLM生成数据库schema、主要关注点和数据库条目，并基于领域D提出常用工具。
+    2.  **生成多样化任务**：LLM首先提出领域D中常见的多种意图，然后根据详细数据库信息将其转换为具体任务，包括任务指令I、黄金函数调用序列$A = a_1, \dots, a_l$以及任务解决过程中必须提及的简短信息o。为增加任务难度，利用额外的LLM添加复杂性。通过执行黄金函数调用、LLM解决任务通过率和是否需要实际操作来过滤数据，确保质量。
+
+**实验结果**
+
+在HLE、$\tau^2$-Bench和FRAMES三个挑战性基准测试中，ToolOrchestra训练的Orchestrator（8B模型）表现出卓越的性能和成本效率。
+
+*   **性能优越性**：在HLE上，Orchestrator达到37.1%，超越GPT-5（35.1%）和Claude Opus 4.1（34.6%）。在$\tau^2$-Bench和FRAMES上，Orchestrator也以显著优势超越GPT-5。
+*   **成本效率**：Orchestrator在HLE上比GPT-5效率高2.5倍，在$\tau^2$-Bench和FRAMES上仅使用约30%的成本，却取得了更高的性能。
+*   **工具使用分析**：Orchestrator-8B学会了更策略性地协调工具，而不是过度调用强大的或昂贵的工具，展现出平衡的工具调用模式，避免了GPT-5和Claude Opus 4.1等模型中出现的偏见（如过度依赖自身变体或最强模型）。
+*   **泛化能力**：Orchestrator对训练中未见的工具配置和定价策略展现出强大的泛化能力，能够理解新工具的描述并有效利用它们。
+*   **用户偏好适应性**：Orchestrator-8B在测试时能更好地遵循用户偏好指令，表现出比其他强大多模型系统更优的偏好依从性。
+
+**结论**
+
+ToolOrchestra提供了一种有效训练小型编排模型的方法，使其能够统一和协调各种工具和专用模型。通过强化学习，Orchestrator学习了自适应的工具使用策略，平衡了任务结果质量、效率和人类偏好。该方法证明了由轻量级编排模型组合多样化工具比现有方法更高效和有效，为实用和可扩展的工具增强推理系统铺平了道路。
+
 ## Jisi
 Beyond Gemini-3-Pro: Revisiting LLM Routing and Aggregation at Scale
 
