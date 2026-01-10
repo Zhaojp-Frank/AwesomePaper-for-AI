@@ -1,6 +1,16 @@
 # AwesomePaper-for-AI
 Awesome or inspiring papers for AI
 
+## GPU_ext
+GPU_ext: Extensible OS Policies for GPUs via eBPF
+
+https://arxiv.org/pdf/2512.12615 2025.12.20
+
+1. 💡 `gpu_ext` 提出了一种基于 eBPF 的运行时，将 GPU 驱动和设备视为可编程的操作系统子系统，以克服传统 GPU 资源管理策略在灵活性和性能上的不足。
+2. ⚙️ 该系统通过在 GPU 驱动中暴露安全的可编程 hook，并在 GPU 内核中引入设备端 eBPF 运行时来执行经过验证的策略逻辑，同时采用 SIMT-aware 验证和跨层 eBPF map 解决主机-设备异构性。
+3. 🚀 实验结果表明，`gpu_ext` 支持的策略能够将吞吐量提升高达 4.8 倍(GPT-oss-120b FP4, 5090)，将尾延迟降低多达 2 倍，且对应用程序无侵入，证实了其在 GPU 资源管理中的有效性。
+
+   
 ## KernelEvolve
 KernelEvolve: Scaling Agentic Kernel Coding for Heterogeneous AI Accelerators at Meta
 
@@ -22,39 +32,6 @@ KernelEvolve 是 Meta 推出的一种基于 Agent 的内核编码框架，旨在
 
 **KernelEvolve 的核心方法论：**
 KernelEvolve 将内核优化视为一个图（或树）搜索问题，通过一个自改进的状态机来探索优化空间。其核心在于“通用操作符”设计、Agentic 的检索与自管理上下文机制，以及全面的评估与工具链。
-
-1.  **图（树）搜索和状态机：**
-    *   **搜索框架：** 将内核优化建模为元组 $(F, \pi_{sel}, O, \tau)$，其中：
-        *   **适应度函数 $F(v)$：** 评估内核实现 $v$ 的质量，定义为生成 Triton 内核相对于 PyTorch 编译基线的 Speedup。$F(v) = \frac{t_{pytorch}}{t_{triton}}$。若有编译/运行时错误或精度不达标，则 $F(v) = 0$。
-        *   **选择策略 $\pi_{sel}$：** 基于启发式函数 $h$ 选择要扩展的节点。支持贪婪搜索、蒙特卡洛树搜索 (MCTS) 和进化算法等多种策略。
-        *   **通用操作符 $O$：** 一个单一的转换函数，根据上下文信息 $C$（性能分析结果、错误信息、硬件约束、历史优化经验）动态生成新的内核候选。不同于传统多操作符（如 Debug、Improve）的静态 Prompt 模板，通用操作符通过检索增强的动态 Prompt 合成机制，使 LLM 能够整体推理，不受预定义操作符类别的限制。
-        *   **终止规则 $\tau$：** 达到计算预算、进展停滞或满足性能阈值时终止。
-    *   **通用操作符 (Universal Operator)：** 克服了传统多操作符框架中 Prompt 模板静态、无法适应运行时上下文的局限。通过动态 Prompt 合成，让 LLM 能够基于实际的运行时执行特征，而非预设的框架，全面地进行优化（如修正数值错误、改善内存访问模式、利用硬件特性、改进算法）。
-
-2.  **Agentic 检索与自管理上下文：**
-    *   **双阶段子 Agent 架构：**
-        *   **上下文内存子 Agent (Context Memory Sub-Agent)：** 分析动态运行时工件（内核实现、性能测量、错误诊断、正确性验证结果），诊断性能瓶颈并合成优化指令。
-        *   **深度搜索子 Agent (Deep Search Sub-Agent)：** 根据上下文内存子 Agent 的诊断，从持久化知识库中进行定向检索，获取硬件约束、优化模式、调试方法等领域知识。
-    *   **持久化知识库 (Persistent Knowledge Base)：** 采用分层文件系统组织领域专业知识，包括：
-        *   **约束 (constraints/)：** 确保正确性的规则。
-        *   **指导 (guidance/)：** 平台无关的优化知识（调试、性能调优、Triton 语言特性）。
-        *   **硬件 (hardware/)：** 各平台（NVIDIA、AMD、MTIA）的特定知识，包括架构文档、特定调试指南和高级优化技术（如 NVIDIA Hopper 的 TMA、TLX 特性）。
-    *   **MTIA 知识注入：** 针对 MTIA 专有架构，KernelEvolve 系统性地将 MTIA 特定知识（MTIA Triton 扩展、计算辅助函数、自定义类型系统、高级同步与通信原语）注入知识库，使 LLM 在生成 MTIA 内核时能利用这些硬件特性。
-    *   **上下文内存（持久化执行上下文与内存）：** 采用两层存储架构，分离元数据和内容。元数据（id、pid、score、is_buggy、path_ref）存储在关系型数据库中，实现：
-        *   **分布式并发探索：** 多个 Agent 可同时探索搜索图的不同节点。
-        *   **复杂上下文查询：** 通过 SQL 操作高效重建图视图，分析兄弟节点结果、检索高性能祖先策略等。
-        *   **跨会话知识重用：** 针对历史相似操作符，可加载现有高质量解决方案作为起点。
-        *   **容错与检查点：** 搜索过程中断可从上次成功迭代恢复。
-    *   **动态 Prompt 合成：** 上下文内存子 Agent 结合当前内核实现、LLM 分析报告、检索到的知识库内容和硬件约束，合成 Prompt，维持 Token 预算内的任务相关信息。
-    *   **文件与代码搜索：** 通过 Meta 的生产代码搜索基础设施（如 BigGrep、Glean）和 Model Context Protocol (MCP) 工具，实现对知识库和生产代码库的高效检索（字符串匹配、正则表达式、文件名搜索），并将结果整合到 Prompt 中。
-
-3.  **评估与工具链框架：**
-    *   **内核输出格式：** 生成的内核遵循标准化双重实现接口，包括 PyTorch 基线、优化后的 Triton 内核和输入数据生成函数，便于自动化验证和性能测试。
-    *   **AI 硬件解释器：** 利用 Meta 的 Bento 平台，为 NVIDIA、AMD 和 MTIA 硬件建立专用的解释器环境，内含完整的软件栈、编译工具链和运行时依赖，通过 Conveyor 持续部署系统实现自动化更新。
-    *   **评估代码生成：** 非 LLM 的静态代码生成器将 LLM 生成的内核转换为特定于分析工具（TritonBench 用于正确性和 Speedup 验证、PyTorch Profiler 用于系统级时序、NCU 用于硬件指标、Proton 用于指令级行为、MTIA Insight 用于 MTIA 专有指标）的 Python 脚本。
-    *   **统一性能分析：Triton MPP：** 集成 Meta 的 Multi-Pass Profiler (MPP)，统一异构性能分析工具，提供编译器中心的抽象，实现 MLIR 级别的插桩、性能指标收集和结构化输出，尤其擅长分析 Triton 中 TMA 操作、Warp 专业化等高级特性。
-    *   **JIT 流中的 Agentic 调试：** MTIA-Triton 支持可选的 C++ 代码发射，揭示底层 MTIA 操作。当内核崩溃或性能异常时，上下文内存子 Agent 检索 C++ 代码和错误诊断，通用操作符分析并生成修正建议，通过 MTIA 的 Replay 机制实现快速迭代验证。
-    *   **FaaS 上的内核评估：** 将内核评估迁移至 Meta 的 FaaS 平台，利用远程硬件（GPU、MTIA 设备）进行异步并行评估，实现资源解耦和弹性扩展，提高整体吞吐量。
 
 **实验结果与案例研究：**
 KernelEvolve 在 KernelBench 套件上所有 250 个问题（三个难度级别）和 160 个 PyTorch ATen 操作符（横跨三个硬件平台）上均实现了 100% 的通过率和正确性。在生产用例中，实现了 1.2 倍到 17 倍的性能提升，并将开发时间从数周缩短到数小时。
