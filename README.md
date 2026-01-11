@@ -11,12 +11,16 @@ https://github.com/SakanaAI/drq/
 中文解读：https://mp.weixin.qq.com/s/bf9E9RS7WwsAOKZ-GneDXg
 
 <img width="860" height="604" alt="image" src="https://github.com/user-attachments/assets/e067bd3d-e7e7-4151-9ac5-17eb1ada62d0" />
-1.  ⚔️ Digital Red Queen (DRQ) 是一种利用大型语言模型（LLMs）在 Core War 游戏中**演化对抗性程序**（warriors）的**自对弈算法**，通过持续适应不断变化的对手来模拟开放式“Red Queen”动态。
-2.  🧠 该算法通过在每轮中演化出新的 warrior 以击败所有历史对手来驱动适应性进化，并在内部使用 Quality-Diversity (MAP-Elites) 算法确保程序多样性。
-3.  🛡️ 实验结果表明，DRQ 能够生成对抗性更强的通用warrior，并观察到独立运行中行为的统计收敛（phenotypic convergence），而代码层面（genotypic）仍保持多样性，这与生物学的**趋同进化现象类似**。
 
-该论文介绍了 Digital Red Queen (DRQ)，一种利用 LLM 在 Core War 游戏中演化 assembly 程序（称为 warrior）的简单 self-play 算法。Core War 是一个 Turing-complete 的沙盒环境，LLM 演化的 warrior 在其中竞争虚拟机的控制权。与传统的静态优化问题不同，DRQ 旨在通过对不断变化的目标进行持续适应来模拟现实世界中对抗性演化的 Red Queen 动态。
-实验中还观察到独立运行的多个 DRQ 实验（每个实验都从不同的战士开始初始化）会随时间推移，慢慢趋向于演化出具有相似行为的战士。值得注意的是，这种趋同并没有发生在源代码层面，这表明趋同的是「功能」而非「实现」。这一结果让人联想到生物学中的趋同进化 —— 即相似的功能特征通过不同的机制独立进化了多次。例如，鸟类和蝙蝠各自独立进化出了翅膀；蜘蛛和蛇独立进化出了毒液。尽管基础版 DRQ 算法本身较为简单，但它在《Core War》中表现出乎意料得好，这表明：即便是最简单的自对弈循环，也能揭示出复杂且鲁棒的策略。这使得 DRQ 成为探索其他竞争性多智能体仿真（如人工生命、生物学、药物设计、现实世界网络安全或市场生态系统）的有力候选方案。
+该论文介绍了 Digital Red Queen (DRQ)，一种利用 LLM 在Core War游戏中演化 assembly 程序（称为 warrior）的简单 self-play 算法。Core War是一个 Turing-complete的沙盒环境，LLM演化的warrior在其中竞争虚拟机的控制权。
+与传统的静态优化问题不同，DRQ 旨在通过对不断变化的目标进行持续适应来模拟现实世界中对抗性演化的 Red Queen 动态。
+
+实验中观察到独立运行的多个并发DRQ实验（每个实验都从不同的战士开始初始化）会随时间推移，慢慢趋向于演化出具有相似行为的战士。值得注意的是，这种趋同并没有发生在源代码层面，这表明趋同的是「功能」而非「实现」。这一结果让人联想到生物学中的趋同进化 —— 即相似的功能特征通过不同的机制独立进化了多次。例如，鸟类和蝙蝠各自独立进化出了翅膀；蜘蛛和蛇独立进化出了毒液。尽管基础版 DRQ 算法本身较为简单，但它在《Core War》中表现出乎意料得好，这表明：即便是最简单的自对弈循环，也能揭示出复杂且鲁棒的策略。这使得 DRQ 成为探索其他竞争性多智能体仿真（如人工生命、生物学、药物设计、现实世界网络安全或市场生态系统）的有力候选方案。
+
+1.  Digital Red Queen (DRQ) 是一种利用大型语言模型（LLMs）在 Core War 游戏中**演化对抗性程序**（warriors）的**自对弈算法**，通过持续适应不断变化的对手来模拟开放式“Red Queen”动态。
+2. 该算法通过在每轮中演化出新的 warrior 以击败所有历史对手来驱动适应性进化，并在内部使用 Quality-Diversity (MAP-Elites) 算法确保程序多样性。
+3. 实验结果表明，DRQ 能够生成对抗性更强的通用warrior，并观察到独立运行中行为的统计收敛（phenotypic convergence），而代码层面（genotypic）仍保持多样性，这与生物学的**趋同进化现象类似**。
+
 
 **Core War 游戏机制**
 
