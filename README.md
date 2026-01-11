@@ -1,6 +1,74 @@
 # AwesomePaper-for-AI
 Awesome or inspiring papers for AI
 
+## DRQ
+Digital Red Queen: Adversarial Program Evolution in Core War with LLMs 
+
+https://arxiv.org/abs/2601.03335 2026.1.6 SakanaAI
+
+https://github.com/SakanaAI/drq/
+
+中文解读：https://mp.weixin.qq.com/s/bf9E9RS7WwsAOKZ-GneDXg
+
+<img width="860" height="604" alt="image" src="https://github.com/user-attachments/assets/e067bd3d-e7e7-4151-9ac5-17eb1ada62d0" />
+1.  ⚔️ Digital Red Queen (DRQ) 是一种利用大型语言模型（LLMs）在 Core War 游戏中**演化对抗性程序**（warriors）的**自对弈算法**，通过持续适应不断变化的对手来模拟开放式“Red Queen”动态。
+2.  🧠 该算法通过在每轮中演化出新的 warrior 以击败所有历史对手来驱动适应性进化，并在内部使用 Quality-Diversity (MAP-Elites) 算法确保程序多样性。
+3.  🛡️ 实验结果表明，DRQ 能够生成对抗性更强的通用warrior，并观察到独立运行中行为的统计收敛（phenotypic convergence），而代码层面（genotypic）仍保持多样性，这与生物学的**趋同进化现象类似**。
+
+该论文介绍了 Digital Red Queen (DRQ)，一种利用 LLM 在 Core War 游戏中演化 assembly 程序（称为 warrior）的简单 self-play 算法。Core War 是一个 Turing-complete 的沙盒环境，LLM 演化的 warrior 在其中竞争虚拟机的控制权。与传统的静态优化问题不同，DRQ 旨在通过对不断变化的目标进行持续适应来模拟现实世界中对抗性演化的 Red Queen 动态。
+实验中还观察到独立运行的多个 DRQ 实验（每个实验都从不同的战士开始初始化）会随时间推移，慢慢趋向于演化出具有相似行为的战士。值得注意的是，这种趋同并没有发生在源代码层面，这表明趋同的是「功能」而非「实现」。这一结果让人联想到生物学中的趋同进化 —— 即相似的功能特征通过不同的机制独立进化了多次。例如，鸟类和蝙蝠各自独立进化出了翅膀；蜘蛛和蛇独立进化出了毒液。尽管基础版 DRQ 算法本身较为简单，但它在《Core War》中表现出乎意料得好，这表明：即便是最简单的自对弈循环，也能揭示出复杂且鲁棒的策略。这使得 DRQ 成为探索其他竞争性多智能体仿真（如人工生命、生物学、药物设计、现实世界网络安全或市场生态系统）的有力候选方案。
+
+**Core War 游戏机制**
+
+Core War 是一款经典编程游戏，其中低级 assembly-like 程序（warrior）在共享的虚拟计算机中竞争。游戏的内存（Core）是一个固定大小的循环数组（通常 8,000 个单元），每个单元包含一个指令。warrior 的原始 assembly 代码被放置在内存中的随机位置，虚拟机会逐行执行它们的指令。由于代码和数据共享同一地址空间，因此 self-modifying logic 很常见，创建了一个高度不稳定的环境。每个 warrior 的目标是通过使对手程序崩溃来成为最后一个运行的程序，同时确保自身生存。常见的策略包括 bombing（在 Core 中放置 DAT 指令以终止对手进程）、replication（将自身代码复制到多个内存位置）和 scanning（探测 Core 以定位敌人）。
+
+**DRQ 方法论**
+
+DRQ 算法基于 self-play 和 coevolutionary training。其核心思想是让 LLM 演化新的 warrior，使其能够击败所有之前演化出的 warrior，从而形成一个不断适应的 warrior 序列。
+
+1.  **Initialization:** 从一个基础 warrior $w_0$ 开始，可以是人类设计或 LLM 生成。
+2.  **Adversarial Optimization:** 在第 $t$ 轮，演化一个新的 warrior $w_t$，使其在包含所有先前 warrior $\{w_0, \dots, w_{t-1}\}$ 的环境中最大化其预期 fitness：
+    $$w_t = \arg \max_w \mathbb{E}[\text{Fitness}(w; \{w_0, \dots, w_{t-1}\})]$$
+    其中期望值针对不同的评估 seeds。旧的 warrior 在 lineage 中不更新，以促进稳定性。
+3.  **Iteration:** 重复 $T$ 轮，生成 warrior 的 lineage $\{w_0, w_1, \dots, w_T\}$。
+
+**Intra-round Optimization with MAP-Elites:**
+由于程序合成的搜索空间具有高度欺骗性，DRQ 在每一轮的内部优化循环中采用了 MAP-Elites 算法。MAP-Elites 是一种 quality-diversity 算法，通过将用户定义的 behavioral descriptor 空间离散化为 cells，并在每个 cell 中存储一个 elite solution，从而防止多样性崩溃。这使得算法能够维护一个广泛的 stepping stones 集合，以发现行为空间中不同区域的强大策略。
+Fitness 函数定义为：
+$$\text{Fitness}(w_i; \{w_j\}_{j \neq i}) = \sum_{\tau=1}^{T} \frac{N}{T} \frac{A_i^{\tau}}{\sum_j A_j^{\tau}}$$
+其中 $A_i^{\tau}$ 是指示 warrior $i$ 在 simulation timestep $\tau$ 是否存活的 indicator function，$N$ 是 warrior 数量，$T$ 是 simulation timesteps。这个 fitness 函数激励 warrior 尽可能长时间地生存，并通过淘汰其他 warrior 来增加自己的份额。
+Behavioral descriptor 函数 BD(·) 被定义为离散化的元组（total spawned processes, total memory coverage），用于捕获 warrior 在 simulation 期间的两个高级策略方面。网格在 log 空间中进行离散化。
+
+**LLMs as the Mutation Operator:**
+LLM（具体使用了 GPT-4.1 mini）用于生成新的 warrior 和对现有 warrior 进行 mutation。LLM 接收一个系统 prompt，描述 Core War 环境和 Redcode 汇编语言手册（包括 opcodes、addressing modes 和示例 warrior）。生成新 warrior 时，LLM 被指示生成新的 Redcode 程序。进行 mutation 时，LLM 会收到原始程序并被指示进行修改以改进性能。论文特意选择了 LLM 的简单用法，以将研究重点放在 Core War 和演化分析上。
+
+**实验与结果**
+
+1.  **Static Target Optimization Against Human Warriors:**
+    作为基线，论文评估了针对 294 个真实人类 warrior 进行单轮 DRQ 的静态优化效果。LLM zero-shot 仅能击败 1.7% 的人类 warrior。通过 best-of-$N$ 采样，可以集体击败 22.1% 的人类 warrior。然而，针对每个人类 warrior 进行演化优化，可以产生 specialist warrior，集体击败 89.1% 或平局 96.3% 的人类 warrior。这表明演化可以显著提高性能。但这些 specialist warrior 缺乏鲁棒性，平均每个 warrior 只能击败或平局 27.9% 的人类 warrior，表明它们过度拟合了训练对手。
+
+2.  **Iterative Red Queen Dynamics:**
+    为了研究多轮 DRQ 的动态，论文在 96 个不同的 Core War 对局中进行了实验，并分析了 history length $K$（即每轮优化时考虑的先前 warrior 数量）的影响。
+    *   **Phenotype Generality (表型通用性):** 随着 DRQ 轮次增加，warrior 的平均 generality 持续增长，即其击败或平局 unseen human warrior 的比例增加（Slope = 3.466, $R^2$ = 0.927），表明 DRQ 能够发现更鲁棒的 warrior。
+    *   **Phenotype Convergence (表型收敛):** 跨独立 DRQ runs 的 warrior phenotype（对 unseen human warrior 的 fitness 值向量）的方差随着轮次减少（Slope = -0.003, $R^2$ = 0.573），表明在不同初始条件下存在向通用行为的收敛。同时，单个 run 内 phenotype 的变化率也随轮次降低（Slope = -0.006, $R^2$ = 0.756），表明趋于稳定。
+    *   **Genotype Non-Convergence (基因型非收敛):** 与 phenotype 相反，genotype（源代码的 text embedding）的方差在多轮中保持大致不变（Slope = $2.10 \times 10^{-7}$, $R^2$ = 0.057），表明 DRQ 没有收敛到单一的实现方式。这种表型和基因型的分离类似于生物学中的 convergent evolution。
+
+3.  **Cyclic Dynamics:**
+    通过将 history length $K$ 从 1 增加到 10，DRQ 中 cycle（例如 rock–paper–scissors 动态）的总数减少了 77%。这与先前的研究一致，即在 self-play 中纳入历史对手可以减少循环行为。
+
+4.  **What Makes a Good Core War Warrior?**
+    通过分析 MAP-Elites archive，发现生成大量 spawned threads 的 warrior 性能最佳，因为终止它们需要停止所有 threads。对于生成较少 threads 的程序，最大化 memory coverage 是一种有效的替代策略。论文展示了两个 DRQ 演化出的 warrior 示例，"Ring Warrior Enhanced v9" 和 "Spiral Bomber Optimized v22"，它们展示了合成不同策略和生成高性能 warrior 的能力。
+
+5.  **Does MAP-Elites Matter?**
+    将 MAP-Elites 替换为 single-cell variant（移除 diversity preservation 机制）导致每一轮的优化性能显著下降，尤其是在后期轮次，突出了在 Core War 程序合成中保持多样性的重要性。
+
+6.  **Is Fitness Predictable?**
+    使用 OpenAI 的 text embedding 模型（text-embedding-3-small 和 text-embedding-3-large）将 warrior 的 Redcode 源代码嵌入，然后训练一个 linear probe 来预测 warrior 的 generality score。结果显示，generality 可以中等程度地从源代码嵌入中预测（test $R^2$ = 0.442 for small model, $R^2$ = 0.461 for large model）。这表明即使在高度混沌的 Core War 环境中，LLM 也能捕捉到源代码与其性能之间的复杂映射关系，为未来通过 surrogate model 绕过模拟提供了可能性。
+
+**结论**
+
+DRQ 展示了 LLM 驱动的对抗性程序演化如何在 Core War 这样丰富的 testbed 中产生鲁棒策略。通过针对不断增长的对手历史进行演化，DRQ 促进了策略的鲁棒性，并展示了跨独立 runs 的收敛性，这与生物学中的 convergent evolution 现象相似。这强调了从静态目标转向动态 Red Queen 目标的重要性。该工作将 Core War 定位为研究人工智能系统中对抗性适应的受控沙盒，并评估 LLM-based 演化方法的有效性。DRQ 算法的简洁性和有效性表明，类似的 minimalist self-play 方法可以在其他多 agent 对抗领域（如现实世界 cybersecurity 或药物耐药性研究）中发挥作用，以在受控环境中系统地探索潜在风险。
+
 ## GPU_ext
 GPU_ext: Extensible OS Policies for GPUs via eBPF
 
