@@ -7,7 +7,7 @@ MoEBlaze: Breaking the Memory Wall for Efficient MoE Training on Modern GPUs
 https://arxiv.org/pdf/2601.05296v1 2026.1.8 Meta, Thinking machine
 1. ✨ MoEBlaze提出了一种共设计系统方法，旨在解决MoE训练中由于**token路由和中间激活**引起的显著内存墙瓶颈。
 2. ⚙️ 该方法通过端到端token调度和MoE训练，利用优化数据结构**消除中间buffer**，并采**用智能激活检查点的共同设计kernel来降低显存**占用。
-3. 🚀 实验结果显示，MoEBlaze与现有MoE框架相比，实现了超过**4倍的训练速度提升和超过50%的内存节省**。
+3. 🚀 实验结果显示，MoEBlaze与现有MoE框架相比，H100单卡 1个MoElayer。实现了**4倍的训练速度提升和超过50%的内存节省**。
 
 MoEBlaze 是一项旨在解决现代GPU上MoE（Mixture-of-Experts）训练中“内存墙”瓶颈的内存高效MoE训练框架。该框架通过共同设计的系统方法，包括优化的数据结构和智能激活检查点内核，显著减少了激活内存开销并提高了训练吞吐量。
 <img width="829" height="376" alt="image" src="https://github.com/user-attachments/assets/6f6cda21-a257-4a08-bbea-70a1282a038b" />
