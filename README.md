@@ -1,6 +1,116 @@
 # AwesomePaper-for-AI
 Awesome or inspiring papers for AI
 
+## MoEBlaze
+MoEBlaze: Breaking the Memory Wall for Efficient MoE Training on Modern GPUs
+
+https://arxiv.org/pdf/2601.05296v1 2026.1.8 Meta, Thinking machine
+1. ✨ MoEBlaze提出了一种共设计系统方法，旨在解决MoE训练中由于**token路由和中间激活**引起的显著内存墙瓶颈。
+2. ⚙️ 该方法通过端到端token调度和MoE训练，利用优化数据结构**消除中间buffer**，并采**用智能激活检查点的共同设计kernel来降低显存**占用。
+3. 🚀 实验结果显示，MoEBlaze与现有MoE框架相比，实现了超过**4倍的训练速度提升和超过50%的内存节省**。
+
+MoEBlaze 是一项旨在解决现代GPU上MoE（Mixture-of-Experts）训练中“内存墙”瓶颈的内存高效MoE训练框架。该框架通过共同设计的系统方法，包括优化的数据结构和智能激活检查点内核，显著减少了激活内存开销并提高了训练吞吐量。
+<img width="829" height="376" alt="image" src="https://github.com/user-attachments/assets/6f6cda21-a257-4a08-bbea-70a1282a038b" />
+
+<img width="516" height="469" alt="image" src="https://github.com/user-attachments/assets/8a1cd27f-95f7-4d97-bb74-72e5ec285655" />
+
+<img width="546" height="316" alt="image" src="https://github.com/user-attachments/assets/737d4935-283a-4f43-b9b9-d71113dc2adb" />
+
+<img width="555" height="435" alt="image" src="https://github.com/user-attachments/assets/bcac384e-1cf6-435b-a5e4-7bb7a7aed043" />
+
+<img width="538" height="429" alt="image" src="https://github.com/user-attachments/assets/48fbe28d-3c20-4abe-874e-c95031367b9f" />
+
+<img width="1089" height="507" alt="image" src="https://github.com/user-attachments/assets/1cdeb10e-e84c-4bd8-86b8-63b184faa5ab" />
+
+
+**1. 问题背景与动机**
+
+传统的计算模式中，处理器吞吐量的增长远超内存带宽和延迟，导致“内存墙”问题。MoE架构虽然通过稀疏激活实现了万亿级参数模型的可管理训练成本，但其固有的架构稀疏性导致计算密度降低，并引入了巨大的激活内存开销，主要体现在两个方面：
+**Token Routing Buffers:** 为了路由token，需要大量的辅助缓冲区来压缩和存储激活。例如，一个典型的DeepSeek MoE层，对于 $L \approx 200万$ 个token、$K = 4$ 个活跃专家、$d = 6144$ 的模型维度，使用bfloat16存储routed token buffer，其内存占用高达约94GB。
+**Intermediate Activation Storage:** FFN（Feed-Forward Network）计算过程中，尤其是采用SiLU和SwiGLU等现代非线性激活函数时，会产生大量中间激活张量。例如，在DeepSeek配置中，FFN的隐藏维度 $h = 24576$，中间激活内存占用可达约98GB。
+
+这些内存压力限制了GPU上可容纳的最大batch size和sequence length，并导致过多的数据移动，从而阻碍了性能和模型的有效扩展。现有方法，如token dropping或padding，虽然管理了缓冲区，但往往牺牲了模型稳定性。
+
+**2. MoEBlaze的核心贡献**
+
+MoEBlaze通过以下方式解决上述挑战：
+**高效的端到端token分派与训练方法：** 显著减少了token路由和激活materializing所需的中间激活缓冲区。该方法避免了填充和token dropping，在不牺牲准确性的前提下减少了内存使用和数据移动，同时提高了计算效率。
+**高效的数据结构与算法：** 针对内存高效的计算方案设计，能够有效利用GPU的大规模并行和高带宽，并避免复杂的multi-kernel pipeline。
+**与智能激活检查点机制共同设计的训练内核：** 进一步减轻了现代复杂激活函数带来的巨大内存占用，同时在GPU上实现了更好的计算效率。
+
+**3. 核心方法论：内存高效的Token路由与训练算法**
+
+MoEBlaze的核心思想是利用辅助索引列表，在token分派过程中跟踪路由决策，并**即时（on-the-fly）**地进行token访问和结果归约，从而避免了中间激活缓冲区的实例化。
+
+**3.1 前向传播 (Forward Pass)**
+**Token Dispatch (Token分派)：** 不为routed tokens创建专门的缓冲区。取而代之的是，基于前置门控（gating）阶段产生的评分，生成几个轻量级的索引数据结构：
+    *   `per-expert token list`：跟踪分配给每个专家的token ID。
+    *   `per-token expert list`：存储每个token选择的专家ID。
+    *   在此阶段不为materialized routed token激活分配或保留内存。
+**Expert Computation (专家计算)：** 使用`per-expert token list`中记录的索引，对原始的、未permute的激活张量进行即时收集（on-the-fly gathers）来执行专家MLP计算。为了最大化内存效率，只有两个MLP之间的中间结果（即第一个MLP的输出）被缓冲以用于反向传播。
+**Output Aggregation (输出聚合)：** 专家输出被聚合以产生最终的 $(L, d)$ 输出。由于没有存储materialized token dispatch结果的激活缓冲区，聚合操作与第二个MLP计算紧密融合，并直接利用`per-token expert list`进行即时归约（on-the-fly reduction）到输出张量。
+
+**3.2 反向传播 (Backward Pass)**
+MoEBlaze的反向传播通过使用相同的逆映射索引，避免了传统方法中将 $(L, d)$ 梯度扩展到 $(L \times k, d)$ “routed gradient tokens”的中间步骤。
+**Expert Summation Backward (专家聚合反向传播)：** 利用从分派元数据导出的token-mapping结构，将 $(L, d)$ 梯度张量映射回 $(L \times k, d)$ 的routed gradient tokens。这通过高效的“scatter”操作完成，将输出梯度分散到materialized中间MLP结果张量中的相应位置。
+**Expert Computation Backward (专家计算反向传播)：** 梯度流经MLP反向传播。之前checkpointed的两个MLP之间的中间结果在此处用于计算权重梯度。
+**Token Gradient Accumulation (Token梯度累积)：** 最后，累积来自所有专家的关于输入token的梯度。此步骤汇总每个token路由到的 $k$ 个专家的贡献，产生最终的 $(L, d)$ 输入激活梯度张量。由于没有激活存储来保存materialized routed token结果，这里也利用token索引数据结构进行即时归约。
+
+**4. 核心方法论：高效且可并行化的分派与数据结构**
+
+MoEBlaze定义并高效构建了以下关键数据结构，以支持上述内存高效的MoE训练算法，同时克服了GPU上常见的多对一映射导致的写竞争问题：
+
+**`expert token indices`**: 一个紧凑的张量，存储分配给每个专家的token索引，这些索引在所有专家之间是连接在一起的。在token-choice MoE训练中，每个token选择 $k$ 个专家，因此 `expert token indices` 的大小为 $L \times k$。此列表是专家检索其指定输入token的基础。
+**`expert token offsets`**: 一个长度为 $E+1$ 的数组，存储每个专家token计数的独占前缀和。对于专家 $i$，其分配的token的索引范围从 `expert token offsets[i]` 到 `expert token offsets[i+1] - 1`。
+**`token expert indices`**: 基本上是 `expert token indices` 的逆映射。它存储了每个token的路由专家ID，并按token ID排序。其形状也是 $L \times k$。在按专家处理token时，此列表用于对中间materialized结果（例如，两个背靠背MLP之间）进行合并索引。
+**`token index map`**: 一个 $L \times k$ 的紧凑张量，存储routed token在 `expert token indices` 列表中的位置。它按原始token ID $i \in L$ 逻辑分组，允许token高效地从中间缓冲区中找到并收集其 $k$ 个专家输出以进行最终组合。
+
+为了高效地构建这些数据结构，MoEBlaze采用了一种三步法，每一步都设计为无原子操作且在GPU上高度并行化，从而避免了昂贵的全局内存访问和复杂的multi-kernel pipeline，解决了传统基于排序的方法（如radix sort）在性能上的瓶颈：
+
+1.  **构建稠密Token-Expert Map (`dense token map`)：**
+    *   第一步是构建一个稠密位图 `dense token map` 来编码top-k token到专家的路由。对于每个token $i$，考虑其选择的top-k专家 $\{e_{i,0}, \dots, e_{i,k-1}\}$。对于每个gate slot，将 `dense token map[i, e_{i,k}]` 设置为 $i$。其他条目保持未设置。
+    *   `dense token map` 的构建在GPU上高度并行化。通过分配一个 $L \times E$ 的稠密map，并启动内核到CTA网格，每个warp处理一个不相交的token行（$i$）瓦片。由于每个token的专家ID是唯一的，保证了无intra-warp冲突。
+
+2.  **计算专家长度 (`expert lengths`)：**
+    *   利用已构建的 `dense token map`，下一步是高效计算每个专家的稀疏token ID列表的长度和偏移。
+    *   启动一个自定义内核，CTA网格映射到 `dense token map` 的列（专家）。每个CTA专用于一个专家 $e_i$，并计算该列中非零条目（token到专家分配）的数量。使用warp-level reductions聚合CTA内的行和，产生 `expert lengths` 数组。`expert lengths[e_i]` 表示路由到专家 $e_i$ 的token的最终数量。
+    *   计算长度后，通过在初始计数内核之外对 `expert lengths` 数组应用前缀和来导出 `expert offsets`。
+
+3.  **路由索引到门控 (`Route Indices to Gates`)：**
+    *   第三步是生成 `per-expert token id list expert token indices`，作为后续MLP计算的输入。为了在GPU上以无竞争的方式实现索引的紧凑、按专家连接，采用了一个两阶段过程，围绕生成一个 `location map`。
+    *   `location map` 指定了 `dense token map` 中每个非零条目在 `expert token indices` 列表中的最终目标位置ID。
+    *   一旦 `location map` 构建完成，一个简单的并行内核直接从 `dense token map` 读取元素，并将它们写入 `expert token indices` 中计算出的相应位置，确保完全并行且无原子操作。
+    *   `location map` 的构建通过两步策略实现无原子操作：
+        *   **tile-level scan:** 每个CTA处理一个专家。同一CTA内的线程处理分配给该专家的连续token在 `dense token map` 中。它们首先在共享内存中计算tile-level计数，然后执行CTA内部的独占扫描操作（前缀和）。
+        *   **global offset addition:** 结果的CTA局部独占扫描计数与专家的预计算全局 `expert offsets` 相加。这个加法产生连接索引数组中正确、最终的位置ID。
+
+**5. 核心方法论：端到端效率的训练内核协同设计**
+
+MoEBlaze对MoE训练内核及其底层GPU内核进行了联合优化，以解决与某些高级激活方法相关的内存问题，尤其是SwiGLU。
+
+**5.1 SwiGLU MoE与内存瓶颈**
+SwiGLU定义为 $\text{SwiGLU}(x; W_1, W_2) = \text{SiLU}(xW_1) \cdot (xW_2)$，其中 $\text{SiLU}(u) = u \cdot \sigma(u)$。对于MoE层，这会引入两个投影：$a = xW_1$ 和 $b = xW_2$，以及后续的元素级操作 $\text{SiLU}(a)$ 和最终乘积 $\text{SiLU}(a) \odot b$。在传统内核中，需要materialize多个中间结果（$a$, $b$, $\sigma(a)$, $\text{SiLU}(a)$），并进行全局内存读写，这在模型和batch size扩大时成为显著瓶颈。
+
+**5.2 激活检查点与内核协同设计**
+MoEBlaze的优化基于以下观察：
+*   **激活函数计算受内存带宽限制：** 激活函数计算主要是逐点操作，GPU对这类操作效率很高。在LLM训练中，$L \gg d$（token数量远大于嵌入维度），这种“高瘦”矩阵上的操作通常受内存带宽限制。
+*   **激活函数的内存占用显著：** 即使计算量小，复杂激活函数也需要materialize并保存大量中间结果用于反向传播，导致内存分配与batch size、sequence length和FFN维度呈线性关系，在万亿token训练环境中成本高昂。
+
+基于此，MoEBlaze提出了**联合激活检查点和内核融合**方法：
+*   **内核融合：** 将SwiGLU中两个第一层投影和激活epilogue融合到一个单独的内核中。该内核消费非materialized的routed tokens，只加载输入 $x$ 一次，同时通过两个 $(W_1, W_2)$ GEMM流式传输，在寄存器/共享内存中计算 $\text{SiLU}(a)$，并立即执行与 $b$ 的乘法，只将最终输出写入全局内存。这种“epilogue融合”消除了 $a$, $b$ 的全局写入和后续的元素级操作重新读取，将计算从内存受限领域尽可能转移到计算受限领域。它还将 $x$ 的输入读取量减半。
+*   **反向传播中的梯度聚合：** 在反向传播中，两个第一层投影的融合意味着来自两条路径的关于共享输入 $x$ 的梯度必须聚合。MoEBlaze的实现通过分块归约（tiled reductions）在原地（in-place）计算两个分支的激活导数并聚合梯度，完全消除了临时全局缓冲区。
+*   **激活检查点：** 进一步应用激活检查点策略——在正向传播时跳过保存SwiGLU中间结果（$\text{SiLU}(a)$）。相反，在反向传播时采用重计算策略，利用 $\text{SiLU}$ 函数计算开销低的特点。
+
+**6. 实验结果**
+
+MoEBlaze在NVIDIA H100 GPU上与Megablocks进行了比较，涵盖了ReLU和SwiGLU激活函数下的7种MoE配置。
+
+**内存效率（SiLU）：** MoEBlaze始终显著降低了激活内存消耗。在conf4（Dinput = 2048, E = 16, L = 1024, B = 32）配置下，MoEBlaze仅**需6,100 MB内存，相比Megablocks的22,000 MB减少了近3.6倍**。这种显著减少归因于**内存高效的token分派机制和智能重计算**（激活检查点）。
+**训练速度（SiLU）：** MoEBlaze实现了1.4倍到3.7倍的显著性能提升。最大加速在conf4实现，表明MoEBlaze在大模型维度下扩展性良好。这得益于优化的token分派实现、高效的数据分派构造内核（避免了昂贵的排序和多核流水线）以及针对H100硬件优化的融合batched-GEMM内核。
+**内存效率（SwiGLU）：** 即使在内存需求更高的SwiGLU激活函数下，MoEBlaze仍保持了显著的内存优势，峰值激活内存通常不到Megablocks的一半。例如，在conf3，Megablocks需要超过40,000 MB，而MoEBlaze控制在约10,000 MB，实现了4倍的内存减少。这证实了MoEBlaze的内存高效分派和智能重计算方案对于复杂激活函数也高度有效。
+**训练速度（SwiGLU）：** 相比ReLU结果，SwiGLU下的加速因子通常更高且更一致，范围从2倍到6.2倍。这归因于SwiGLU更复杂的计算为MoEBlaze高度融合的内核提供了更大的优势，并且内存带宽节省在SwiGLU中更为关键，因为中间激活大小更大、更复杂。
+
+
 ## DRQ
 Digital Red Queen: Adversarial Program Evolution in Core War with LLMs 
 
