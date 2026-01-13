@@ -1,6 +1,31 @@
 # AwesomePaper-for-AI
 Awesome or inspiring papers for AI
 
+## GDPO
+GDPO: Group reward-Decoupled Normalization Policy Optimization for Multi-reward RL Optimization
+
+paper：https://arxiv.org/pdf/2601.05242
+
+code：https://github.com/NVlabs/GDPO
+
+project：https://nvlabs.github.io/GDPO/
+<img width="794" height="464" alt="image" src="https://github.com/user-attachments/assets/7a4eece3-5698-44b1-aa2a-3b42baafe070" />
+
+<img width="799" height="554" alt="image" src="https://github.com/user-attachments/assets/9b55a8a2-c487-4a6f-a978-f3326dc42150" />
+
+<img width="795" height="465" alt="image" src="https://github.com/user-attachments/assets/eb8a647d-a5c7-4746-ad9f-3aca8b152d46" />
+
+<img width="800" height="355" alt="image" src="https://github.com/user-attachments/assets/0de25e19-13cf-486d-b23a-9e37294558e4" />
+
+1. 📉 现有研究中，Group Relative Policy Optimization (GRPO) 在多奖励强化学习 (RL) 中直接对汇总奖励进行归一化，导致不同奖励组合坍缩为相同的优势值，从而降低了训练信号的分辨率并可能导致次优收敛或早期训练失败。
+2. 💡 为解决此问题，本文提出了Group reward-Decoupled Normalization Policy Optimization (GDPO)，该方法通过解耦对每个单独奖励进行组内归一化，以更好地保留奖励间的相对差异，并通过批次优势归一化提高训练稳定性。
+3. 🚀 qwen1.5b 小模型（最大7b），跑了100step（最长550steps）。在工具调用、数学推理和代码推理等多种任务中，GDPO始终优于GRPO一丢丢，展示了其在多奖励RL优化中的有效性和泛化性，并实现了更强的收敛和下游性能。
+
+<img width="970" height="372" alt="image" src="https://github.com/user-attachments/assets/cb3ef74b-20c4-4548-820b-01e79d85573a" />
+<img width="959" height="448" alt="image" src="https://github.com/user-attachments/assets/dca2ab47-22b5-48f3-8790-37e3b7affdb0" />
+<img width="970" height="372" alt="image" src="https://github.com/user-attachments/assets/e6592f5b-22d8-43fd-a458-cde9eca7c016" />
+
+
 ## MoEBlaze
 MoEBlaze: Breaking the Memory Wall for Efficient MoE Training on Modern GPUs
 
