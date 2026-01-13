@@ -1,6 +1,27 @@
 # AwesomePaper-for-AI
 Awesome or inspiring papers for AI
 
+## REVATI
+REVATI: Transparent GPU-Free Time-Warp Emulation for LLM Serving 
+
+https://arxiv.org/pdf/2601.00397 佐治亚理工 2026.1.1
+
+<img width="631" height="485" alt="image" src="https://github.com/user-attachments/assets/87ed570c-19ec-4f7d-a8a6-9dc0593bc99e" />
+
+1. 🤔 为解决LLM服务系统配置测试昂贵且传统模拟器难以跟上快速迭代的问题，REVATI提出了一种GPU-free的时间扭曲仿真器。
+2. ⚙️ REVATI通过**拦截CUDA API调用来虚拟化设备管理**，并协调**分布式进程进行虚拟时间跳跃（time jumps）**，以快速**跳过GPU计算的等待时间并保持因果关系**。
+3. 🚀 该系统在vLLM和SGLang上实现了**低于5%的预测误差**，同时运行速度**比实际GPU执行快5-17倍**，大幅提升了LLM服务性能评估的效率和成本效益。基于Maya 和 Vidur
+
+中文解读 https://mp.weixin.qq.com/s/2GsXROvVqc4G3JebZJJAsw
+
+<img width="505" height="446" alt="image" src="https://github.com/user-attachments/assets/17cc17f9-086f-474d-afb7-fa0d5766900a" />
+<img width="523" height="594" alt="image" src="https://github.com/user-attachments/assets/13251562-08de-4997-8ed5-56ededc79a57" />
+<img width="490" height="342" alt="image" src="https://github.com/user-attachments/assets/9537de06-37a7-4ed5-b61e-f48732cd77ca" />
+<img width="505" height="380" alt="image" src="https://github.com/user-attachments/assets/24ff34a1-04cd-4348-b4c4-05b32561b0ce" />
+<img width="506" height="529" alt="image" src="https://github.com/user-attachments/assets/99522f72-8638-4b96-bd08-48d0758b785a" />
+<img width="511" height="289" alt="image" src="https://github.com/user-attachments/assets/fd9432cc-4a7c-434c-8355-99d8fb19c93c" />
+
+
 ## GDPO
 GDPO: Group reward-Decoupled Normalization Policy Optimization for Multi-reward RL Optimization
 
@@ -9,6 +30,8 @@ paper：https://arxiv.org/pdf/2601.05242
 code：https://github.com/NVlabs/GDPO
 
 project：https://nvlabs.github.io/GDPO/
+中文解读：https://mp.weixin.qq.com/s/pv6qpKxh8qDgFbPYABGA3g 
+https://mp.weixin.qq.com/s/K77IcMZWgk_nTHIPSM7fUQ
 <img width="794" height="464" alt="image" src="https://github.com/user-attachments/assets/7a4eece3-5698-44b1-aa2a-3b42baafe070" />
 
 <img width="799" height="554" alt="image" src="https://github.com/user-attachments/assets/9b55a8a2-c487-4a6f-a978-f3326dc42150" />
