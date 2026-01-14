@@ -10,7 +10,7 @@ https://arxiv.org/pdf/2601.00397 佐治亚理工 2026.1.1
 
 1. 🤔 为解决LLM服务系统配置测试昂贵且传统模拟器难以跟上快速迭代的问题，REVATI提出了一种GPU-free的时间扭曲仿真器。
 2. ⚙️ REVATI通过**拦截CUDA API调用来虚拟化设备管理**，并协调**分布式进程进行虚拟时间跳跃（time jumps）**，以快速**跳过GPU计算的等待时间并保持因果关系**。
-3. 🚀 该系统在vLLM和SGLang上实现了**低于5%的预测误差**，同时运行速度**比实际GPU执行快5-17倍**，大幅提升了LLM服务性能评估的效率和成本效益。基于Maya 和 Vidur
+3. 🚀 该系统在vLLM和SGLang上实现了**低于5%的预测误差**，同时运行速度**比实际GPU执行快5-17倍**，大幅提升了LLM服务性能评估的效率和成本效益。基于Maya (一个团队) 和 Vidur
 
 中文解读 https://mp.weixin.qq.com/s/2GsXROvVqc4G3JebZJJAsw
 
@@ -20,6 +20,25 @@ https://arxiv.org/pdf/2601.00397 佐治亚理工 2026.1.1
 <img width="505" height="380" alt="image" src="https://github.com/user-attachments/assets/24ff34a1-04cd-4348-b4c4-05b32561b0ce" />
 <img width="506" height="529" alt="image" src="https://github.com/user-attachments/assets/99522f72-8638-4b96-bd08-48d0758b785a" />
 <img width="511" height="289" alt="image" src="https://github.com/user-attachments/assets/fd9432cc-4a7c-434c-8355-99d8fb19c93c" />
+
+## Maya
+Maya: Optimizing Deep Learning Training Workloads using GPU Runtime Emulation
+
+https://arxiv.org/pdf/2503.20191 佐治亚理工 (与Revati一个团队) NVIDIA；2025.11.15 EuroSys26 
+
+1. 🚀 Maya 是一款性能**建模系统**，通过透明的 GPU **runtime emulation** 解决了深度学习**训练优化中**现有系统面临的语义鸿沟和通用性-易用性权衡问题。
+2. 💡 该系统通过**拦截未经修改的训练代码**的设备 API 调用来**模拟 GPU 交互并捕获低级操作的详细轨迹，**从而在不依赖实际硬件的情况下实现准确的性能预测。
+3. 🎯 Maya 在各种模型和优化策略中实现了低于5%的预测误差，并能识别出比现有方法**降低高达56%训练成本的配置**，同时通过 worker deduplication 和 trial pruning 大幅提升了搜索效率。
+   H100/V100/A40 单机多机。Torch2.1 
+   
+<img width="1256" height="524" alt="image" src="https://github.com/user-attachments/assets/96880831-e593-4ddc-b2e4-9de2320b3f90" />
+<img width="1248" height="523" alt="image" src="https://github.com/user-attachments/assets/cb154741-2b94-4280-bb01-c9d90d7db093" />
+<img width="1244" height="295" alt="image" src="https://github.com/user-attachments/assets/6a23873a-9119-44e0-8713-64fdcfabeef9" />
+<img width="601" height="667" alt="image" src="https://github.com/user-attachments/assets/05d7f028-df20-4cbc-8411-aa8de2e6f143" />
+<img width="1253" height="378" alt="image" src="https://github.com/user-attachments/assets/ca15a731-93af-463b-9e5f-85f9be3208f3" />
+<img width="608" height="487" alt="image" src="https://github.com/user-attachments/assets/55398ae2-e69c-41b9-997f-23436faf893a" />
+<img width="1247" height="384" alt="image" src="https://github.com/user-attachments/assets/c2d0a34a-3460-470c-b890-49b5bccace4c" />
+![Uploading image.png…]()
 
 
 ## GDPO
