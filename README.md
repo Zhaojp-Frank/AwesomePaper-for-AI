@@ -1,6 +1,23 @@
 # AwesomePaper-for-AI
 Awesome or inspiring papers for AI
 
+## Gecko
+Gecko: An Efficient Neural Architecture Inherently Processing Sequences with Arbitrary Lengths
+
+https://arxiv.org/abs/2601.06463 [University of Southern California & Meta AI Research] 2026.1.10
+
+https://github.com/XuezheMax/gecko-llm
+
+1. 🚀 Gecko是一种基于Megalodon骨干的新型神经网络架构，通过引入**时间步衰减归一化**、滑动**分块注意力（**SCA）和**自适应工作记忆（AWM）**来高效、内在地处理**任意长度的序列**。
+2. 💡 Gecko的时间步衰减归一化解决了传统**时间步归一化**的问题，SCA通过整合前一个块的信息改善了上下文边界，而AWM则**利用位置感知在线softmax核以分块级别捕获长期**信息。
+3. 📈 在2万亿训练tokens的规模上，**Gecko-7B的训练损失**（1.68）显著优于Llama2-7B和Megalodon-7B，并展现了处理高达**4百万tokens序列和从注意力窗口4倍长上**下文检索信息的固有长上下文能力。
+
+<img width="747" height="475" alt="image" src="https://github.com/user-attachments/assets/66f2739f-a19a-41af-959f-aac2484bbef2" />
+<img width="1484" height="536" alt="image" src="https://github.com/user-attachments/assets/84ee8bf5-bd98-4905-a9e4-0479908d1e6d" />
+<img width="1487" height="376" alt="image" src="https://github.com/user-attachments/assets/dbc68ac1-0dae-47c6-a584-ba621d641cad" />
+<img width="1485" height="554" alt="image" src="https://github.com/user-attachments/assets/093fc92d-6fc7-441c-ae97-5cbc1e182eb3" />
+
+
 ## MiMo-V2-Flash
 MiMo-V2-Flash Technical Report
 
