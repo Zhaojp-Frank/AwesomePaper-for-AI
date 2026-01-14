@@ -1,10 +1,27 @@
 # AwesomePaper-for-AI
 Awesome or inspiring papers for AI
 
+## MiMo-V2-Flash
+MiMo-V2-Flash Technical Report
+
+https://arxiv.org/pdf/2601.02780 小米 2026.1.8
+
+https://mp.weixin.qq.com/s/3a2xz8LYhyV6udSgxuQFoA 
+
+1. 架构创新：采用混合注意力机制，以 5:1 的比例交替使用滑动窗口注意力（SWA，窗口大小仅 128）和全局注意力（GA），并引入可学习的 Attention Sink Bias，在大幅降低 KV Cache 的同时维持了长文性能。
+2. 多 token 预测 (MTP) ：引入轻量级 MTP 模块作为推测解码的草稿模型，在推理阶段实现了最高 2.6 倍的加速。
+3. MOPD 后训练范式：提出“多教师在线蒸馏”（Multi-Teacher On-Policy Distillation），通过三个阶段（通用 SFT -> 领域专家 RL -> 学生模型 MOPD）解决了传统模型合并中的能力互斥问题，使单一模型能同时掌握多个领域专家模型的巅峰能力。
+4. 基础设施：引入 Rollout Routing Replay (R3) 解决 MoE 在 RL 训练中的路由不一致问题，并构建了支持大规模 Agent 训练的仿真环境。
+
+<img width="738" height="415" alt="image" src="https://github.com/user-attachments/assets/a4dddbcc-8d38-4183-a1f8-d84c3b0ef656" />
+
+
 ## REVATI
 REVATI: Transparent GPU-Free Time-Warp Emulation for LLM Serving 
 
 https://arxiv.org/pdf/2601.00397 佐治亚理工 2026.1.1
+
+中文解读：https://mp.weixin.qq.com/s/2GsXROvVqc4G3JebZJJAsw
 
 <img width="631" height="485" alt="image" src="https://github.com/user-attachments/assets/87ed570c-19ec-4f7d-a8a6-9dc0593bc99e" />
 
