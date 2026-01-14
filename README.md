@@ -1,6 +1,29 @@
 # AwesomePaper-for-AI
 Awesome or inspiring papers for AI
 
+## Dr. Zero
+Dr. Zero: Self-Evolving Search Agents without Training Data
+
+https://arxiv.org/abs/2601.07055 [Meta Superintelligence Labs 伊利诺伊大学] 2026.1.13
+
+Code: https://github.com/facebookresearch/drzero
+
+1. 💡 Dr. Zero是一个**无需训练数据的自演化框架**，旨在提升**大型语言模型（LLM）搜索代理的推理和搜索能力**。
+2. ⚙️ 该框架设计了一个**提问者-解决者反馈循环**，并通过**难度引导奖励和跳跃分组**相对策略优化（HRPO）来生成**多样化且具有挑战性的问题**，从而显著提高训练效率。
+3. 🎯 实验结果表明，Dr. Zero在复杂问答（QA）基准上能够匹配甚至超越完全监督的搜索代理，证明了**复杂推理和搜索能力可**以通过纯粹的自演化实现。
+Dr. Zero 的迭代过程如下：
+
+Proposer 生成： Proposer \pi_\thetaπθ\pi_\thetaπθ​ 生成一批具有不同跳数结构的问题-答案对。
+Proposer 优化： 利用 Solver 的反馈，Proposer 通过 HRPO 进行优化，以生成可验证、多样化且具有挑战性的问题。
+Solver 优化： Solver \pi_\phiπϕ\pi_\phiπϕ​ 利用这些生成的数据通过 GRPO 来优化其搜索和推理能力。
+这个交替优化循环创建了一个共生反馈机制：随着 Solver 的改进，简单问题的奖励会降低，迫使 Proposer 探索更复杂的推理路径来最大化其回报。反之，日益困难的问题可以防止 Solver 的训练奖励停滞不前，从而使其能够不断扩展推理技能。两个模型都从相同的基础 LLM 初始化，并仅依靠外部搜索引擎来驱动其性能改进，无需任何训练数据。
+
+<img width="807" height="286" alt="image" src="https://github.com/user-attachments/assets/573c45e5-babc-49d5-b4b2-ecca7cbbb815" />
+
+<img width="789" height="338" alt="image" src="https://github.com/user-attachments/assets/7bf69673-1e06-484b-86cd-cddec8dc0a9d" />
+
+<img width="789" height="509" alt="image" src="https://github.com/user-attachments/assets/cca2a84d-9472-4b45-bf38-ab43f8d7e427" />
+
 ## Gecko
 Gecko: An Efficient Neural Architecture Inherently Processing Sequences with Arbitrary Lengths
 
