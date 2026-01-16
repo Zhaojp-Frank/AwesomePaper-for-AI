@@ -1,6 +1,21 @@
 # AwesomePaper-for-AI
 Awesome or inspiring papers for AI
 
+## Proserve
+PROSERVE: Unified Multi-Priority Request Scheduling for LLM Serving
+
+https://arxiv.org/pdf/2512.12928 京东 中科大等 2025.12.15
+
+1. PROSERVE针对LLM服务中现有调度器未能同时优化Service Level Objective (SLO)达成和客户端优先级的问题，将其形式化为服务增益最大化任务，并提出**Token-level Deadline-aware** Gain (TDG)作为衡量指标。
+2. 引擎层，PROSERVE引入了**SlideBatching**，这是一种根**据实时负载动态调整批处理形成和请求排序的本地调度器**，通过**滑动边界机制平衡了“deadline-first”和“density-first”**策略。
+3. 服务层，GoRouting执行面向**增益和能力感知的请求分发，主动为未来的高优先级或长请求保留容量**，从而使系统**增益提高高达35%**，SLO达成率提高高达52%。
+
+基于京东等xLLM（c++），升腾910B单机16卡；Qwen7b/32b模型；对标vLLM基线，weighted VTC; FCFS/priority, FairBatching等。
+
+<img width="574" height="142" alt="image" src="https://github.com/user-attachments/assets/bbf9650b-53b5-4be1-b45b-1fcf526fde4d" />
+<img width="441" height="310" alt="image" src="https://github.com/user-attachments/assets/2fa0437b-d85f-4204-a8a6-64061fad0f06" />
+
+   
 ## TokenScale
 TokenScale: Timely and Accurate Autoscaling for Disaggregated LLM Serving with Token Velocity
 
@@ -9,6 +24,11 @@ https://arxiv.org/pdf/2512.03416 新加坡国立等，2025.12.3
 1. 现有LLM服务自动扩缩容策略因使用GPU利用率或请求计数等滞后指标，难以有效应对突发流量，导致SLO违规和资源浪费。
 2. 为此，TokenScale引入了Token Velocity这一统一的预测指标，并设计了Convertible Decoders机制，使decoder GPU能在流量高峰时动态执行prefill任务。
 3. 在生产流量追踪下的评估显示，TokenScale相比现有最先进系统将SLO达标率从50-88%提升至80-96%，并降低了4-14%的GPU成本。
+
+基于VLLM0.9.2 LMCache, 2台A100机器（CX6）；2台H100机器（CX6）；llama3.18b/Qwen-32b。
+对标基线：AIBrix；DistServe等。
+<img width="525" height="303" alt="image" src="https://github.com/user-attachments/assets/56f779d2-daa3-4028-a607-3d0336139d93" />
+
    
 ## Dr. Zero
 Dr. Zero: Self-Evolving Search Agents without Training Data
