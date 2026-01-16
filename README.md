@@ -1,6 +1,15 @@
 # AwesomePaper-for-AI
 Awesome or inspiring papers for AI
 
+## TokenScale
+TokenScale: Timely and Accurate Autoscaling for Disaggregated LLM Serving with Token Velocity
+
+https://arxiv.org/pdf/2512.03416 新加坡国立等，2025.12.3
+
+1. 现有LLM服务自动扩缩容策略因使用GPU利用率或请求计数等滞后指标，难以有效应对突发流量，导致SLO违规和资源浪费。
+2. 为此，TokenScale引入了Token Velocity这一统一的预测指标，并设计了Convertible Decoders机制，使decoder GPU能在流量高峰时动态执行prefill任务。
+3. 在生产流量追踪下的评估显示，TokenScale相比现有最先进系统将SLO达标率从50-88%提升至80-96%，并降低了4-14%的GPU成本。
+   
 ## Dr. Zero
 Dr. Zero: Self-Evolving Search Agents without Training Data
 
