@@ -1,6 +1,27 @@
 # AwesomePaper-for-AI
 Awesome or inspiring papers for AI
 
+## XOR cache
+The XOR Cache: A Catalyst for Compression" by Zhewen Pan, Joshua San Miguel
+
+https://dl.acm.org/doi/abs/10.1145/3695053.3730995 ISCA25 Best Paper Honorable Mentions
+
+1. 💡 XOR Cache 通过利用私有缓存和包容性策略的**数据冗余**，引入了一种新颖的压缩方案，解决LLC低效率问题。
+2. ⚙️ 该新架构存储**缓存行对的按位 XOR 值**，既实现了**行间压缩（将存储的行数减半）**，又通过**降低相似数据的熵来促进行内压缩**。
+3. 🚀 模拟器评估结果表明，XOR Cache 显著将 LLC 面积减少 1.93 倍，功耗减少 1.92 倍，而性能开销仅为 2.06%，从而使 energy-delay product 降低 26.3%。
+   
+<img width="660" height="304" alt="image" src="https://github.com/user-attachments/assets/ce2047c2-135b-4d04-a8d6-312b7ca8547e" />
+
+## Platinum
+Platinum: Path-Adaptable LUT-Based Accelerator Tailored for Low-Bit Weight Matrix Multiplication
+
+https://arxiv.org/pdf/2511.21910 2025.11.26 杜克
+
+1. 🚀 Platinum 提出了一种轻量级 ASIC 加速器，专为**利用查找表** (LUT) 加速**超低位量化**大语言模型的混合**精度矩阵乘法** (mpGEMM) 而设计。
+2. 💡 该加速器通过离线生成构建路径来减少 LUT 构建开销，并通过自适应路径切换支持通用的位串行执行和优化的三元权重执行。
+3. ⚡️ Platinum 在 BitNet **b1.58-3B** 上实现了显著的性能提升，相比现有基线在速度上最高达到 73.6 倍，在能耗上最高降低 32.4 倍，且芯片面积仅为 0.96mm²。
+超低位量化为结果复用提供了大量机会，可通过查找表（LUTs）加速。然而，现有基于LUT的方法存在LUT构建计算和硬件开销过大，以及仅依赖位串行计算（对于三值权重网络次优）的问题。
+
 ## STEM
 STEM: Scaling Transformers with Embedding Modules
 
