@@ -1,6 +1,35 @@
 # AwesomePaper-for-AI
 Awesome or inspiring papers for AI
 
+## KVZap
+KVzap: Fast, Adaptive, and Faithful KV Cache Pruning 
+
+https://arxiv.org/pdf/2601.07891 NV 2026.1.13
+https://huggingface.co/collections/nvidia/kvzap
+
+1. ✨ KVzap提出了一种**快速、自适应**的KV cache剪枝方法，通过**训练轻量级Linear或MLP模型**来**预测重要性分数**，并基于固定阈值动态丢弃不重要的KV对。
+2. ⚡️ 该方法解决了KVzip等现有方案在速度和解码阶段适用性上的局限，实现了**prefilling(更有针对性)和decoding的高效应用**，且计算开销可忽略不计。
+3. 🏆 在Qwen3-8B、Llama-3.1-8B-Instruct和Qwen3-32B等模型及RULER、LongBench、AIME25等长上下文任务上，KVzap实现了2-4倍的KV cache压缩，同时保持了可忽略的准确度损失。
+<img width="827" height="402" alt="image" src="https://github.com/user-attachments/assets/64cccc2a-ab62-4017-9960-d446910b7b10" />
+
+<img width="762" height="138" alt="image" src="https://github.com/user-attachments/assets/2a3b52d0-800d-44bc-8538-58f25b495136" />
+
+尽管已有许多针对KV Cache的架构优化（如GQA、MLA、滑动窗口注意力等）或剪枝方法，但它们或未能有效压缩时间($T$)轴上的KV Cache，或因速度-精度权衡、通用性、优化兼容性等问题而未被主流推理引擎采纳。KVzap旨在解决这些问题。
+
+- KVzip是prefill阶段压缩的SOTA；**但性能慢（repeat input twice，计算相关性score）且只能用在prefill阶段**。对于每个注意力头，原prompt中位置i处的KV对的重要性得分被定义为模型在重复时，对位置i的最大注意力权重。直观上，如果模型**在重复提示时很少关注某个位置的KV对**，则该KV对的信息量较低，可以被丢弃。
+<img width="1105" height="440" alt="image" src="https://github.com/user-attachments/assets/9beaedb1-0b37-450d-b2a4-d39557e799ae" />
+
+**训练过程**方面，KVzap利用了大规模预训练数据集（如Nemotron-Pretraining-Dataset-sample）中的1.2M个(h, log(s+))对进行训练。值得注意的是，KVzap的剪枝策略是**基于阈值的 (thresholding)**，而非固定比例的top-$k$选择。它会丢弃预测得分低于固定阈值$\tau$的KV对。这种自适应性使得压缩率能根据提示的信息密度动态调整：对于复杂输入保留更多Token，对于冗余输入则保留更少。此外，为了保持局部上下文，KVzap还保留了一个固定大小（默认为$w=128$）的滑动窗口，以遵循StreamingLLM等方法。
+
+<img width="748" height="313" alt="image" src="https://github.com/user-attachments/assets/f4731765-174c-41c7-b4d5-e2124a1ea034" />
+
+<img width="761" height="338" alt="image" src="https://github.com/user-attachments/assets/9207d2be-f3b6-4560-a3ef-e5fdcdea0700" />
+
+<img width="757" height="330" alt="image" src="https://github.com/user-attachments/assets/d3f7c144-4c13-4d83-869e-f3c5d8ef0df0" />
+
+实验结果表明，KVzap在Qwen3-8B、Llama-3.1-8B-Instruct和Qwen3-32B等模型上，在RULER和LongBench等长上下文任务以及AIME25等推理任务中，实现了2-4倍的KV Cache压缩，同时保持了可忽略的精度损失。KVzap-MLP通常优于KVzap-Linear，但对于Llama-3.1-8B-Instruct，KVzap-Linear表现出奇的好。KVzap的计算开销极低（KVzap-MLP最高1.1%，KVzap-Linear最高0.02%），在长上下文场景中相对于Attention的二次计算成本可以忽略不计。KVzap的自适应阈值剪枝优于固定比例剪枝，并且滑动窗口对于保持性能至关重要。
+
+
 ## prefillonly
 PrefillOnly: An Inference Engine for Prefill-only Workloads in Large Language Model Applications 
 
