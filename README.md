@@ -1,6 +1,40 @@
 # AwesomePaper-for-AI
 Awesome or inspiring papers for AI
 
+## Single-Stage Huffman Encoder 
+Single-Stage Huffman Encoder for ML Compression 
+
+https://arxiv.org/pdf/2601.10673 2026.1.15 Google
+
+1. 👉 该论文提出了一种**单阶段 Huffman 编码器**，旨在解决大型语言模型 (LLM) **训练中网络带宽瓶颈问题**，同时克服传统三阶段 Huffman 编码器的延迟和开销限制。
+2. 💡 该方法利用LLM层和分片之间观察到的**张量高统计相似性**，采用从平均概率分布**导出的固定码本**，从而**省去了运行时频率分析和码本传输的开销**。
+3. ✅ 通过预计算和共享这些固定码本，对Gemma2B SFT BF16实现了接近单分片 Huffman 编码（0.5% 以内）和理想 Shannon 压缩（1% 以内）的压缩率，从而实现了**高效的无损压缩**。但论文提了方法，没提具体实现。
+
+旨在解决大型语言模型 (LLM) 训练和推理中集体操作**受网络带宽限制的问题**。传统的 Huffman 编码器由于其三阶段设计（即时**频率分析、码本生成和码本传输**）引入了计算、延迟和数据开销。
+<img width="655" height="247" alt="image" src="https://github.com/user-attachments/assets/aaf7bfe0-9e04-4696-9b1e-be728b59e1ed" />
+
+**核心问题与传统方法的局限性：**
+LLM（例如 Gemini、Gemma、LLaMA、GPT）的训练和推理涉及数据分区 (sharding) 和跨多个加速器的并行计算。不同的并行策略（如 Data Parallelism、Tensor Parallelism、Pipeline Parallelism、Expert Parallelism 和 Sequence Parallelism）会调用各种集体操作 (Collective Operations)，例如 AllReduce、ReduceScatter、AllGather 和 AlltoAll。这些集体操作通常受到**网络带宽的限制。虽然无损压缩，特别是 Huffman 编码**，是减少网络流量和提高性能的有效方法，但其传统实现流程繁琐：
+1.  **第一阶段：** 扫描整个输入以构建符号的频率表。
+2.  **第二阶段：** 运行 Huffman 算法，为每个符号**生成变长编码**。
+3.  **第三阶段：** 再次扫描输入，用相应的编码替换符号。
+
+**提出的单阶段 Huffman 编码器方法：**
+论文的核心创新在于利用**数据的统计相似性来消除传统 Huffman 编码的实时开销**。其关键思想是使用**固定码本 (fixed codebooks)**，这些码本是从之前批次数据的**平均概率分布 (average probability distribution)** 中预先推导出来的。
+
+**核心方法学与技术细节：**
+1.  **统计相似性分析：** 论文通过分析 Gemma 2B 模型在 Supervised Fine Tuning (SFT) 过程中的 FFN1 激活张量（共 18 层，分片到 64 个 TPU 上，总计 1152 个分片）来验证其核心假设。研究表明，不同分片之间的 **Probability Mass Function** (PMF) 具有高度统计相似性。具体来说，对所有 FFN1 激活分片的 PMF 进行平均，然后计算每个分片 PMF 相对于这个平均分布的 Kullback-Leibler (KL) Divergence。结果显示，大多数**分片的 KL Divergence 值非常小**（小于 0.06），这强烈支持了平均分布可以很好地近似真实分布的结论。这证明了在分布式系统中，不同计算单元处理的相似张量具有一致的统计特性。
+2.  **固定码本的生成与应用：**
+    *   **离线生成：** 基于上述统计相似性，Huffman 码本不再需要为每个数据批次或每个分片实时生成。相反，可以**利用历史数据批次或训练/推理运行的平均概率分布**，在非关键路径 (off the critical path) 上预先计算并生成一套 Huffman 码本。
+    *   **多码本管理：** 系统可以**为不同类型的张量（例如 FFN1 激活、FFN2 权重梯度）和不同的数据类型**（如 bfloat16, e4m3 等）维护不同的预计算码本。
+    *   **码本共享与识别：** 这些预计算的码本在所有参与的节点之间共享。在实际操作时，编码器只需发送编码后的数据以及所使用的码本 ID (code book id)，而无需传输整个码本。接收方根据码本 ID 选择对应的预存码本进行解码。
+3.  **单阶段压缩：** 通过使用预先确定的固定码本，Huffman 编码过程可以简化为一个单阶段操作：**直接用预计算的码本对数据进行编码**。这消除了实时频率分析和码本生成/传输的开销，使得压缩能够高效地在**片间通信 (die-to-die communication) 等延迟敏感场景中**“即时 (on-the-fly)”完成。
+4.  **压缩性能：** 实验结果表明，使用从平均分布派生出的固定码本，其压缩率达到了与理想 Shannon 可压缩性 (Shannon compressibility) **1% 以内**，并且与每个分片单独生成 Huffman 码本所能达到的压缩率仅差 0.5%。这表明在极大地降低了计算和延迟开销的同时，保持了非常高的压缩效率。
+
+**实现方式：**
+所提出的方法可以在软件或硬件中实现。在软件实现中，程序员选择特定的码本。在硬件实现中，可以并行评估多个码本以选择最佳压缩效果的码本。
+
+
 ## Proserve
 PROSERVE: Unified Multi-Priority Request Scheduling for LLM Serving
 
