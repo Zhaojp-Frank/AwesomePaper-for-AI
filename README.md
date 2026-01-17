@@ -1,6 +1,52 @@
 # AwesomePaper-for-AI
 Awesome or inspiring papers for AI
 
+
+## Breadcrumbs Reasoning
+Breadcrumbs Reasoning: Memory-Efficient Reasoning with Compression Beacons
+
+https://arxiv.org/pdf/2510.13797 2025.12.29 康奈尔 哈佛
+
+https://github.com/lil-lab/breadcrumbs-reasoning 待开源
+
+1. 🍞 针对大型语言模型（LLM）在长上下文推理中KV缓存的内存和计算成本问题，本文提出了一种名为**Breadcrumbs Reasoning**的方法，通过定期将**生成的KV缓存压缩成一个特殊的“beacon(灯塔 信标)”令牌并清除旧条目来提高效率**。
+2. 💡 该方法**采用改进的联合蒸馏与强化学习**（RL-distillation）框架进行训练，使**模型能够学习如何有效地压缩信息并同时进行推理**，并在**训练期间通过注意力掩码模拟KV缓存清除**。
+3. ✨ Qwen2.5-1.5B和Phi-4-Mini实验结果表明，Breadcrumbs Reasoning在内存效率和推理准确性方面达到了更优的Pareto前沿，显著优于未压缩模型和现有的训练无关压缩技术，且能支持更长的推理链，尤其在固定内存预算下表现出色。
+本论文提出了一种名为“Breadcrumbs Reasoning (BR)”的记忆高效推理方法，旨在解决大型语言模型（LLMs）在处理长上下文推理时，Transformer键值（KV）缓存呈线性增长所导致的内存和计算成本问题。
+<img width="608" height="317" alt="image" src="https://github.com/user-attachments/assets/d6318b40-33bd-4937-bf9b-64208504e6bd" />
+<img width="675" height="504" alt="image" src="https://github.com/user-attachments/assets/39fca0dc-5d94-4476-aca7-dfa39dd8fed2" />
+<img width="663" height="514" alt="image" src="https://github.com/user-attachments/assets/0495e0b4-e737-4236-b569-fd31ca52aa08" />
+
+**核心思想与方法（详细与技术层面）：**
+该研究基于这样一个假设：当模型生成推理token时，之前生成token的信息价值会逐渐降低，从而为压缩提供了机会。BR方法的核心是在生成过程中周期性地压缩KV缓存。具体而言，它引入了一个特殊的、经过学习的“beacon”token，用于概括之前一系列token的信息。一旦这些信息被压缩并存储在“beacon”token中，原始的KV缓存条目就会被逐出，从而大幅节省内存。
+<img width="1478" height="518" alt="image" src="https://github.com/user-attachments/assets/46dced5a-21fa-469b-8b89-ddd5be236852" />
+<img width="663" height="314" alt="image" src="https://github.com/user-attachments/assets/25ca2eb1-06c1-45d1-acfe-1efe17fc78c7" />
+<img width="666" height="397" alt="image" src="https://github.com/user-attachments/assets/fad12da2-255c-430d-9b9c-2dfa5eefe9df" />
+
+
+**实验设置与结果：**
+1.  **模型与任务：** 实验在Qwen2.5-1.5B和Phi-4-Mini模型上进行，评估了三个具有挑战性的推理基准：Countdown（算术谜题，强调避免重复尝试）、LinSys（线性方程组，强调结构化演绎推理）和StarGraph（星图路径查找，模型易出错的自回归任务）。
+2.  **压缩比与训练模式：** 压缩比$c$设定为2、4、8、16和32。训练模式分为：
+    *   SR BR (Single Ratio Breadcrumbs Reasoning)：每个模型针对单一压缩比进行训练。
+    *   MR BR (Multi Ratio Breadcrumbs Reasoning)：单个模型在所有压缩比下进行训练，通过重复每个batch来适应不同的压缩比，这允许在推理时动态调整压缩比。
+3.  **基线：** 对比了四种训练无关的缓存淘汰基线：PyramidKV、SnapKV、TOVA和StreamingLLM。这些方法也适用于KV缓存压缩，但不需要额外的训练。
+4.  **评估指标：** 在固定最大缓存大小（1000条目）和固定最大生成长度（1000步）两种配置下评估准确率，并使用准确率-缓存大小曲线下面积（AUAC）来衡量模型在不同缓存约束下的鲁棒性。
+5.  **主要发现：**
+    *   **BR的卓越性能：** BR在精度-内存权衡上实现了Pareto改进。在相同的内存预算下，BR模型能够生成更长的推理链，从而匹配甚至超越教师模型（未压缩RL策略）的准确性。在Countdown和StarGraph任务上，BR在许多情况下甚至优于教师模型，因为它能在更小的缓存预算下进行更多的推理步骤。
+    *   **记忆效率：** BR在固定生成长度下，使用2-32倍更少的KV缓存条目，同时保留了65.1%-89.8%的原始性能。
+    *   **多比率训练（MR BR）的优势：** 尽管MR BR需要处理不同的压缩粒度，但其平均性能优于SR BR，表明联合训练有助于模型在不同比率之间共享有效的压缩策略，并提供了推理时的灵活性。
+    *   **训练无关基线的劣势：** PyramidKV、SnapKV、TOVA和StreamingLLM等训练无关方法表现明显不佳，尤其是在较高压缩比和复杂推理任务上。这强调了对于复杂推理任务，学习到的压缩方案是必要的。
+    *   **LinSys的挑战：** BR在LinSys任务上的性能提升不如其他任务明显，尤其是在高压缩比下。分析表明，主要问题在于算术错误而非记忆或信息检索失败，这可能与压缩数字的难度或对模型内部算术电路的影响有关。
+    *   **联合RL-蒸馏训练的验证：** 实验证明，联合RL-蒸馏训练方法与两阶段训练（先完整训练RL策略，再生成数据蒸馏）相比，表现相当或更优，证明了其在训练效率上的优势。
+    *   **推理时间：** BR的推理时间与教师模型相当，并且平均快于所有训练无关基线。
+
+**讨论与未来工作：**
+本研究表明，推理链中存在显著的压缩空间，并非所有信息都同等重要。BR通过有效压缩，在保留大部分推理性能的同时，实现了显著的内存节省。这在一定程度上是内存与时间之间的权衡。未来的研究方向包括：
+*   实现动态自适应的压缩比选择，而非固定压缩比。
+*   探索更激进的压缩方法，以在不增加推理步骤的情况下提高效率。
+*   将BR与CoT（Chain-of-Thought）缩短方法相结合，以实现推理长度和KV缓存的双重优化。
+*   在更广泛的推理基准场景中评估BR的行为。
+
 ## KVZap
 KVzap: Fast, Adaptive, and Faithful KV Cache Pruning 
 
