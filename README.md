@@ -1,6 +1,93 @@
 # AwesomePaper-for-AI
 Awesome or inspiring papers for AI
 
+## prefillonly
+PrefillOnly: An Inference Engine for Prefill-only Workloads in Large Language Model Applications 
+
+https://arxiv.org/pdf/2505.07203 SOSP25 2025.5
+
+1. 针对大型语言模型（LLM）在推荐、信用验证等判别任务中出现的“Prefill-only”工作负载（**即仅生成一个输出Token**），现有LLM推理引擎因其为任意长度输出设计而效率低下。
+2. PrefillOnly引擎通过引入混合预填充（hybrid prefilling）技术，分块处理非注意力层并可选择性地丢弃或卸载Suffix KV Cache，从而**显著减少GPU内存**占用并**提高最大输入长度**（MIL），避免了传统并行化带来的吞吐量损失。
+3. PrefillOnly利用Prefill-only请求固定的**Job Completion Time**（JCT），通过**连续JCT校准实现了高效的JCT感知调度**。2卡L40-8b/A100-32b/H100 70b，vLLM。最终保证较低平均和P99延迟的同时**，**4倍**的每秒查询量。
+<img width="511" height="262" alt="image" src="https://github.com/user-attachments/assets/6c84841d-918e-4ebe-b50c-330a4c05ccfb" />
+<img width="553" height="784" alt="image" src="https://github.com/user-attachments/assets/20c3b20c-ce4f-419e-8bc7-ea259cd2bc2a" />
+
+<img width="518" height="302" alt="image" src="https://github.com/user-attachments/assets/07106e04-1d56-4569-9a27-9770d568969f" />
+<img width="1116" height="568" alt="image" src="https://github.com/user-attachments/assets/e4592f38-4b44-4e2a-ae1d-84bdfc60b7e8" />
+<img width="560" height="433" alt="image" src="https://github.com/user-attachments/assets/6ff04f24-8012-4522-baf8-c05a1b4becc6" />
+
+**1. 问题与机遇**
+
+现有的 LLM 引擎是为可变长度输出设计的，因此未能充分利用 prefill-only 工作负载的独特属性：
+1.  **更小的 GPU 内存占用**: 传统的 LLM 推理为了重复使用 KV cache 会存储所有层的 KV cache。但对于 prefill-only 任务，生成的**KV cache 大部分不会被再次使用，因为只需生成一个 token**。这意味着可以显著减少 GPU 内存占用，从而处理更长的输入序列
+2.  **JCT（Job Completion Time）确定性**: 传统 LLM 请求的 **JCT 难以预测**，因为输出长度不确定。而 prefill-only 请求的输出长度固定为 1，这使得引擎能**够精确预估 JCT，从而实现更高效的 JCT 感知调度策略**（如最短剩余作业优先 SRJF）。
+
+**2. 现有引擎的局限性**
+
+*   **处理长请求的吞吐量权衡**: 现有引擎为了处理长请求，必须存储所有 KV cache，这限制了最大输入长度（MIL）。当请求长度超过 MIL 时，通常采用以下方法，但都会降低吞吐量：
+    *   **Chunked Prefilling**: 分块预填充，降低 attention kernel 性能。
+    *   **Tensor Parallelism**: 跨 GPU 通信开销大，降低整体吞吐量。
+    *   **Pipeline Parallelism**: 引入气泡（bubbles），导致次优的延迟-吞吐量权衡。
+*   **调度算法不感知 JCT**: 现有 LLM 引擎通常使用 JCT 不感知调度（如 FCFS），无法利用 prefill-only 请求 JCT 可预测的优势。此外，简单的丢弃 KV cache 只能略微提高 MIL，因为 LLM 推理本身分配的临时张量也会消耗大量 GPU 内存。
+
+**3. PrefillOnly 的核心技术**
+
+**3.1. 混合 Prefilling (Hybrid Prefilling)**
+
+这是 PrefillOnly 提高 MIL 的关键优化。作者发现，简单地丢弃 KV cache 效果不佳的原因在于，LLM 推理过程中线性层（linear layers）产生的**中间张量 (intermediate tensors) 才是 GPU 内存占用的主要瓶颈。**这些中间张量的大小远大于单层 KV cache。
+
+*   **原理**: 混合 prefilling 策略是：对非 attention 层 (non-attention layers) 进行分块处理 (chunk-by-chunk)，而对 attention 层 (attention layers) 正常处理。
+    *   非 attention 层（如 MLP 模块）是线性操作，其计算结果独立于其他部分，因此可以分块计算。分块处理意味着在任意时间点，只需为当前处理的 chunk 存储中间张量，从而显著降低峰值 GPU 内存使用。
+    *   Attention 层仍按常规方式处理，因为其计算依赖于整个序列。
+*   **实现**: 通过 `torch.compile` 实现。
+    *   将连续的线性操作分组为虚拟层。
+    *   分块通过这些虚拟层，并在末尾拼接输出张量。
+    *   **优化**:
+        *   **Output Preallocation (输出预分配)**: 提前分配好最终的输出张量空间，避免在拼接时重复分配内存。
+        *   **In-place Computation (原地计算)**: 如果输入和输出张量形状相同，则复用输入张量的 GPU 内存来存储输出张量，进一步节省内存。
+
+**3.2. Suffix KV Cache Discarding / Offloading (后缀 KV Cache 丢弃/卸载)**
+*   **目的**: 允许 PrefillOnly 在不降低吞吐量的情况下处理更长的请求，同时仍能利用 prefix caching。
+*   **机制**: PrefillOnly 会最大限度地保**留前缀 token 的 KV cache，并丢弃或卸载后缀 token 的 KV cache。**
+*   **使能者**: 混合 prefilling 是实现这一点的关键，因为它确保了整个 prefilling 过程可以在一次 LLM 前向传播中完成，使得不再需要为后续解码保留全部 KV cache。
+
+**3.3. Continuous JCT Calibration (持续 JCT 校准)**
+*   **问题**: 传统的 JCT-based 调度（如 SRJF）在 prefix caching 场景下表现不佳，因为 KV cache 的存在会动态改变请求的实际 JCT。一个请求的 JCT 会在共享前缀的 KV cache 可用时降低，在 KV cache 被逐出时升高。这导致调度器无法及时优先处理那些能命中缓存的请求。
+*   **解决方案**: PrefillOnly 在每次调度前，持续校准等待队列中请求的 JCT。
+    *   **JCT 估计**: 对于每个请求 $r$，PrefillOnly 基于其输入 token 数量 $n_{input}$ 和命中 prefix cache 的 token 数量 $n_{cached}$ 来估计 JCT。经验上，作者发现未命中 cache 的 token 数量 $(n_{input} - n_{cached})$ 是 JCT 的良好代理（Pearson 相关系数 0.987）。
+    *   **调度算法**: 调度算法可以表示为：
+        $$ \text{score} = \text{get\_jct}(n_{input}, n_{cached}) - \lambda \cdot T_{queue} $$
+        其中，$T_{queue}$ 是请求在队列中的等待时间，$\lambda$ 是一个公平性参数。
+    *   **优势**:
+        *   **提高 Cache 命中率**: 动态校准使得调度器能及时识别并优先处理那些能够命中现有 prefix cache 的请求，从而提高整体 cache 命中率，降低平均延迟。
+        *   **公平性与防饥饿**: 引入 $T_{queue}$ 项可以防止长请求被短请求持续饿死，通过降低长时间等待请求的优先级得分来保证其最终被调度。
+*   **不进行 Batching**: PrefillOnly 选择了逐个调度请求，而不是进行 Batching。原因在于 prefill-only 工作负载是 GPU 计算密集型 (computation-bound)，而不是 GPU 内存访问带宽密集型 (memory-bandwidth-bound)（像解码阶段）。Batching 能够显著提高内存带宽受限情况下的吞吐量，但对计算受限的情况改善不大，反而会增加平均延迟。
+
+**4. 评估**
+
+PrefillOnly 在 4 种硬件配置、3 种 LLM 模型和 2 种模拟工作负载（Post Recommendation 和 Credit Verification）上进行了评估。
+
+*   **数据集**:
+    *   **Post Recommendation (短上下文，高前缀缓存复用)**: 模拟社交媒体推荐场景，用户档案长度约 11,000-17,000 tokens，帖子长度约 150 tokens。每个用户对应 50 个请求，前缀缓存复用频繁。
+    *   **Credit Verification (长输入长度)**: 模拟信用验证场景，信用历史长度约 40,000-60,000 tokens。每个用户 1 个请求，重点测试 MIL。
+*   **基线**:
+    *   PagedAttention (vLLM 的默认管理策略)
+    *   Chunked Prefill
+    *   Pipeline Parallel
+    *   Tensor Parallel
+*   **结果**:
+    *   **QPS-Latency 权衡**: PrefillOnly 在高 QPS (Query Per Second) 下始终实现最低的平均延迟和 P99 延迟，表明其吞吐量显著高于基线。在低 QPS 下，PrefillOnly 的延迟可能高于基于并行化的基线（因为它们利用了多 GPU 服务单个请求），但在高 QPS 下，并行化基线由于通信开销，吞吐量远低于 PrefillOnly。
+    *   **MIL 提升**: PrefillOnly 能够将 LLM 的最大输入长度提高达 5 倍（相比非并行化基线），且不降低吞吐量。混合 prefilling 策略本身可以将 MIL 提高达 8.7 倍。
+    *   **性能来源**:
+        *   在 Post Recommendation 场景中，PrefillOnly 的优势主要来自于其持续 JCT 校准机制，有效提高了前缀缓存命中率，避免了在高 QPS 下基线因缓存不足而导致的性能瓶颈。
+        *   在 Credit Verification 场景中，PrefillOnly 的优势主要在于其能够处理长上下文而无需并行化 LLM 推理。并行化方案会因昂贵的 `all-reduce` 通信（Tensor Parallel）或流水线气泡（Pipeline Parallel）而导致 GPU 闲置时间。即使使用 NVLink，PrefillOnly 仍能保持更高的吞吐量。
+    *   **公平性参数 $\lambda$**: 提高 $\lambda$ 值可以改善 P99 延迟，但会略微增加平均延迟，显示了公平性与平均性能之间的权衡。
+
+**未来工作**:
+*   将后缀 KV cache 卸载到 CPU（例如使用 LMCache），以允许未来请求复用被丢弃部分的计算。
+*   将 PrefillOnly 应用于 prefill-decode 分离架构中的 prefill 节点。
+*   进一步探索 prefill-only 工作负载的延迟优化，例如通过连续分配 GPU 缓冲区。
+  
 ## Long decode KV
 Hold Onto That Thought: Assessing KV Cache Compression On Reasoning
 
