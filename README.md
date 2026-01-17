@@ -1,6 +1,60 @@
 # AwesomePaper-for-AI
 Awesome or inspiring papers for AI
 
+## Long decode KV
+Hold Onto That Thought: Assessing KV Cache Compression On Reasoning 
+https://arxiv.org/pdf/2512.12008 2025.12.12 马里兰大学 芝加哥大学等
+
+https://github.com/minghui-liu/kvpress 基于NVIDIA对KVpress 增加了一些方法实现
+
+1. 💡 本研究全面评估了多种KV cache压缩策略在需要长生成（**long decoding**）的LLM推理任务上的性能。
+2. 🚀 结果显示，对于推理模型，基于注意力（**attention-based**）的"heavy-hitter"策略，特别是H2O和**解码版SnapKV，表现出显著优势**。
+3. 📉 论文还发现，在较低的缓存预算下，压缩策略可能导致模型生成更长的推理序列，揭示了缓存大小与推理成本之间的潜在权衡。
+
+不足：最大模型14b; 没有MoE模型；没有高难度的AIME25评测集；最大decode长度只有2K。
+
+<img width="788" height="326" alt="image" src="https://github.com/user-attachments/assets/e8a92209-ca70-4b62-8607-34e376ec0483" />
+
+全面评估了大型语言模型（LLMs）在长序列decode中，各种流行KV缓存压缩策略的性能。LLMs在复杂多步推理任务上表现出色，但其KV缓存（用于加速注意力计算）会随上下文长度线性增长，导致内存瓶颈。现有压缩算法旨在通过驱逐“不重要”的token来缓解这一问题，但大多数评估集中于处理长提示的prefill阶段，而非需要长生成（long decoding）的推理任务。
+<img width="742" height="245" alt="image" src="https://github.com/user-attachments/assets/7da31738-7575-407b-bc1e-edcdcffc03d5" />
+<img width="518" height="170" alt="image" src="https://github.com/user-attachments/assets/a4215fee-497e-4928-8a0b-1723c6bd66b7" />
+<img width="783" height="432" alt="image" src="https://github.com/user-attachments/assets/98043bd8-59e4-4916-a6a8-cc44a0ed07b6" />
+<img width="785" height="424" alt="image" src="https://github.com/user-attachments/assets/bef409a1-c892-4951-a1fc-65340aeee66e" />
+
+**研究动机与背景：**
+推理基准测试（如GSM8K、MATH500）通常要求LLM生成比问题本身长得多的答案，形成数千token长的“思考序列”（thinking sequences）。这使得KV缓存的线性增长 ($O(n)$ 内存复杂度) 成为一个严重问题。专门的推理模型（如DeepSeek-R1、Llama-Nemotron系列）尤其以其冗长的推理轨迹而闻名。KV缓存压缩方法通过维护固定大小的缓存来解决此问题，其核心在于如何定义并驱逐“不重要”的token。现有方法基于不同的启发式规则，包括注意力分数、余弦相似度、嵌入范数和特定头的token类型偏好。然而，这些方法的评估往往忽略了生成长度主导内存使用的场景。
+
+**核心贡献：**
+1.  **综合基准测试：** 论文在八个推理基准（FOLIO, DROP, GSM8K, MATH-500, ReClor, StrategyQA, CommonSenseQA, OpenBookQA）上，全面评估了主流KV缓存压缩策略，包括StreamingLLM、H2O、解码增强型SnapKV（SnapKV-Decoding）、R-KV和KNorm。评估覆盖了Llama-3.1-8B-Instruct（非推理模型）以及DeepSeek-R1-Distill-Qwen-7B/14B、Nemotron-Nano-8B-v1、DeepSeek-R1-Distill-Llama-8B（推理模型）等多个模型，以及不同缓存预算（128, 256, 384, 512 token）和最大生成token限制（2048 token）。
+2.  **重新关注基于注意力的压缩：** 研究发现，经典的基于注意力分数的“重击者”（heavy-hitter）策略，即H2O和论文提出的SnapKV-Decoding，在推理模型上表现卓越，甚至在某些情况下超越了完整缓存（full-cache）性能。这表明跟踪重击者token对于推理轨迹至关重要。
+3.  **开发解码压缩库：** 论文实现并开源了NVIDIA `kvpress2` 库的一个分支，增加了对解码阶段压缩的支持，并集成了R-KV和H2O方法，为KV缓存压缩研究提供了开放平台。
+
+**KV缓存压缩方法技术细节：**
+论文评估的几种主要策略及其工作原理：
+*   **StreamingLLM：** 保留前几个（如四个）token作为“注意力汇点”（attention sinks），并结合最近token的滑动窗口。
+*   **H2O (Heavy-Hitter Oracle)：** 基于token在生成过程中累积获得的注意力分数，动态识别并保留重要的“重击者”token。缓存由最近token和H2 token两部分预算组成。
+*   **SnapKV (SnapKV-Decoding)：** 原始SnapKV主要用于prefill阶段的提示压缩。**论文将其扩展为SnapKV-Decoding (SnapKV-D)，使其在解码阶段也可用**。它使用一个小的“观察窗口”（observation window）（默认大小 $w=128$）来预测重要性。窗口中查询的注意力分数被聚合，以“投票”选出prefix中的重要位置（重击者）。在解码过程中，观察窗口沿已解码序列滑动，每 $w$ 步，SnapKV-D会根据当前窗口中token对缓存中所有token的注意力分数，驱逐分数最低的token以维持预算。计算开销为 $O(\frac{N}{w}Bd)$，其中 $N$ 是解码序列长度，$B$ 是缓存预算，$d$ 是键向量维度。
+*   **R-KV：** 专为推理轨迹压缩设计，结合累积注意力分数和token间的键余弦相似度来识别不重要token。
+*   **KNorm：** 一种计算高效的方法，不依赖注意力分数。它观察到键向量L2范数较低的token通常能从后续查询中获得高注意力分数，因此驱逐L2范数最大的token。计算开销为 $O(N)$。
+*   **ShadowKV：** 将KV缓存卸载到CPU，不属于严格意义上的压缩，但作为基线进行比较。
+
+**主要发现与分析：**
+1.  **注意力是推理模型的最佳指示器：** SnapKV-D和H2O在推理模型上表现最佳，显著优于所有预算和数据集下的其他策略。这两种方法都依赖于累积注意力分数来确定要保留的token。SnapKV-D通过其滑动观察窗口机制，在捕获关键token方面略优于H2O。对“关键token留存率”（critical token retention rate）的分析（如Table 8和Figure 5所示）表明，SnapKV-D和H2O能以更高比例保留与问题相关的关键token（如数值、专有名词），因为这些token在推理过程中倾向于持续表现出高注意力。推理模型输出中关键token的密度也更高，进一步佐证了这种策略的有效性。
+2.  **非推理模型的策略选择：** 对于非推理模型Llama-3.1-8B-Instruct，没有单一的策略占据主导地位，性能高度依赖于数据集。例如，StreamingLLM在GSM8K上表现出色，但在其他任务上效果不佳。这可能因为非推理模型对关键token的依赖性不如推理模型。
+3.  **低预算下的性能下降与生成长度增加：** 对于推理模型，压缩策略（尤其是低预算下）可能导致生成更长的推理轨迹（“更健谈”的模型），甚至不终止的循环回答（如KNorm在Deepseek-R1-Distill-Llama-8B上的表现）。这揭示了缓存大小与推理成本之间的一种权衡：过度压缩可能导致关键信息丢失，迫使模型生成更长的、无效的思考序列以尝试找到答案。非推理模型未出现此现象。
+4.  **注意力损失与性能关联：** 对不同方法的注意力损失（pre-eviction与post-eviction注意力分数之间的绝对差值）分析表明，注意力损失越小，模型性能越好。SnapKV-D和H2O的注意力损失最小，与它们的高性能相符。
+5.  **计算开销与延迟：** StreamingLLM和KNorm由于不计算累积注意力分数，计算开销相对较低，其延迟优于H2O和SnapKV-D（参见Figure 2和Table 13）。然而，性能差距有时可以弥补延迟。
+6.  **扩大模型规模的验证：** 对R1-Distill-Qwen-14B（更大推理模型）的测试同样发现H2O和SnapKV-D显著优于其他方法，表明基于注意力的驱逐策略在大规模推理模型中依然有效。
+7.  **与稀疏注意力方法的比较：** 尽管本研究主要关注KV缓存压缩，但与稀疏注意力方法SeerAttention的初步比较显示，SnapKV-D与SeerAttention性能接近，SnapKV-D略优。值得注意的是，SnapKV-D维护固定大小缓存，而SeerAttention需维护完整缓存。
+
+**实践指导：**
+*   避免使用极低的缓存预算，因为这可能反而增加输出长度。
+*   对于大预算（B > 1024）和较小最大token限制，StreamingLLM表现良好。
+*   在其他情况下，SnapKV-D和H2O是首选，尤其对于推理模型。
+*   对于SnapKV-D，在不显著影响性能的前提下，增加观察窗口大小（w）可以减少计算开销。
+*   累积注意力分数是推理模型token重要性的高质量度量。
+
+
 ##  Reasoning or Guessing
 Are Your Reasoning Models Reasoning or Guessing? A Mechanistic Analysis of Hierarchical Reasoning Model
 
