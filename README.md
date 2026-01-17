@@ -1,6 +1,42 @@
 # AwesomePaper-for-AI
 Awesome or inspiring papers for AI
 
+## STEM
+STEM: Scaling Transformers with Embedding Modules
+
+https://arxiv.org/pdf/2601.10639 Meta CMU等 2026.1.15
+
+Github: https://github.com/Infini-AI-Lab/STEM
+
+Website: https://infini-ai-lab.github.io/STEM
+
+1. STEM（Scaling Transformers with Embedding Modules）是种**静态、token-indexed方法**，它通过层**局部嵌入查找替换FFN的up-projection**，旨在**提高参数容量，同时解决传统MoE训练不稳定、负载不均衡和通信开销大**等挑战。
+2. 设计使得STEM在**极端稀疏性下仍能稳定训练，并在知识和推理密集型**基准测试（如ARC-Challenge、OpenBookQA、GSM8K、MMLU）中**实现显著的下游性能提升**，同时**增强了长上下文性能**。
+3. STEM**还减少了per-token FLOPs和参数访问以提高效率**，并且其token-indexed的嵌入特性提供了更强的可解释性，支持知识编辑和注入。
+<img width="873" height="342" alt="image" src="https://github.com/user-attachments/assets/2ef8dad0-a39f-437e-be7c-aa7f46a6718f" />
+
+**STEM 的优势**
+1. **训练稳定性**：尽管具有极高的稀疏性，STEM 在训练过程中没有表现出像 MoE 模型那样的损失尖峰 (loss spikes)，训练曲线更平滑，且在相同的训练 FLOPs 下能达到更低的损失。
+
+2. **增强的知识存储容量**：STEM 学习到的嵌入空间展现出更大的角扩展 (angular spread)，即嵌入向量之间的余弦相似度较低（接近正交），这减少了表示干扰 (representational interference)，有效增加了存储和检索信息的“槽位”数量，从而提升了模型处理知识密集型任务（如 ARC-Challenge, OpenBookQA, GSM8K, MMLU）的能力。
+
+3. **可解释性与可控性** (Interpretability & Controllability)：由于每个 STEM 嵌入都与一个特定的 token ID 相关联，个体“微专家”具有清晰的 token 级语义。这使得 STEM 模型具有独特的知识编辑 (knowledge editing) 能力：通过简单地交换或修改特定 token 的 STEM 嵌入，可以在不改变输入文本的情况下，引导模型的输出分布（例如，将关于“西班牙”的生成改为关于“德国”），这表明**事实知识在这些嵌入中是局部化的、可编辑的**。论文详细探讨了处理不同 token 长度实体时的编辑策略：左填充 (left padding)、复制 (copying)、子集选择 (subset selection) 和平均 (averaging)。
+长上下文推理 (Long-context Inference)：随着序列长度的增加，STEM 能够激活更多不同的参数，实现测试时的容量扩展。在 Needle-in-a-Haystack (NIAH) 等长上下文任务中，STEM 模型的性能增益随上下文长度的增加而增强，并且在 LongBench 上也表现出一致的优势。
+
+4. **效率提升**：通过**消除 FFN 的 up-projection 矩阵，STEM 减少了约三分之一的 FFN 参数**。这在训练和预填充 (prefill) 阶段降低了每 token 的 FLOPs，并在解码阶段减少了参数加载成本 (parameter loading cost)。论文提供了详细的理论分析，展示了在不同模型规模下 FLOPs 减少的百分比（例如，Qwen2.5-32B 可达 24.8%）。
+
+5. VRAM 和通信节省：大的 STEM 嵌入表可以卸载到 CPU 内存，从而释放 GPU 内存。由于其 token 索引的特性，所需的嵌入可以异步预取 (asynchronous prefetch)，且无需像 MoE 那样进行所有专家之间的 all-to-all 通信，大大降低了通信开销。
+
+**系统实现**
+CPU Offloading：将大型 STEM 嵌入表卸载到 CPU 内存。
+Asynchronous Prefetch：在 GPU 计算的同时，异步预取所需的嵌入。
+Token Deduplication：对批次中的 token ID 进行去重，以减少 CPU-GPU 通信量。
+LFU Caching：利用 token ID 的 Zipfian 分布特性，实现高效的 LFU 缓存，提高命中率。
+Parallel Embeddings：在训练期间，将 STEM 嵌入表分片 (shard) 到多个 GPU 上。
+
+**实验结果** 
+STEM 在 350M MobileLLM 和 1B Llama3.2 模型上进行了评估，并与 dense baseline 和 Hash Layer MoE 进行了比较。结果显示，STEM 在下游任务上实现了高达 3–4% 的准确率提升，尤其是在知识密集型和推理任务（如 ARC-Challenge, OpenBookQA, GSM8K, MMLU）上表现显著。此外，STEM 展示了更高的训练投资回报率 (Training ROI)，即在更少的训练 FLOPs 下达到更高的模型准确率。消融研究进一步证实了 STEM 层数量增加对性能的积极影响，以及 STEM 在 FFN 中放置位置的重要性（up-projection vs. gate-projection）。
+
 ## Single-Stage Huffman Encoder 
 Single-Stage Huffman Encoder for ML Compression 
 
@@ -8,9 +44,10 @@ https://arxiv.org/pdf/2601.10673 2026.1.15 Google
 
 1. 👉 该论文提出了一种**单阶段 Huffman 编码器**，旨在解决大型语言模型 (LLM) **训练中网络带宽瓶颈问题**，同时克服传统三阶段 Huffman 编码器的延迟和开销限制。
 2. 💡 该方法利用LLM层和分片之间观察到的**张量高统计相似性**，采用从平均概率分布**导出的固定码本**，从而**省去了运行时频率分析和码本传输的开销**。
-3. ✅ 通过预计算和共享这些固定码本，对Gemma2B SFT BF16实现了接近单分片 Huffman 编码（0.5% 以内）和理想 Shannon 压缩（1% 以内）的压缩率，从而实现了**高效的无损压缩**。但论文提了方法，没提具体实现。
+3. ✅ 通过预计算和共享这些固定码本，对Gemma2B SFT BF16实现了接近单分片 Huffman 编码（0.5% 以内）和理想 Shannon 压缩（1% 以内）的压缩率，从而实现了**高效的无损压缩**。但论文没给具体实现。
 
 旨在解决大型语言模型 (LLM) 训练和推理中集体操作**受网络带宽限制的问题**。传统的 Huffman 编码器由于其三阶段设计（即时**频率分析、码本生成和码本传输**）引入了计算、延迟和数据开销。
+
 <img width="655" height="247" alt="image" src="https://github.com/user-attachments/assets/aaf7bfe0-9e04-4696-9b1e-be728b59e1ed" />
 
 **核心问题与传统方法的局限性：**
