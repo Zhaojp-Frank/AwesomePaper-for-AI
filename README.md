@@ -1,6 +1,28 @@
 # AwesomePaper-for-AI
 Awesome or inspiring papers for AI
 
+## TRIM
+TRIM: Hybrid Inference via Targeted Stepwise Routing in Multi-Step Reasoning Tasks
+
+https://arxiv.org/pdf/2601.10245 2026.1.16 CMU, AWS等
+
+1. 🧠 TRIM 提出了一种创新的**step-wise router**，通过仅将**关键步骤路由给更强大的大型语言模型**（Ms），而让**更小的模型（Mw）处理常规延续，从而显著提高了多步推理任务的成本效率**。
+2. 🛠️ 该方法利用 Process Reward Models (**PRMs**) 识别错误步骤，并整合了多种路由策略，包括简单的 TRIM-Thr、基于 RL 训练的 TRIM-**Agg** 以及处理 PRM 噪音的 TRIM-POMDP，以在准确性和成本之间进行权衡。
+3. 🚀 实验结果表明，TRIM 在 MATH-500 和 AIME 等基准测试上实现了显著的成本效率提升（最高达 6 倍），并展现出强大的跨数据集泛化能力，证明其 step-level 难度模式捕捉了推理的基本特性。
+
+<img width="1160" height="275" alt="image" src="https://github.com/user-attachments/assets/15534718-f952-4314-83f8-9944ed315df6" />
+
+针对现有 LLM 路由方法将整个查询分配给一个模型，以及多步骤推理中“瀑布式失败”现象（即早期一个错误步骤可能导致整个解决方案崩溃）的痛点，TRIM 引入了一种细粒度的步进式干预策略。
+
+**核心思想：** 并非所有推理步骤都具有相同的难度或重要性。只在那些关键的、容易导致推理链脱轨的步骤进行干预，将这些“关键步骤”路由给更强大的大型语言模型 (Large Language Model, LLM)，而让小型、经济的模型处理常规的延续步骤。这种**靶向干预”显著提升了推理效率**，通过限制昂贵模型 (strong LLM, M_sMsM_sMs​) 的调用，精确作用于那些能有效防止级联错误的步骤。使用 Process Reward Models (PRMs) 来评估中间推理步骤的质量，并根据这些评估做出路由决策。
+<img width="1370" height="496" alt="image" src="https://github.com/user-attachments/assets/c172943a-2e06-42ab-8677-9c74e8ac8187" />
+
+模型配置：廉价模型 M_wMwM_wMw​ 为 Qwen2.5-3B-Instruct，昂贵模型 M_sMsM_sMs​ 为 Claude 3.7 Sonnet，PRM 为 Qwen2.5-Math-PRM-7B。
+基准测试：MATH-500、AIME、OlympiadBench 和 Minerva Math。
+基线方法：RouteLLM (BERT、Matrix Factorization、SW Ranking)、Smoothie、AutoMix，以及本文提出的 AutoMix-PRM 变体（用 PRM 评分替代原始的 self-verification 信号）。
+评估指标：CPT (Cost-Performance Threshold)，表示达到特定性能水平所需的最小 token 成本；\DeltaΔ\DeltaΔIBC (Incremental Benefit Per Cost)，衡量相对于基线的成本效益增益；PGR (Performance Gap Recovered)，衡量 M_wMwM_wMw​ 和 M_sMsM_sMs​ 之间性能差距的恢复程度。
+<img width="1155" height="650" alt="image" src="https://github.com/user-attachments/assets/24bb4db9-1d2c-4b96-af5e-1370e1695079" />
+
 ## XOR cache
 The XOR Cache: A Catalyst for Compression" by Zhewen Pan, Joshua San Miguel
 
