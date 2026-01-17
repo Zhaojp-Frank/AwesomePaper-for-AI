@@ -2,7 +2,8 @@
 Awesome or inspiring papers for AI
 
 ## Long decode KV
-Hold Onto That Thought: Assessing KV Cache Compression On Reasoning 
+Hold Onto That Thought: Assessing KV Cache Compression On Reasoning
+
 https://arxiv.org/pdf/2512.12008 2025.12.12 马里兰大学 芝加哥大学等
 
 https://github.com/minghui-liu/kvpress 基于NVIDIA对KVpress 增加了一些方法实现
@@ -27,7 +28,7 @@ https://github.com/minghui-liu/kvpress 基于NVIDIA对KVpress 增加了一些方
 **核心贡献：**
 1.  **综合基准测试：** 论文在八个推理基准（FOLIO, DROP, GSM8K, MATH-500, ReClor, StrategyQA, CommonSenseQA, OpenBookQA）上，全面评估了主流KV缓存压缩策略，包括StreamingLLM、H2O、解码增强型SnapKV（SnapKV-Decoding）、R-KV和KNorm。评估覆盖了Llama-3.1-8B-Instruct（非推理模型）以及DeepSeek-R1-Distill-Qwen-7B/14B、Nemotron-Nano-8B-v1、DeepSeek-R1-Distill-Llama-8B（推理模型）等多个模型，以及不同缓存预算（128, 256, 384, 512 token）和最大生成token限制（2048 token）。
 2.  **重新关注基于注意力的压缩：** 研究发现，经典的基于注意力分数的“重击者”（heavy-hitter）策略，即H2O和论文提出的SnapKV-Decoding，在推理模型上表现卓越，甚至在某些情况下超越了完整缓存（full-cache）性能。这表明跟踪重击者token对于推理轨迹至关重要。
-3.  **开发解码压缩库：** 论文实现并开源了NVIDIA `kvpress2` 库的一个分支，增加了对解码阶段压缩的支持，并集成了R-KV和H2O方法，为KV缓存压缩研究提供了开放平台。
+3.  **开发解码压缩库：** 论文实现并开源了NVIDIA `kvpress2` 库的一个分支，**增加了对解码阶段压缩的支持，并集成了R-KV和H2O方法，为KV缓存压缩研究提供了开放平台。**
 
 **KV缓存压缩方法技术细节：**
 论文评估的几种主要策略及其工作原理：
