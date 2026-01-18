@@ -1,7 +1,61 @@
 # AwesomePaper-for-AI
 Awesome or inspiring papers for AI
 
+## 
+Taming the Memory Footprint Crisis: System Design for Production Diffusion LLM Serving
 
+https://arxiv.org/abs/2512.17077 
+
+https://github.com/chosen-ox/dLLM-Serve
+1. 🚀 dLLM-Serve 提出了一套针对 Diffusion LLMs (dLLMs) 的高效服务系统，旨在解决其特有的“显存占用危机”，该危机源于单体 **logit 张量和计算密集型“Refresh”阶段与带宽密集型“Reuse”阶段之间的资源振荡**。
+2. 🧠 该系统通过 Logit-Aware Activation Budgeting 来**分解瞬时峰值激活内存**、Phase-Multiplexed Scheduler 来交错异构请求阶段，以及 Head-Centric Sparse Attention 来实现物理存储与逻辑稀疏性的解耦。
+3. 📈 与现有最强基线相比（fast-dLLM， sparse-dLLM, dllm-cache等），dLLM-Serve显著提升了吞吐量（RTX 4090 1.81 倍，L40S 1.74 倍），同时在重负载下将尾延迟降低了近4倍，并能在更低的稀疏度下保持模型生成质量。
+<img width="770" height="226" alt="image" src="https://github.com/user-attachments/assets/c59f8145-3663-4bb8-a480-328e35c631b4" />
+
+LLaDA-8B-Instruct - Latent Language Diffusion Autoregressive model
+Dream-v0-Instruct-7B - Dream diffusion model with shifted prediction
+
+dLLM-Serve是一项旨在解决生产环境中扩散式大型语言模型（dLLMs）服务所面临内存和计算效率挑战的系统设计。与自回归模型（ARMs）通过顺序生成令牌不同，dLLMs采用并行解码和迭代去噪（iterative denoising）过程来生成完整序列。然而，这种并行性也带来了一系列独特的系统挑战，导致“内存占用危机”（memory footprint crisis）。
+
+**核心问题与挑战：**
+1.  **大规模激活内存占用（Monolithic Logit Tensors）**：dLLMs在每次迭代中为整个序列生成logits，导致一个形状为`[B, L, V]`的巨大 `logit` 张量。这个张量是瞬态的，但其峰值内存需求极大，会迅速耗尽GPU显存，严重限制并发请求的数量。现有的服务系统，如 `Fast-dLLM` 和 `dKV-Cache`，并未有效管理这种激活内存峰值。
+2.  **资源振荡（Resource Oscillation）**：dLLM推理过程在计算密集型的“Refresh”阶段和带宽密集型的“Reuse”阶段之间交替。在“Refresh”阶段，模型更新整个序列的KV缓存，消耗大量计算资源；而在“Reuse”阶段，模型仅更新活动块的令牌，并重用缓存的KV状态。现有调度器通常以请求（request）粒度进行调度，无法有效利用“Reuse”阶段释放的资源，导致GPU利用率低下。
+3.  **稀疏注意力效率不足（Inefficient Sparse Attention）**：尽管dLLMs由于其固有的稀疏性（大量 `[MASK]` 令牌）非常适合稀疏注意力，但现有方法（如 `Sparse-dLLM`）通常采用跨所有注意力头（attention heads）的统一掩码。这简化了内存管理，但牺牲了模型的准确性，因为不同注意力头可能关注不同的语义特征。此外，逻辑稀疏性（logical sparsity）并未转化为物理内存节省，系统仍分配并加载完整KV缓冲区，然后掩盖掉无关令牌。
+
+**dLLM-Serve的核心方法：**
+dLLM-Serve通过引入三大核心机制来解决这些问题：
+
+1.  **Logit-Aware Activation Budgeting（Logit感知的激活预算）**：
+    *   **问题**：传统的 `dLLM` 推理会一次性计算所有令牌的 `logits`，产生一个瞬时但巨大的 `[B, L, V]` 张量。例如，对于 `LLaDA-8B`，该张量可达8.3GB，是导致 `OOM` 的主要原因。
+    *   **解决方案**：dLLM-Serve 引入 **Logit Decomposition（Logit分解）**。它定义了一个系统参数 `max_num_logits`，限制同时计算 `logits` 的最大令牌数量。在执行过程中，如果当前批次中需要计算 `logits` 的令牌总数 `N_logit` 超过 `max_num_logits`，运行时会将输出投影分解为串行子批次（serial sub-batches）。
+    *   **实现细节**：推理引擎会遍历这些子批次，每次处理不超过 `max_num_logits` 个令牌。计算完 `logits` 后，立即执行解码操作（如 `ArgMax` 或 `Top-k sampling`）获取下一个令牌，并立即释放临时 `logit` 缓冲区，然后再处理下一个子批次。这种机制确保了瞬时激活内存占用严格受 `max_num_logits` 限制，无论完整序列长度或批次大小如何。
+    *   **效益**：通过将 `logit` 内存峰值转换为更小的固定预算，dLLM-Serve能够将节省的显存重新分配给KV缓存池，从而显著提高并发请求数量。
+
+2.  **Phase-Multiplexed Scheduler（阶段多路复用调度器）**：
+    *   **问题**：dLLM的“Refresh”和“Reuse”阶段具有截然不同的资源需求。“Refresh”阶段计算成本高，内存占用大（全序列KV更新），而“Reuse”阶段计算成本低，内存占用小（仅活动块更新）。传统以请求为粒度的调度方式会为整个请求生命周期保守地预留“Refresh”阶段所需的最大资源，导致在“Reuse”阶段出现大量空闲的“headroom”。
+    *   **解决方案**：dLLM-Serve在 **步骤粒度（step granularity）** 上进行调度，并采用令牌级别的打包（token-level packing）。调度器维护一个严格的不变量：打包批次中活动查询令牌的总数永不超过 `max_num_batched_tokens`。
+    *   **实现细节**：在每个去噪迭代中，dLLM-Serve 构建一个跨请求的活动令牌打包批次。处于“Refresh”阶段的请求贡献完整序列长度 `L` 的查询令牌，而处于“Reuse”阶段的请求仅贡献活动块长度 `L_block` 的查询令牌。当运行中的请求从“Refresh”阶段过渡到“Reuse”阶段时，它们对打包批次的贡献从 `L` 骤降到 `L_block`，释放了大量查询令牌预算。调度器会立即根据 `FCFS` 原则准入排队中的新请求，使其开始“Refresh”阶段的工作，直到打包批次再次达到 `max_num_batched_tokens`。
+    *   **效益**：这种动态调度策略将带宽密集型“Reuse”阶段产生的“headroom”转化为额外的计算密集型“Refresh”工作，从而最大化GPU利用率，并有效推迟系统饱和点。
+
+3.  **Head-Centric Sparse KV Cache Management（以头为中心的稀疏KV缓存管理）**：
+    *   **问题**：现有的稀疏注意力方法（如 `Sparse-dLLM`）为了保持内存连续性，通常强制所有注意力头使用一个共享的全局稀疏掩码。这牺牲了模型准确性，因为不同注意力头可能对不同的上下文令牌有特殊需求。同时，这些方法通常采用逻辑掩码，并未真正节省物理内存或减少带宽，因为数据仍按完整模式加载。
+    *   **解决方案**：dLLM-Serve 实现了 **以头为中心（Head-Centric）** 的稀疏KV缓存，在保持物理存储连续性的同时，支持每个头独立的令牌保留。
+    *   **算法公式**：与全局稀疏方法不同，dLLM-Serve 为每个注意力头独立计算重要性分数。对于每个头 $h$ 和位置 $j$，其重要性分数 $S^{h,j}$ 通过局部池化（kernel size $w$）计算：
+        $$S^{h, j} = \max_{m \in [j - \frac{w}{2}, j + \frac{w}{2}]}(Q_{b,h} \cdot K_{m,h}^\top)$$
+        然后，为每个头选择其各自的 `TopK` 索引集 $I_h = \text{TopK}(S^{h,:}, k)$，其中 $k = L \cdot r$ ($r$ 为保留率)。由于 $I_h$ 通常与 $I_{h'}$ 不同，这提供了更高的建模能力。
+    *   **实现细节**：dLLM-Serve 实现了 **逻辑稀疏性与物理布局的解耦（Decoupling Logical Sparsity from Physical Layout）**。在“Refresh”阶段，系统利用选定的索引 $I_h$ 立即将稀疏令牌打包到物理连续的KV布局中。关键在于，稀疏索引图是瞬态的，仅用于此打包步骤，不保留在KV缓存中。这使得随后的“Reuse”阶段可以直接从连续内存中访问KV缓存，避免了间接寻址的开销。为支持这种打包执行，内存管理器为每个请求预分配一个固定大小的 `rL × sizeof(KV)` 块，并将其组织成形状为 `[Nheads, rL, Dhead]` 的连续密集张量。
+
+**系统实现与评估：**
+dLLM-Serve 基于 `Nano-vLLM` 运行时扩展，复用了其分页KV缓存存储和 `FlashAttention` 等高性能组件。它添加了扩散模型特有的控制流、迭代去噪循环、阶段跟踪和稀疏KV缓存管理。
+
+实验在 `RTX 4090` (24GB) 和 `NVIDIA L40S` (48GB) 两种硬件平台上进行，并使用 `LLaDA-8B-Instruct` 模型。dLLM-Serve 与 `dLLM-Cache`、`Fast-dLLM` 和 `Sparse-dLLM` 三个基线进行比较。
+
+*   **吞吐量与可扩展性**：在 `RTX 4090` 上，dLLM-Serve 的吞吐量比最强的基线（Fast-dLLM）提高了 **1.81倍**。在 `NVIDIA L40S` 上，吞吐量提升高达 **3.12倍**。dLLM-Serve 在高负载下仍能保持线性扩展，而基线系统则在较低请求率下达到“吞吐量瓶颈”。
+*   **延迟敏感性与稳定性**：在高负载下，dLLM-Serve 的平均端到端延迟比基线系统降低了近 **4倍**。例如，在 `L40S` 上，它将 `OSC` 数据集的平均延迟从基线的 `6791s` 降低到 `1849s`。dLLM-Serve 还显著降低了延迟抖动（Jitter）和尾部延迟（Tail Latency），提高了服务预测性，标准差和尾部范围分别减少了 **56%** 和 **53%**。
+*   **生成质量**：dLLM-Serve 的 Head-Centric 稀疏注意力在低保留率下表现出优越的生成质量。在 `HumanEval` 和 `GSM8K` 数据集上，当保留率低至 `10%` 时，dLLM-Serve 的准确性显著高于使用统一选择的基线，例如在 `GSM8K` 上，准确率从 `40.0%` 提升到 `75.1%`，相对提升 **87.7%**。这意味着 dLLM-Serve 在相同质量下可以允许更低的内存占用，从而支持 **2倍** 的并发请求。
+*   **消融研究**：消融研究表明，定制的推理引擎、阶段多路复用调度器和 `Logit-Aware` 激活预算策略都对性能提升做出了贡献。其中，推理引擎和优化后的内存布局贡献最大，其次是智能调度器，最后是 `Logit-Aware` 预算策略。
+
+dLLM-Serve 为可扩展的 `dLLM` 推理奠定了基础，将理论上的算法稀疏性转化为实际的墙钟加速，并在异构硬件上展现了其鲁棒性。
 ## Breadcrumbs Reasoning
 Breadcrumbs Reasoning: Memory-Efficient Reasoning with Compression Beacons
 
