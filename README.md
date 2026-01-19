@@ -1,7 +1,7 @@
 # AwesomePaper-for-AI
 Awesome or inspiring papers for AI
 
-## 
+## dLLM-Serve
 Taming the Memory Footprint Crisis: System Design for Production Diffusion LLM Serving
 
 https://arxiv.org/abs/2512.17077 
