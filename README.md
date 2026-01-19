@@ -5,6 +5,7 @@ Awesome or inspiring papers for AI
 Sparse-RL: Breaking the Memory Wall in LLM Reinforcement Learning via Stable Sparse Rollouts
 
 https://arxiv.org/pdf/2601.10079v1 2026.1.16 人大 蚂蚁等
+中文解读：https://mp.weixin.qq.com/s/NjEd07gS9iIssWtcTbOHzQ 
 
 1. 🤔 本文提出Sparse-RL框架以解决大型语言模型(LLM)强化学习rollout阶段**KV cache内存占用过高**的问题，并指出直接应用KV压缩会导致策略不匹配和训练崩溃。
 2. 💡 为克服这一挑战，Sparse-RL引入了Sparsity-Aware **Rejection Sampling来过滤压缩引起的异常轨迹**，并采用Importance-based Reweighting来**修正off-policy偏差**，从而实现**稳定的稀疏rollout训练**。
