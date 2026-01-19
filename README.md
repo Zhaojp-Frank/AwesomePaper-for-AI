@@ -1,6 +1,25 @@
 # AwesomePaper-for-AI
 Awesome or inspiring papers for AI
 
+## Sparse-RL
+Sparse-RL: Breaking the Memory Wall in LLM Reinforcement Learning via Stable Sparse Rollouts
+
+https://arxiv.org/pdf/2601.10079v1 2026.1.16 人大 蚂蚁等
+
+1. 🤔 本文提出Sparse-RL框架以解决大型语言模型(LLM)强化学习rollout阶段**KV cache内存占用过高**的问题，并指出直接应用KV压缩会导致策略不匹配和训练崩溃。
+2. 💡 为克服这一挑战，Sparse-RL引入了Sparsity-Aware **Rejection Sampling来过滤压缩引起的异常轨迹**，并采用Importance-based Reweighting来**修正off-policy偏差**，从而实现**稳定的稀疏rollout训练**。
+3. 🚀 最大Qwen-7b，最长400 steps的实测，对比直接引入SnapKV等，基于Slime实现。Sparse-RL在-40% token，精度接近持平。
+
+<img width="934" height="378" alt="image" src="https://github.com/user-attachments/assets/01e6f275-cb7a-4544-92d0-c974d8a99a2c" />
+
+<img width="836" height="728" alt="image" src="https://github.com/user-attachments/assets/289ade64-fdbe-43c3-9605-b6cc56e3f8c9" />
+
+<img width="1545" height="288" alt="image" src="https://github.com/user-attachments/assets/923f41f3-0b75-4787-a40d-c63e0f06086a" />
+
+<img width="1167" height="321" alt="image" src="https://github.com/user-attachments/assets/10396759-8ccf-4a2c-8631-ec344939d1c7" />
+
+<img width="1526" height="369" alt="image" src="https://github.com/user-attachments/assets/e85b43fa-f75e-4593-b2f9-bd15090bbcdf" />
+
 ## dLLM-Serve
 Taming the Memory Footprint Crisis: System Design for Production Diffusion LLM Serving
 
