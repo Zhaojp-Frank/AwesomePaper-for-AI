@@ -1,6 +1,108 @@
 # AwesomePaper-for-AI
 Awesome or inspiring papers for AI
 
+## BitDecoding
+BitDecoding: Unlocking Tensor Cores for Long-Context LLMs with Low-Bit KV Cache
+
+https://arxiv.org/abs/2503.18773 2025.5/2026.1.5 (last update, as HPCA26) 微软亚研院
+
+https://github.com/OpenBitSys/BitDecoding 
+
+1. 💡 BitDecoding 通过**协同利用 GPU 的 CUDA Cores 和 Tensor Cores**，解决了长上下文 LLMs 中低比特 KV Cache 解码效率低下，尤其是 Tensor Cores 利用率不足的问题。
+2. ⚙️ 该系统通过生成兼容 Tensor Cores 的数据布局、引入 warp 级解量化并行以及采用支持混合精度执行的软件流水线解量化内核，优化了低比特 KV Cache 的处理。
+3. 🚀 实验结果表明，BitDecoding 在 **Blackwell、Hopper 和 Ampere 等 GPU** 上实现了显著的性能提升，相较于 FP16 FlashDecoding-v2 平均提速 7.5 倍（Blackwell 上最高达 8.6 倍），并比现有先进方法 **QServe 提速达 4.3 倍**，同时大幅降低了端到端解码延迟。
+<img width="942" height="263" alt="image" src="https://github.com/user-attachments/assets/90c916bf-c706-4698-ab56-187ba6b8db32" />
+<img width="515" height="287" alt="image" src="https://github.com/user-attachments/assets/4c5c37b3-39ab-4b96-87c9-75c2b9157cb2" />
+<img width="1031" height="275" alt="image" src="https://github.com/user-attachments/assets/f3cc5002-5579-4610-aa94-318ab5847b02" />
+<img width="566" height="289" alt="image" src="https://github.com/user-attachments/assets/8bf38720-2fa6-44d8-a111-0227db27bb76" />
+<img width="532" height="309" alt="image" src="https://github.com/user-attachments/assets/4375141c-ee22-40b1-a51a-849dd7c15fc2" />
+<img width="577" height="396" alt="image" src="https://github.com/user-attachments/assets/ea0cbda0-3aef-405c-bd62-7bbff75eaa43" />
+<img width="581" height="270" alt="image" src="https://github.com/user-attachments/assets/a3ab9e66-01ce-4513-92db-a45bae0dd234" />
+
+当前LLMs在处理长上下文时，KV缓存会急剧增长，导致显存和带宽瓶颈。虽然低位KV缓存量化（如4比特或2比特）能显著减少显存占用，但现有系统在解码时效率低下，主要依赖CUDA核心，未能充分利用GPU上的主要计算资源——Tensor Core。BitDecoding是首个通过协同利用CUDA核心和Tensor Core来高效解码低位KV缓存的推理系统。
+
+核心问题在于，KV缓存在自回归解码过程中是动态生成的，需要在线量化、打包和反量化。这与静态权重的低位矩阵乘法（mpGEMM）不同，后者可以离线预处理。现有的mpGEMM内核无法直接应用于KV缓存。BitDecoding的核心洞察是利用Tensor Core执行密集的矩阵乘法，同时高效利用CUDA核心进行KV缓存的反量化。
+
+**BitDecoding解决以下关键挑战：**
+
+1.  **Tensor Core低位布局不匹配：** Tensor Core要求反量化后的低位数据对齐到高精度格式，但动态增长的KV缓存难以满足。不同的指令和GPU代次有不同的fragment布局，低精度位宽进一步加剧了对齐问题。天真地进行`low-bit -> FP16`类型转换效率低下。
+2.  **频繁停顿限制Tensor Core利用率：** 现有高性能注意力内核中的warp布局在引入反量化操作后效率下降，因为小warp tile需要顺序处理N维数据，导致反量化频繁停顿warp。Blackwell原生低精度格式的在线量化也会造成类似停顿。
+3.  **缺乏通用可扩展的系统优化：** 不同的KV缓存量化方法（如tensor-wise和channel-wise）采用不同的量化粒度，增加了构建统一系统的难度。在线量化和打包引入了非平凡的运行时开销，辅助元数据（scale和zero-point）增加了内存流量。
+
+**BitDecoding的核心方法论：**
+
+BitDecoding的设计围绕优化低位布局和并行化GPU warp展开。
+
+**A. 优化Tensor Core上的低位布局：**
+
+1.  **通过硬件指令诱导优化低位布局：**
+    *   核心思想：`ldmatrix`指令加载数据时已按Tensor Core的交错fragment布局组织。如果每个线程在本地进行量化和打包，则生成的低位打包数据会隐式保留FP16的交错布局。反量化时，值已与Tensor Core寄存器对齐，无需全局重塑。
+    *   **Residual Kernel（残差内核）：** 融合新生成的FP16 KV张量的计算、量化和打包。它使用`ldmatrix`将高精度KV张量加载到为Tensor Core设计的寄存器结构中，执行矩阵操作（如$QK^T$或$PV$），然后每个线程量化并打包其寄存器中的部分。结果是交错的、布局兼容的低位数据直接写入全局内存，更新低位KV缓存。
+    *   **Packing Kernel（打包内核）：** 融合反量化和计算。为保证解包时正确的寄存器布局，它镜像Residual Kernel的指令配置，使用相同的`ldmatrix`变体和相同的`mma`变体及warp-tiling配置。因此，当Packing Kernel通过`ldmatrix`加载打包的低位数据时，解包后的值天生与Tensor Core寄存器对齐，可直接参与矩阵乘法。
+2.  **通过残差KV缓存对齐warp以饱和Tensor Core：**
+    *   为了确保Tensor Core fragment完全填充，BitDecoding分配一个大小匹配Tensor Core tiling能力的残差缓冲区。
+    *   KV缓存被划分为已打包的低位部分$X_{pack}$和半精度残差部分$X_{res}$，其中$X = X_{pack} \cup X_{res}$。
+    *   残差块大小$N_r$计算公式为：$N_r = P_n \times W_n \times R$，其中$P_n$是每个warp tile处理的元素数量，$W_n$是N维度上的warp数量，$R = \omega / \beta$是打包比（$\omega$为打包字大小，$\beta$为量化位宽）。这确保了低位KV缓存fragment与Tensor Core操作的warp级别tiling精确对齐。
+3.  **重新映射布局以加速反量化：**
+    *   尽管与Tensor Core布局兼容，但直接将低位值转换为FP16（如通过`static_cast`）效率低下。
+    *   BitDecoding设计了一种基于底层位操作和指令（受[14]启发）的更快反量化映射方法。加载打包数据到寄存器后，在映射到交错Tensor Core布局（遵循75316420模式）之前，将其转换为INT32。这种布局支持使用`lop3`指令进行位操作，高效将INT4/INT2数据转换为FP16，同时与Tensor Core计算模式对齐。
+4.  **协调残差和打包内核与配置设置：**
+    *   通过统一的指令配置协调Residual Kernel和Packing Kernel。指令配置（包括`ldmatrix`和`mma`变体）根据GPU架构确定。Residual Kernel加载高精度KV，通过Tensor Core计算，融合量化和打包，存入低位KV缓存。Packing Kernel使用相同配置，加载打包数据，高效反量化，并进行Tensor Core计算。
+
+**B. Warp并行化策略：**
+
+为了避免现有warp并行化策略在混合精度注意力中因频繁warp停顿导致的硬件利用率低，BitDecoding设计了新的warp布局。
+
+1.  **增强低精度操作的warp并行性：**
+    *   修改warp分区策略。在M维度上限制warp数量$W_m=1$（解码查询长度通常较小），将资源重新分配以增加N维度上的warp数量$W_n$。
+    *   通过增加$W_n$，SM warp调度器可以有效地缓解反量化停顿，因为多个warp可以并行执行打包数据的反量化，然后进入基于Tensor Core的矩阵乘法。
+2.  **利用内存层次结构进行warp同步：**
+    *   由于结果现在分布在不同的寄存器和warp中，原始的寄存器级softmax变得不可行。
+    *   BitDecoding利用多级内存层次结构（寄存器和共享内存）实现跨warp归约和softmax计算的同步。
+    *   **多warp协作Softmax（Algorithm 1）：**
+        *   引入两个额外的共享内存缓冲区：`sTMP`（用于行最大值归约）和`sAcc`（临时存储注意力分数P）。
+        *   `sTMP`协助softmax期间的跨warp行最大值归约，首先进行寄存器内的warp内归约，然后通过共享内存进行warp间归约。
+        *   `sAcc`临时存储在Tensor Core寄存器中计算的注意力分数P，并通过`ldmatrix`重新加载以确保后续Tensor Core `mma`操作的对齐。
+        *   Algorithm 1:
+            1.  $S_i = Q_i K_j^T$，其中$S_i \in \mathbb{R}^{T_m \times T_n}$。
+            2.  $m_{new_i} = \max(m_i, \text{rowmax}(S_i, \text{sTMP}))$。
+            3.  $P_i = \exp(S_i - m_{new_i})$，其中$P_i \in \mathbb{R}^{T_m \times T_n}$。
+            4.  $\text{sAcc} = \text{tiled copy r2s}(P_i)$。
+            5.  $P'_i = \text{tiled copy s2r}(\text{sAcc})$。
+            6.  $O_{new_i} = P'_i V_j + \text{diag}(\exp(m_i - m_{new_i}))O_i$。
+    *   由于$W_n$通常较小，复用`sTMP`的共享内存指针用于`sAcc`以最小化内存开销。Hopper Tensor Core支持WGMMA直接访问共享内存，无需显式数据从共享内存移动到寄存器。
+
+**C. 系统实现：**
+
+1.  **查询转换（Query Transformation）：**
+    *   现代LLMs采用不同KV共享模式的注意力变体（如MHA、MQA、GQA）。解码时Q_len=1，导致查询张量维度很小，无法充分填充Tensor Core。
+    *   BitDecoding将查询张量从$[1, (g_q, h_{kv})]$重塑为$[g_q, h_{kv}]$，形成更大的$Q_{tile}$，并行处理分组查询头，提高warp占用率和吞吐量。
+2.  **Residual Kernel（残差内核）：**
+    *   根据残差块大小$N_r$分区KV缓存。预填充时，前$N_p = L - (L \pmod{N_r})$个条目被量化并打包。剩余的$res\_len = L \pmod{N_r}$个KV张量存储在半精度残差KV缓存中。
+    *   每次解码时，新生成的K、V张量追加到残差缓存中，并用于注意力计算。当残差缓存达到$N_r$时，Residual Kernel将其量化成打包格式。
+    *   支持channel-wise和tensor-wise量化。
+    *   **优化warp级指令归约：** 半精度KV数据在寄存器中以Tensor Core fragments形式存在。BitDecoding使用线程级归约获取局部min/max统计量，然后使用PTX指令`__shfl_xor_sync`在warp内聚合，实现高效warp级归约。当$W_n > 1$时，引入小型共享内存缓冲区协调warp间归约。
+    *   计算量化参数后，每个线程在寄存器内进行量化并将低位值打包为INT16格式。scales和zero-points存储在`half2`格式，方便高效内存访问和反量化期间的融合乘加。
+3.  **Packing Kernel（打包内核）：**
+    *   辅助低位元数据（scale和zero-point）增加了内存流量，反量化仍在CUDA核心上运行。BitDecoding设计了一个细粒度异步流水线：CUDA核心处理反量化，Tensor Core执行矩阵乘法，两者与内存传输重叠。
+    *   **异步数据移动优化：** 遵循FlashAttention的块级tiling和策略性重计算，处理共享内存中的Q、K、V tile。引入Kpack_params和Vpack_params的专用共享内存缓冲区，存储`half2`格式的scale和zeros。
+    *   所有全局到共享内存的传输都使用`cp.async`指令异步执行。`cp.async.cg`用于Q、Kpack和Vpack，`cp.async.ca`用于Kpack_params和Vpack_params。Hopper架构利用`tma.copy`指令加载数据。
+    *   **共享内存到寄存器：** 使用PTX指令`ldmatrix`高效加载Kpack、Vpack和sAcc到寄存器。使用sizzling scheme（`colid = rowid \oplus colid`）消除bank conflict，并重塑Kpack_params和Vpack_params的共享内存布局。
+    *   **CUDA Core与Tensor Core重叠的异步流水线：** 实现寄存器级异步流水线，共享内存加载（`ldmatrix`）和反量化（Dequant）与Tensor Core矩阵乘法（`mma`）并发运行。当第i个切片由Tensor Core处理时，第i+1个切片同时从共享内存加载并反量化，维持连续的生产者-消费者流。
+4.  **最新架构支持：**
+    *   **Hopper加速：** 利用Hopper的Warpgroup Matrix Multiply-Accumulate（`wgmma`）指令。由于`wgmma`要求B矩阵在共享内存中，BitDecoding利用Hopper的STSM PTX指令将反量化后的FP16值高效存储到共享内存中，供`wgmma_SS`操作使用。WGMMA的异步特性使得存储与计算重叠。
+    *   **Blackwell原生低精度格式加速：** Blackwell原生支持低精度张量操作，消除了显式反量化需求。BitDecoding直接利用Blackwell的低精度`mma`指令（尤其是支持微缩放格式如mxfp4/nvfp4的指令）在打包的4比特数据上执行GEMM操作。BitDecoding的布局转换策略与硬件强制格式自动对齐，确保与Blackwell原生Tensor流水线的无缝集成。
+
+**D. 评估结果：**
+
+*   **核性能：** BitDecoding在Blackwell（使用原生MXFP4）上达到高达8.6倍、Hopper上8.0倍、Ada上7.5倍的加速，相较于FP16 FlashDecoding-v2。相较于最先进的低位系统QServe，性能提升高达4.3倍。
+*   **端到端模型性能：** 在LLaMA-3.1-8B的128K上下文长度单批次解码中，BitDecoding将延迟降低3倍，并实现了比QServe高4倍以上的服务吞吐量。
+*   **精度：** 4比特量化仅导致0.2%的精度下降，2比特量化导致2.7%的精度下降，同时实现了显著的性能提升。
+*   **开销分析：** 残差KV缓存的内存开销和运行时开销微乎其微。量化和打包开销（特别是在解码阶段）几乎可以忽略不计。反量化开销显著降低（从Atom/QServe的近一半时间降低到BitDecoding的低于15%）。多warp协作Softmax仅引入0.5%的开销。
+*   **优化分解：** BitDecoding的性能提升主要来源于其布局设计（诱导Tensor Core兼容布局）、warp并行化策略以及流水线优化。
+
+BitDecoding为高效低位KV缓存解码建立了一个新的系统基础，展示了CUDA核心和Tensor Core如何通过有原则的系统设计协同工作。其布局诱导和warp级协调技术适用于各种注意力变体、量化方案和GPU代次，并可自然扩展到新兴架构。
+
 ## Sparse-RL
 Sparse-RL: Breaking the Memory Wall in LLM Reinforcement Learning via Stable Sparse Rollouts
 
