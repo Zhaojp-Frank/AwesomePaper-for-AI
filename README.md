@@ -1,12 +1,67 @@
 # AwesomePaper-for-AI
 Awesome or inspiring papers for AI
 
+## LithOS
+LithOS: An Operating System for Efficient Machine Learning on GPUs
+
+https://dl.acm.org/doi/pdf/10.1145/3731569.3764818 CMU,Meta. SOSP25
+
+1. 💡 LithOS 是一种针对GPU的操作系统，旨在通过引入**细粒度资源管理和调度机制**，透明地提高机器学习（ML）工作负载的效率和GPU利用率。
+2. ⚙️ 为此，它引入了创新的**TPC调度器、透明的内核原子化器**（Kernel Atomizer）、动态硬件资源调配和精细化电源管理等核心机制。
+3. 🚀 扩展了Libsmctrl支持Hopper，但测试是在A100上，LithOS**显著降低了尾延迟**（与NVIDIA MPS相比，**推理堆叠可减少13倍**），提高了聚合吞吐量，并实现了显著的GPU容量和能源节约。
+   
+<img width="399" height="269" alt="image" src="https://github.com/user-attachments/assets/a9dab67e-837c-4d71-8588-802f6d2b3a21" />
+<img width="794" height="231" alt="image" src="https://github.com/user-attachments/assets/fd500ff4-cb3e-4499-9f84-0b0a97d85b04" />
+<img width="493" height="234" alt="image" src="https://github.com/user-attachments/assets/2adf419b-0275-43a9-b6ae-284eecc72534" />
+<img width="1021" height="206" alt="image" src="https://github.com/user-attachments/assets/7fc3812f-697c-4901-91d8-3f97053c152e" />
+<img width="592" height="597" alt="image" src="https://github.com/user-attachments/assets/a2e759f9-64d5-4c0a-83ff-759694f4c988" />
+
+旨在解决数据中心GPU利用率低下且现有解决方案效率不足的问题。尽管机器学习 (ML) 的快速发展使得GPU在数据中心中不可或缺，但高利用率和多样化模型需求之间的平衡仍是根本性挑战。现有系统，如NVIDIA的Multi-Process Service (MPS) 和Multi-Instance GPU (MIG)，以及其他先进研究，要么颗粒度过粗，导致资源浪费和队头阻塞 (HoL blocking)，要么缺乏透明度，无法与现有ML软件栈无缝集成。为应对这些挑战，论文提出了LithOS，一个面向GPU的操作系统方法，旨在通过细粒度资源管理透明地提升利用率、能效和隔离性。
+
+LithOS的核心思想是将GPU的调度控制从专有驱动和硬件转移到操作系统层，实现对GPU资源的细粒度、透明管理。它在GPU的Texture Processing Clusters (TPCs) 层面进行调度，而非传统的更粗粒度的Graphics Processing Clusters (GPCs) 或整个GPU。LithOS引入了以下创新抽象和机制：
+
+1.  **TPC Scheduler**: 这是一个新颖的细粒度调度器，能够异步决定每个工作单元的计算单元分配和提交时间。它**在单个TPC的粒度上提供精确控制和强隔离**。调度器通过在线 **Kernel Latency Predictor** (核延迟预测器) 做出高效调度决策，并融入了 TPC Stealing 技术以提高GPU利用率。当某个TPC空闲时，其资源可以**动态地**“借用”给其他任务，从而减少浪费。为了避免优先级反转造成的HoL blocking，调度器会维护每个TPC的计时器，并结合原子化机制，确保高优先级任务能及时获得资源。
+
+2.  **Kernel Atomizer**: LithOS的核心组件之一，它能够透明地将GPU内核 (kernel) 划分为**更小的可调度原子** (atoms)，每个原子包含部分线程块 (thread blocks)。这项功能**无需访问应用程序源代码或PTX代码**，确保了与ML软件栈的完全透明性。通过将长时间运行的内核（例如，持续数毫秒的内核）分割为持续时间较短（例如，250-500 $\mu$s）的原子，Kernel Atomizer 显著减少了HoL blocking，并允许在执行期间动态地重新配置TPC资源。其实现方式是通过**拦截 CUDA Driver API，修改用于启动内核的 Queue MetaData (QMD) 结构**，将原始内核的入口点替换为一个“Prelude”内核。Prelude 内核会根据传入的**原子元数据 (AtomMetadata) 检查 `block_idx` 是否在当前原子的指定范围内**，若在则调用原始内核的入口点，否则退出。这使得LithOS可以在线程块粒度而非内核粒度上调度工作。
+
+3.  **Hardware Right-sizing**: 基于LithOS在TPC层面的细粒度调度能力，它引入了一种**动态的硬件资源优化机制**。该机制通过轻量级模型来确定每个内核及其原子所需的最小TPC资源量。模型通过拟合内核在全部TPCs和单个TPC上运行的延迟数据，得出一个形式为 $l = \frac{m}{t} + b$ 的曲线，其中 $l$ 是预测延迟，$t$ 是TPC数量，$m$ 和 $b$ 是常数。这个模型与Amdahl定律一致，可以捕捉不同内核的扩展行为。对于模型无法准确预测的短时运行内核，LithOS会根据线程块的占用率进行过滤。用户和管理员可以通过一个 `latency slip parameter` $k$ 来指定可接受的性能损失上限（例如，10%），LithOS会据此调整TPC分配，实现显著的容量节约。
+
+4.  **Transparent Power Management**: LithOS通过细粒度的动态电压频率调节 (DVFS) 来实现透明的电源管理。与 Hardware Right-sizing 类似，它使用一个序列化的内核频率扩展模型来**指导DVFS决策**。每个内核被赋予一个权重 $w$ (占总运行时间的比例) 和一个敏感度 $s$。系统计算所有内核的聚合敏感度 $S = \sum w \cdot s$，并根据预设的 `latency slip parameter` $k$ 来确定最终频率 $f_{final} = \frac{f_{max}}{1 + k/S}$。**计算密集型内核的敏感度会引导频率接近最大值**，而**内存密集型内核则会根据其权重将频率调至较低水平**。**由于频率切换延迟较高，LithOS采取保守策略**，通过学习期来避免不必要的切换。
+
+5.  **Online Latency Prediction**: 延迟预测模块学习内核的执行时间，为LithOS的所有组件提供支持。它提高了TPC Stealing 的准确性（通过估算未完成任务的持续时间），指导 Kernel Atomizer 的原子分割数量，并为 Hardware Right-sizing 和 DVFS 提供计算加速比所需的延迟数据。该模块无需大量的离线性能分析。为了准确预测，模块会根据CUDA事件记录内核延迟，并根据分配的TPC数量、GPU频率和原子化粒度进行调整。它还通过将内核启动与批处理中的 `ordinal index` 相关联，识别操作符节点，从而处理同一内核函数因输入参数变化而导致执行时间不同的情况。
+
+**实施细节**:
+LithOS **原型使用 Rust 语言实现，代码量约 5000 行**。它通过在 CUDA Driver API 层面进行拦截来实现对应用程序的完全透明性，从而支持各种未经修改的ML框架和库（如PyTorch, TensorFlow, JAX, TensorRT, cuDNN）。LithOS 重新实现了 `libsmctrl` 的功能，并通过逆向工程 Queue MetaData (QMD) 结构来识别TPC映射，实现动态TPC分配。对于 NVIDIA Hopper 架构上引入的 Thread Block Clusters，LithOS 也进行了逆向工程以确保原子化操作与其兼容。为了处理具有跨块同步或持久性内核等特殊情况，LithOS 会选择禁用原子化和TPC Stealing。
+
+**评估结果**:
+论文在 NVIDIA A100 GPU 上对LithOS进行了广泛评估，并与 NVIDIA 的 Time slicing, MPS, Priority, MIG 以及现有先进研究 (TGS, REEF, Orion) 进行了比较。
+
+*   **仅推理多租户 (Inference-only Multitenancy)**：在包含两个高优先级 (HP) 推理应用和一个尽力而为 (BE) 应用的场景中，LithOS 实现了 100% 的 SLO (服务等级目标) 达成率和 1 倍的吞吐量（相较于单一应用独占设备），优于 MPS (45% SLO, 1.11x 吞吐量)。LithOS 在HP应用的 Goodput (有效吞吐量) 上领先，同时支持显著的BE吞吐量。在P99延迟方面，LithOS比MPS低13倍，比Orion低4倍，比TGS低1.2倍。
+
+*   **混合推理/训练多租户 (Hybrid Inference/Training Multitenancy)**：在一个高优先级推理应用和一个尽力而为训练应用堆叠的场景中，LithOS 将P99尾延迟维持在理想值的20%以内。平均而言，它比REEF低2.34倍，比TGS低1.18倍，比原生MPS解决方案低4.7倍。LithOS还将训练吞吐量平均提高了34倍，总吞吐量比TGS提高了1.35倍。
+
+*   **Kernel-SM Right-Sizing**：使用 `latency slip parameter` 为1.1时，LithOS实现了高达51%的GPU容量节约，平均节约率为26%。P99延迟和吞吐量的性能成本平均仅为4%，这表明其建模的准确性很高 ($R^2$ 值在 0.92 到 0.99 之间)。
+
+*   **Kernel-Dependent DVFS**：在 `latency slip parameter` 为1.1时，LithOS实现了高达46%的GPU能耗节约，平均节约率为26%。P99延迟的平均增加仅为7%，这表明LithOS的DVFS策略在保证性能的同时显著节约了能源。
+
+*   **消融研究 (Ablation Studies)**：
+    *   单独启用 TPC Scheduler 可将HP尾延迟改善至理想值的1.38倍。
+    *   Kernel Atomization 进一步将尾延迟降低至平均1.19倍（最高1.55倍），相较于REEF分别有6.5倍和3.9倍的提升，尤其在处理大批次训练和长序列推理时效果显著。
+    *   延迟预测模块的误预测率很低（HP工作负载为0.38%-0.9%），P99误差很小（31-49 $\mu$s），证实了其在实践中提供足够性能隔离的能力。
+
+*   **开销 (Overheads)**：LithOS的拦截和控制逻辑引入的开销很小，相较于原生NVIDIA驱动，仅增加了4%的开销，原子化本身增加了不到1%。
+
+**讨论与未来工作**:
+LithOS 专注于计算和功耗管理，但论文指出其原理可扩展到其他GPU资源，如内存、带宽和PCIe。论文也强调，未来的驱动和硬件支持（如内核到SM的直接分配、更细粒度（亚毫秒级）的DVFS、每个SM的功耗控制等）将进一步释放LithOS的潜力。核心教训是，高效的GPU多租户需要空间和时间上的细粒度分区。CUDA Driver API 作为稳定的拦截点，使得LithOS轻量、可移植且易于重定向。
+
+
 ## Hardware Compute Partitioning
 Hardware Compute Partitioning on NVIDIA GPUs for Composable Systems
 
 https://drops.dagstuhl.de/storage/00lipics/lipics-vol335-ecrts2025/LIPIcs.ECRTS.2025.21/LIPIcs.ECRTS.2025.21.pdf
 
 https://www.cs.unc.edu/~jbakita/ecrts25-ae/
+
 <img width="515" height="220" alt="image" src="https://github.com/user-attachments/assets/8be1b2a0-16e0-49c3-939d-36db6c213ef1" />
 <img width="743" height="380" alt="image" src="https://github.com/user-attachments/assets/de666d10-1b4c-4d6f-8952-960f10b2cf4e" />
 <img width="740" height="540" alt="image" src="https://github.com/user-attachments/assets/d6d61a07-699a-467c-9c87-277cb5e3d0b4" />
