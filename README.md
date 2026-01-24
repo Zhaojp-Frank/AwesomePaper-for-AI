@@ -1,6 +1,118 @@
 # AwesomePaper-for-AI
 Awesome or inspiring papers for AI
 
+## Hardware Compute Partitioning
+Hardware Compute Partitioning on NVIDIA GPUs for Composable Systems
+
+https://drops.dagstuhl.de/storage/00lipics/lipics-vol335-ecrts2025/LIPIcs.ECRTS.2025.21/LIPIcs.ECRTS.2025.21.pdf
+
+https://www.cs.unc.edu/~jbakita/ecrts25-ae/
+<img width="515" height="220" alt="image" src="https://github.com/user-attachments/assets/8be1b2a0-16e0-49c3-939d-36db6c213ef1" />
+<img width="743" height="380" alt="image" src="https://github.com/user-attachments/assets/de666d10-1b4c-4d6f-8952-960f10b2cf4e" />
+<img width="740" height="540" alt="image" src="https://github.com/user-attachments/assets/d6d61a07-699a-467c-9c87-277cb5e3d0b4" />
+<img width="737" height="469" alt="image" src="https://github.com/user-attachments/assets/8740517a-05c3-49a7-acd8-c3be6eea88c0" />
+
+1. 🚀 开发了 `nvtaskset`，这是一种用于 NVIDIA GPU**空分共享和控制机制**，旨在无需修改任务、驱动程序或硬件的情况下，使多任务高效且可预测地运行。
+2. 💡 `nvtaskset` 通过**结合 `libsmctrl` 的硬件强制分区能力和 NVIDIA MPS** 的多任务并发执行特性，实现了比 NVIDIA MPS 更强的分区强制性和更细粒度的控制。
+3. 📊 评估结果表明，`nvtaskset` 具有**亚微秒级的开销**，并且在某些情况下，其分区强制能力甚至优于 NVIDIA MiG，同时揭示了 NVIDIA MiG 存在固有的性能损耗问题。但没有解决故障隔离（MPS）。
+- recent: https://dl.acm.org/doi/pdf/10.1145/3731569.3764818
+  
+该论文提出了 `nvtaskset`，一个用于 NVIDIA GPU 的系统级空间计算分区机制，旨在解决嵌入式、安全关键系统中 GPU 任务调度面临的效率与时间可预测性之间的冲突。在这些系统中，单个 GPU 需要被多个任务共享。现有调度方法往往牺牲截止期满足能力或效率。`nvtaskset` 通过在 GPU 计算核心上实现空间分区，使得任务能够在不影响时间可预测性的前提下高效执行。该工具支持可组合系统，无需修改任务、驱动或硬件。在评估中，`nvtaskset` 展示了亚微秒级的开销、更强的分区强制能力和更细粒度的分区，优于 NVIDIA 的 `Multi-Process Service (MPS)` 或 `Multi-instance GPU (MiG)` 功能。
+
+**核心问题与背景：**
+
+随着深度神经网络 (DNN) 等 AI 任务在 GPU 上运行变得普遍，它们在自动驾驶等安全关键系统中的应用对实时响应提出了严格要求。然而，在多个 GPU 任务之间进行调度存在挑战：
+1.  **竞争共享 (Competitive sharing)**：任务并发运行，争夺资源，效率高但时间可预测性差。
+2.  **互斥 (Mutual exclusion)**：一次只运行一个任务，时间可预测但效率低。
+这导致嵌入式系统设计者面临两难，尤其对于无法保证截止期满足的安全关键系统。此外，任务可能由不同团队开发，且不总是可修改，增加了调度系统的负担。
+
+作者提出通过 GPU 计算核心的空间分区来解决此问题。空间分区允许任务在互斥的核心集上并发执行，最大限度地减少共享资源干扰，从而兼顾效率和时间可预测性。
+
+**GPU 架构与调度：**
+
+NVIDIA GPU 的典型架构（如 Ada-generation AD102）包括：
+*   **Compute/Graphics Engine (计算/图形引擎)**：主要处理单元。
+*   **General Processing Clusters (GPCs)**：计算引擎的子分区，每个 GPC 独立连接到 DRAM 控制器和 L2 缓存。
+*   **Thread Processing Clusters (TPCs)**：每个 GPC 包含多个 TPC，每个 TPC 包含两个 `Streaming Multiprocessors (SMs)`。
+*   **Streaming Multiprocessors (SMs)**：每个 SM 包含数十个 CUDA 核心和 L1 缓存。
+
+GPU 调度管道如下：CPU 任务将核函数启动命令 (`TMDs` - Task Metadata Descriptors) 插入 CUDA `streams`，这些 `streams` 映射到 GPU `channels`。`runlist` 是核心仲裁器，决定哪个 GPU `channel` 或 `channel` 组可以访问计算/图形引擎。`runlist` 由 `time-slice groups (TSGs)` 组成，TSGs 包含来自同一上下文的 `channels`。TSGs 默认以工作守恒、抢占式的轮询方式执行，每个 TSG 有一个关联的时间片。这种调度方式导致 GPU 在一次只激活一个上下文时可能出现资源利用不足。
+
+**空间分区的理想特性：**
+
+一个理想的空间分区机制应具备以下特性：
+*   **Portable (可移植)**：适用于广泛的 GPU 型号。
+*   **Logically Isolated (逻辑隔离)**：保持任务间的虚拟地址空间隔离和独立异常处理。
+*   **Transparent (透明)**：无需修改任务。
+*   **Low-overhead (低开销)**：关键路径操作（如核函数启动）开销可忽略。
+*   **Hardware-enforced (硬件强制)**：由硬件强制执行分区，以保护免受恶意或行为不当任务的影响。
+*   **Dynamic (动态)**：无需重启任务即可重新配置分区。
+*   **Granular (细粒度)**：分区以细粒度单位定义，如 TPC。
+
+**现有解决方案及缺陷：**
+
+1.  **学术界软件方案**：
+    *   例如 [40, 16] 等：通过任务合作性地放弃未分配的计算核心来实现，易受行为不当任务的影响，无法强制执行分区。
+    *   `libsmctrl` (作者先前工作)：通过修改 `TMD` 的 TPC 掩码来强制执行分区，但需要任务修改和共享地址空间，牺牲了逻辑隔离和透明性。
+
+2.  **NVIDIA 官方方案**：
+    *   **Multi-instance GPU (MiG)**：将 GPU 分割成静态、固定大小的分区，硬件强制执行。但分区选项有限，粒度粗（最小分区 14 个 SMs），且仅在数据中心 GPU 上可用（不可移植）。论文发现 MiG 存在 6-15% 的核心利用率损失，原因是为模拟统一 GPC 而禁用 TPC。
+    *   **Multi-Process Service (MPS)**：可用于所有近期 NVIDIA GPU (Volta+)，允许计算/图形引擎并发执行多任务。
+        *   **MPS 运作机制揭示 (核心技术点)**：
+            *   MPS 采用客户端-服务器模式，CUDA 任务是 MPS 服务器的客户端。服务器作为 GPU 中介。
+            *   **Runlist 修改**：MPS 客户端不再拥有独立的 TSG。多个 MPS 客户端共享 MPS 服务器的单个 TSG。所有 MPS 客户端的任务流并发执行，如同在一个程序中。这导致共享 TSG 的客户端可用 GPU 时间减少。
+            *   **虚拟地址空间隔离**：MPS 通过为每个客户端分配唯一的 `Subcontext ID` 和独立的 `page table` 来保持虚拟地址空间隔离。`Subcontext ID` 随着命令传递给计算/图形引擎，用于访问和维护每个 `subcontext` 的 `page table` 状态。
+            *   **MPS 缺陷（核心发现）**：
+                *   **缺陷 1**：MPS 客户端共享每个服务器上的并发内核数量限制（任务槽耗尽），尽管专利声称是每个 `subcontext` 独立。
+                *   **缺陷 2**：一个 MPS 客户端中的崩溃（如越界内存访问）可能导致所有 MPS 客户端崩溃，缺乏完全的故障隔离。
+                *   **缺陷 3**：MPS 客户端不支持 GPU 上的内核启动 (CUDA Dynamic Parallelism, CDP)。
+                *   **缺陷 4**：MPS 客户端默认支持的 CUDA `streams` 数量较少（默认 2 个，非 MPS 任务默认 8 个），可能导致隐式同步和调度行为变化。
+                *   **缺陷 5**：MPS 客户端接收伪造的 SM ID (`%smid` 寄存器返回不一致的值)，影响 GPU 研究。
+                *   **缺陷 6**：MPS 分区不绑定到特定 SMs。MPS 通过 "Execution Resource Provisioning" 功能（基于 `credits` 机制）限制任务可并发占用的 TPC 数量，但不能保证分配到哪些 TPC。
+                *   **缺陷 7**：MPS 的硬件实现可能将两个任务分配到同一组 SMs，导致其他 SMs 空闲。当分配总和超过 100% 时，任务可能共享 TPC，但这种共享可能会持续，即使总分配容量恢复到 100% 也不会自动迁移到空闲 TPC，导致 GPU 资源浪费。
+                *   **缺陷 8**：MPS 客户端的分区大小是静态的，创建后无法动态更改。
+            *   **开销**：MPS 在核函数启动关键路径上没有额外开销。启动开销因为 MPS 服务器延迟初始化而有额外成本，但可以通过预加载规避。
+
+**nvtaskset 的设计与实现：**
+
+`nvtaskset` 结合了 MPS 的逻辑隔离和透明性与 `libsmctrl` 的分区能力。它类似 Linux 的 `taskset` 工具，允许用户通过命令行指定任务可使用的 GPU 核心（TPC 或 GPC）。
+
+**`nvtaskset` 实现细节 (核心技术点)**：
+1.  **基于 MPS 的并发执行**：`nvtaskset` 将通过它启动的所有任务与一个自动启动的 MPS 服务器关联，实现任务并发。为缓解 MPS 的“缺陷 4”，`nvtaskset` 将每个 CUDA 任务的 `channels` 数量配置为 8。
+2.  **基于 `libsmctrl` 的分区强制**：`nvtaskset` 使用 `libsmctrl` 的机制，通过修改提交到 GPU 的 `TMD` 中的 TPC 掩码来实现分区。这使得 `nvtaskset` 能够像 `libsmctrl` 一样强制执行分区，且能指定具体 TPC，避免了 MPS 的“缺陷 6”和“缺陷 7”。
+3.  **对未修改任务的支持 (透明性)**：`nvtaskset` 通过共享库拦截技术实现透明性。它将自己编译成 `libcuda.so.1`，利用加载器行为使其在 CUDA 库之前加载。其内部的加载时构造函数会加载真正的 CUDA 库，并注册 `TMD` 拦截回调函数。当任务执行核函数启动时，此回调函数会被触发，应用 TPC 掩码，无需任务修改。
+4.  **动态可变分区**：`nvtaskset` 通过共享内存区域暴露每个 CUDA 任务的当前分区设置。`nvtaskset -p` 等命令可修改此设置，`nvtaskset` 的回调函数会自动检测并应用于后续的核函数启动，解决了 MPS 的“缺陷 8”。
+5.  **GPC 粒度分区**：`nvtaskset` 支持按 GPC 指定分区，并将其内部转换为 TPC 集合。它修正了 `libsmctrl` 中关于 SM ID 到 GPC 映射的假设（SM ID 到 GPC 映射不是线性的，而是由 NVIDIA 驱动配置的条带状结构），确保分区与 GPC 边界对齐，这对于 NVIDIA 的 `Thread Block Groups` 功能（仅在访问完整 GPC 时有效）至关重要。
+
+**`nvtaskset` 局限性：**
+
+*   仅兼容 CUDA 任务。
+*   不支持多 GPU 任务。
+*   无法影响已启动内核的分区变化。
+*   仍然受 MPS 的“缺陷 1-3”影响（内核并发限制、故障隔离不完全、不支持 CDP）。
+*   每个 MPS 服务器最多支持 15 个客户端。
+*   默认情况下受 MPS“缺陷 5”影响（伪造 SM ID），但可通过特定配置使其看似连续。
+
+**评估：**
+
+评估在 NVIDIA A100 GPU (支持 MiG, MPS, nvtaskset) 上进行，使用 57/43 分区比例（MiG 限制）。
+
+1.  **分区开销**：
+    *   **观察 1**：所有分区机制对启动或启动开销均无显著增加。
+    *   **观察 2**：只有 MiG 降低了启动开销，可能因为它静态绑定了硬件调度管道到每个分区的 TPC，减少了设置和考虑的 TPC 数量。
+    *   **观察 3**：MPS 和 `nvtaskset` 启动开销最低，因为作为 MPS 客户端，任务只需初始化 `channels` 和 `subcontexts`，MPS 服务器提供父上下文和 TSG，显著减少了开销。
+
+2.  **分区强制能力**：
+    *   测试方法：测量 6144x6144 矩阵乘法 (`MM6144`) 在 57% 分区内的执行时间，同时干扰任务（内存密集型 `random_walk` 和计算密集型 `mandelbrot`）在剩余 43% 分区执行。
+    *   **观察 4**：MPS 的分区机制在可预测性和效率上表现更差，即使正确使用。对于内存密集型竞争，MPS 无法阻止内存争用，仅限制计算资源。
+    *   **观察 5**：`nvtaskset` 能够提供接近 MiG 的分区强制能力，而无需硬件修改。对于内存密集型工作，`nvtaskset` 表现优于 MPS，接近 MiG。对于计算密集型工作，`nvtaskset` 在平均和最坏情况执行时间上甚至优于 MiG。这表明 `nvtaskset` 对 L0、L1 和 TLB 缓存的隐式分区（通过与 GPC 对齐）效果显著。
+
+3.  **分区粒度**：
+    *   测试方法：测量 8192x8192 矩阵乘法 (`MM8192`) 在各种可能分区大小下的执行时间。
+    *   **观察 6**：`nvtaskset` 是粒度最细的分区机制。MPS 和 `nvtaskset` 都能达到每 TPC 粒度。但 `nvtaskset` 能指定具体 TPC，而 MPS 只能指定百分比。对于 54 TPC 的 GPU，`nvtaskset` 支持 $2^{54}$ 种分区设置，MPS 支持 54 种，MiG 仅支持 5 种。
+    *   **观察 7**：MiG 无法访问 A100 GPU 核心的 9%（5 个 TPC）。A100 上 MiG 最大分区只包含 49 个 TPC，而 MPS 或 `nvtaskset` 能访问 54 个。这是由于 MiG 配置为 7 TPC 的倍数，而 54 不能被 7 整除，导致剩余的 5 个 TPC 被浪费。在 H100 GPU 上，损失甚至高达 6-15%。
+
+
 ## BitDecoding
 BitDecoding: Unlocking Tensor Cores for Long-Context LLMs with Low-Bit KV Cache
 
