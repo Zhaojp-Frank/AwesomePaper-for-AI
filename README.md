@@ -1,6 +1,64 @@
 # AwesomePaper-for-AI
 Awesome or inspiring papers for AI
 
+# Injecting RL Skills
+Knowledge is Not Enough: Injecting RL Skills for Continual Adaptation
+
+https://arxiv.org/pdf/2601.11258 2026.1.16 北大团队
+
+1. 大型语言模型（LLMs）面临知识更新挑战，监督微调（SFT）虽能更新知识但难以提升推理技能，而强化学习（RL）虽能培养技能但成本高昂，本文提出PaST框架，利用**SFT和RL参数更新的近似正交性**，将RL技能模块化注入SFT模型。
+2. 该方法通过在**源域中计算RL优化模型与SFT模型的参数差异**来提取领域无关的reasoning “Skill Vector”，随后将其线性注入到在目标域上进行了轻量SFT的模型中，实现了高效的技能适应。
+3. 基于Qwen2.5-7b，PaST在SQuAD知识整合任务中超越现有SFT基线9.9分，在LooGLE长文本问答中提升8.0分，并在ToolBench工具使用中平均提高10.3%成功率，展现出其强大的可扩展性和跨域迁移能力。
+   
+<img width="829" height="709" alt="image" src="https://github.com/user-attachments/assets/ad8a0d9a-6e61-4b2d-81e7-30c583d94e37" />
+<img width="407" height="383" alt="image" src="https://github.com/user-attachments/assets/33b18005-d62d-49c7-ade1-7f27713911da" />
+
+大型语言模型 (LLMs) 面临着“知识截止”的挑战，其冻结的参数记忆限制了直接内化新信息的能力。尽管 Supervised Fine-Tuning (SFT) 常用于更新模型知识，但它通常仅更新事实内容，而不能可靠地提升模型运用新信息进行问答或决策的能力。强化学习 (RL) 对于获取推理技能至关重要，然而其高昂的计算成本使其难以进行高效的在线适应。本文实证观察到 SFT 和 RL 所引起的参数更新几乎是正交的。基于此观察，本文提出了 Parametric Skill Transfer (PaST) 框架，该框架支持模块化技能迁移，以实现高效且有效的知识适应。
+
+**核心方法论：Parametric Skill Transfer (PaST)**
+
+PaST 框架通过解耦知识（facts）和技能（skills）在参数空间中的表示，从而实现技能的高效迁移。其核心在于实证发现：**SFT 和 RL 导致的参数更新在参数空间中占据几乎正交的子空间**。这意味着通过 SFT 获得的知识和通过 RL 学习到的操作技能是相对独立的，可以单独优化和组合。
+<img width="840" height="322" alt="image" src="https://github.com/user-attachments/assets/fd86a7b5-c3d1-40ad-87ca-3f2071296768" />
+
+<img width="830" height="538" alt="image" src="https://github.com/user-attachments/assets/799e5cfd-b98a-4830-8672-8cf5e42b7611" />
+
+**实验验证**：
+<img width="842" height="738" alt="image" src="https://github.com/user-attachments/assets/99cf083f-ecb7-4e59-82c3-dcf8441b27e7" />
+<img width="417" height="244" alt="image" src="https://github.com/user-attachments/assets/d092ee8f-d8ed-4e2e-8451-320013c89343" />
+<img width="412" height="249" alt="image" src="https://github.com/user-attachments/assets/f90fc485-694b-4ee0-b5dd-dc41bc26f1a8" />
+
+1.  **知识整合 QA (SQuAD)**：
+    *   在闭卷 (closed-book) SQuAD 任务上，PaST 显著优于包括最先进的 SEAL (self-adapting baseline) 和 GPT-4.1 在内的基线模型。
+    *   PaST (50x2) 达到 56.9% 的准确率，相比“Train on Passage + Synthetic”基线 (+17.2%) 和 SEAL (+9.9%) 有大幅提升。
+    *   结果在单通道更新、Continual Pretraining (CPT, n=200 和 n=2067) 等不同机制下均保持优势，表明其鲁棒性和可扩展性。
+    *   基础模型使用 Qwen2.5-7B，RL 采用 GRPO，奖励评估使用 GPT-4.1。
+
+2.  **长上下文 QA (LooGLE)**：
+    *   在处理超过 21k token 的长文档 LooGLE 数据集上，PaST 再次展示了其有效性。
+    *   PaST 相比标准 Target SFT 基线提升了 8.0% 的绝对准确率 (从 30.1% 提升到 38.1%)。
+    *   Source Set 使用 LooGLE 的最后 10 个文档，Evaluation Set 使用前 50 个文档。迭代技能获取进行 2 轮。
+    *   SFT 阶段采用两阶段课程：(1) 上下文记忆 (通过多任务训练，如文本建模、扩展和压缩)；(2) 合成 QA 训练。
+    *   基础模型使用 Qwen2.5-7B-Instruct，RL 采用 GRPO。
+
+3.  **智能体工具使用 (ToolBench)**：
+    *   在闭卷执行 (Closed-Book Execution) 设置下进行评估，模型仅提供 API 名称，需利用内部记忆回忆 API 模式并执行。
+    *   源领域 (Source Domain) 选定为 Movies 类别，目标领域 (Target Domains) 包含 20 个 RL 训练中从未见过的类别。
+    *   PaST 将平均成功率从 21.9% 提升到 32.2%，平均提升 10.3 个点。在某些领域甚至实现了从 0% 到 16.7% 的零样本激活。
+    *   SFT 阶段用于建立 API 名称与功能的映射 (使用原始 API 模式、自然语言转录和双向 QA 对)，并对齐 ReAct 规范。
+    *   RL 采用 PPO (基于 Search-R1 框架)，环境模拟器为 GPT-4o-mini，奖励信号是格式奖励、执行奖励和 GPT-4.1 判断的解决方案奖励的复合。
+    *   基础模型使用 Qwen2.5-7B-Instruct。
+
+**消融研究**：
+
+1.  **迭代技能精炼的影响**：迭代策略在 SQuAD 和 LooGLE 任务上始终优于单轮训练 (即使总数据量相同)，证明其能促使技能向量捕获内容不变的执行逻辑，避免过拟合。
+2.  **迁移策略的影响**：PaST 采用的“Post-hoc Composition”策略 ($ \theta_{final} = \theta_{sft}^T + \lambda \cdot v_{skill} $) 显著优于其他替代方案：
+    *   “Sequential Fine-Tuning” ($\theta_{rl}^S$ 直接在目标文档上微调)：性能甚至略低于标准 SFT，可能因优化冲突破坏了 RL 学习到的推理电路。
+    *   “Pre-Injection” ($v_{skill}$ 在目标 SFT 前注入 $\theta_{base}$)：性能中等，可能因为后续 SFT 会使权重流形发生偏移，导致预注入的技能错位。
+    *   这强调了 PaST 先通过 SFT 锚定声明性知识，再嫁接执行逻辑的合理性。
+
+**局限性**：
+本文承认仍存在局限性，包括实验领域的多样性、$\lambda$ 系数的静态设定以及模型架构泛化性等，有待未来工作进一步探索。
+
 ## LithOS
 LithOS: An Operating System for Efficient Machine Learning on GPUs
 
