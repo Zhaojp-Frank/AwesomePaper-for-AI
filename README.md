@@ -1,6 +1,19 @@
 # AwesomePaper-for-AI
 Awesome or inspiring papers for AI
 
+## PLA-Serve
+PLA-Serve: A Prefill-Length-Aware LLM Serving System 
+
+https://arxiv.org/pdf/2601.11589 2026.1.4
+
+1. 💡 PLA-Serve通过识别并解耦大型语言模型服务中不同提示长度的请求，以解决**长预填充（compute-bound）和短预填充**（memory-bound）请求之间的计算-内存干扰问题。
+2. ⚙️ 该系统为短预填充工作负载引入了长度感知智能批处理机制，结合自适应等待窗口（AWD）和基于CUDA Graph的聚类，以减少批处理延迟并提升吞吐量。
+3. 📈 PLA-Serve采用双队列设计，支持单实例的时间解耦或多实例的空间解耦，在实际多轮对话场景中显著降低了预填充延迟和SLO违规率，并提高了请求吞吐量。
+
+LA-Serve的核心洞察是，预填充阶段内，长序列（计算密集型）和短序列/重新预填充（re-prefill，通常为内存密集型）具有截然不同的性能瓶颈，混合调度会导致显著的相互干扰。
+核心问题与背景
+LLM serving面临的主要挑战之一是时延敏感性和高并发性。预填充阶段（计算第一个token）通常是计算密集型的，而解码阶段（自回归生成后续token）是内存密集型的。PD disaggregation（预填充与解码分离）将这两个阶段部署在不同的实例上，以避免跨阶段资源竞争。然而，即使在PD disaggregation之后，预填充实例内部仍存在干扰。论文指出，在LMsys-Chat-1M等真实世界多轮对话数据集中，大部分prompt是短的（<256 token），而长上下文请求（>1K token）相对较少。短的预填充/re-prefill请求通常是内存密集型的（受KV-cache读写限制），而长的预填充请求是计算密集型的（受GEMM吞吐量限制）。将它们混合在一个批次中进行处理，会导致“队头阻塞（head-of-line blocking）”和计算-内存干扰：短请求等待长的GEMM操作，导致TTFT（Time-to-First-Token）飙升；而长请求的有效FLOPs（浮点运算每秒）因短请求的大量KV流量而降低。
+
 ## JetRL-FP8
 Jet-RL: Enabling On-Policy FP8 Reinforcement Learning with Unified Training and Rollout Precision Flow
 
