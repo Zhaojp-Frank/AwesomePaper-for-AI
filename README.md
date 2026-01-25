@@ -1,6 +1,59 @@
 # AwesomePaper-for-AI
 Awesome or inspiring papers for AI
 
+## JetRL-FP8
+Jet-RL: Enabling On-Policy FP8 Reinforcement Learning with Unified Training and Rollout Precision Flow
+
+https://arxiv.org/abs/2601.14243  2026.1.19 NVIDIA MIT han song；伯克利；斯坦福等
+
+1. 🤔 现有RL训练中，rollout阶段效率低下，BF16-train + FP8-rollout策略在长序列生成和复杂任务下表现出严重的训练不稳定性和灾难性精度下降。
+2. 💡 为解决此问题，本文提出Jet-RL，一个**统一FP8精度流的on-policy RL训练框架**，确保训练和rollout**之间数值一致性，从而实现稳定优化**。W采用128*128 per-block；激活和梯度采用1-128量化。
+3. 🚀 基于VeRL+vLLM，LLama/Qwen最大8b 最长16k，Jet-RL在保持与**BF16训练相当的收敛和精度下**，实现了高达**33%的rollout阶段加速、41%的训练阶段加速和16%的端到端加速**。
+<img width="829" height="625" alt="image" src="https://github.com/user-attachments/assets/5453671c-a626-423f-be7e-54753af60a73" />
+
+**研究背景与问题：**
+强化学习在增强 LLM 复杂推理能力方面至关重要，但其训练流程计算效率低，资源消耗大。其中，rollout 阶段通常占据总训练时间的 70% 以上 (见 Figure 2)，成为主要瓶颈。FP8 量化因其显著的效率增益而被认为是加速 RL 训练的有效途径。目前普遍采用的策略是保持 BF16 精度进行训练，而在 rollout 阶段使用 FP8 量化（BF16-train + FP8-rollout）。然而，本文发现这种策略存在严重缺陷：
+1.  **长期 Rollout 生成中的不稳定性：** 在长序列生成（例如超过 8K tokens）时，该策略会导致严重的精度下降甚至灾难性崩溃 (见 Figure 3)。这是因为训练和 rollout 精度之间的微小数值差异在长序列中会逐渐累积，放大离策略训练的影响，导致生成轨迹发散并使 RL 训练不稳定。
+2.  **在挑战性任务中的失败：** 在面对更难的推理任务或使用较弱的基础模型时，BF16-train + FP8-rollout 策略的表现会迅速与 BF16 训练结果出现分歧 (见 Figure 4)。当模型对自身响应的信心不足时，量化引起的误差会严重扭曲 rollout 轨迹，导致训练不稳定和性能下降。
+<img width="856" height="324" alt="image" src="https://github.com/user-attachments/assets/7d406449-fffc-4c2f-9257-723edbda9e61" />
+<img width="865" height="553" alt="image" src="https://github.com/user-attachments/assets/87cdedb7-fbdf-4e67-b5b3-796a32449c76" />
+<img width="423" height="262" alt="image" src="https://github.com/user-attachments/assets/0641071d-d091-460d-a1d6-b2d49656b2f2" />
+
+这些问题源于训练和推理之间存在的“离策略”性质，即 FP8 量化 rollout 和 BF16 训练更新之间存在显著的数值不匹配。
+
+**Jet-RL 核心方法：**
+Jet-RL 的核心思想是强制在训练和 rollout 之间采用**统一的 FP8 精度流（unified FP8 precision flow）**，以实现真正的“在策略”（on-policy）FP8 RL 训练，从而稳定 RL 训练并消除策略不匹配。
+
+1.  **统一精度流的建模与实现：**
+    *   作者将模型中量化精度传播建模为有向图 $ \mathcal{G} = (\mathcal{V}, \mathcal{E}) $，其中节点 $ v_i \in \mathcal{V} $ 代表操作符或权重，边 $ (v, v') \in \mathcal{E} $ 描述了张量在连接操作符之间的传播及其精度和量化粒度。
+    *   在 BF16-train + FP8-rollout 策略中，训练的前向图 $ \mathcal{G}_{\text{fwd}}^{\text{train}} $ 和推理图 $ \mathcal{G}^{\text{infer}} $ 是不同的，导致训练与 rollout 之间的不匹配。
+    *   Jet-RL 通过强制 $ \mathcal{G}^{\text{infer}} $ 成为 $ \mathcal{G}_{\text{fwd}}^{\text{train}} $ 的子图来解决此问题，确保所有边（张量）的属性（精度和粒度）保持一致。
+    *   尽管训练过程中会维护一个 BF16 的高精度主副本（master copy）以稳定训练，但**前向传播的量化行为在训练和推理框架**中保持一致，从而减轻了不匹配问题。
+    *   对于反向传播，为了保持模型精度，操作符之间传输的**梯度保留在 BF16 精度**。然而，反向传播中的 **GEMM 操作（DGrad 和 WGrad）也量化为 FP8** 以加速。
+
+2.  **GEMM 量化粒度：**
+    *   考虑到 FP8 的逐张量（per-tensor）量化在 LLM 训练中不稳定，Jet-RL 采用了更细粒度的量化策略。
+    *   **权重：** 使用 128x128 的**逐块（per-block）量化**。
+    *   **激活和梯度：** 使用 1x128 的**逐组（per-group）量化**。
+    *   **FProp (前向传播)：** 输入激活进行 1x128 逐组量化，权重进行 128x128 逐块量化。为满足硬件要求（row-wise $ \times $ column-wise），**激活和权重均以 row-wise 布局存储**。激活的量化可与前一个操作符融合以减少开销，权重的量化则在参数更新阶段进行，开销可忽略。
+    *   **DGrad 和 WGrad (反向传播)：**
+        *   DGrad 的工作负载与 FProp 相似，可重用相同的 1x128 量化矩阵乘以 128x128 量化矩阵的核配置。
+        *   WGrad 遵循 DeepSeek-V3 的设计，将第一个矩阵量化为 1x128，第二个量化为 128x1（这种更细粒度的设计有助于稳定训练）。
+        *   这两个操作都需要量化梯度，但分别要求 1x128 和 128x1 的量化，Jet-RL 融合了这些量化过程。
+        *   权重的量化方案沿通道和行轴对称，在反向传播中值不变，只需进行转置。
+        *   激活在正向传播中量化为 1x128，但在反向传播中需要量化为 128x1，这要求在反向传播中再次进行量化。
+
+3.  **实现细节：** Jet-RL 使用 vLLM 作为推理引擎，VeRL 作为 RL 训练框架。量化 GEMM 借鉴了 DeepGEMM 的核，并使用 Triton 实现了量化、转置和融合的激活或 RMSNorm 核。
+
+**实验评估：**
+实验在 Llama3.1-8B, Qwen2.5-7B, 和 Qwen3-8B-Base 等模型上，使用 GSM8K + MATH 和 DeepMATH 数据集，以及 8K 和 16K 的 rollout 长度进行。
+1.  **精度评估：**
+    *   **8K Rollout：** BF16-train + FP8-rollout 方法表现出显著不稳定性，在 Qwen2.5-7B 上甚至无法收敛，在其他模型上性能大幅下降（Llama3.1-8B 平均分数下降 9.8%）。相比之下，Jet-RL 在所有场景下都能稳定收敛，并且将与 BF16 基线的性能差距大幅缩小（Qwen2.5-7B 仅下降 1.0%，Qwen3-8B-Base 仅下降 1.1%），在 Llama3.1-8B 上甚至超越了 BF16 基线 2.0% (见 Table 2)。
+    *   **16K Rollout / DeepMATH：** BF16-train + FP8-rollout 在 16K rollout 的 Qwen3-8B-Base 上未能收敛，在 DeepMATH 上性能严重下降 10.3%。Jet-RL 成功解决了这些问题，收敛性更强，与 BF16 基线差距显著缩小（Qwen3-8B 仅下降 2.7%，DeepMATH 仅下降 0.9%，Qwen2.5-7B 仅下降 3.0%）(见 Table 3)。
+2.  **效率评估：**
+    *   **Rollout 加速：** FP8 相较于 BF16 实现了 1.07x 到 1.33x 的持续加速 (见 Table 4)。加速比随模型规模增大而提高（32B 模型达到 1.33x），但高张量并行度（TP）会降低加速效果（如 32B 模型在 TP=4 时加速比为 1.1x，而 TP=2 时为 1.3x），这表明通信开销成为限制因素。
+    *   **端到端加速：** 对于 Qwen3-8B 模型和 8K rollout 长度，FP8 量化在 actor 更新阶段实现 1.54x 加速，在 Reference Model 推理阶段实现 1.80x 加速，共同使训练阶段吞吐量提高了 1.41x。结合 rollout 的加速，整体端到端步长耗时提速 1.16x。
+
 # StaleFlow
 Unleashing Efficient Asynchronous RL Post-Training via Staleness-Constrained Rollout Coordination
 
