@@ -10,8 +10,8 @@ https://github.com/llm-in-sandbox/llm-in-sandbox
 
 https://mp.weixin.qq.com/s/AebCuUQZ3RBI5oG0uU64Rg 
 
-LLM-in-Sandbox不需要额外的训练，强大的大模型就能自发地利用代码沙箱解决数学、物理、化学甚至生物医学等非代码领域的难题。通过工具产生结果而非回归生成，显著降低了长文本场景下的Token消耗（最高达8倍）。
-且sandbox就和LLM部署在同一台机器上。**论文的实验都是单台DGX GPU服务器：每个沙盒容器在空闲时仅消耗约 50 MB 内存，峰值时～ 200 MB。对于一台拥有 2TB 内存的典型 GPU 服务器，即使同时运行 512 个并发沙盒**，也仅占用约 5% 的内存资源。且延迟极低。
+LLM-in-Sandbox不需要额外的训练，强大的大模型就能自发地**利用代码沙箱解决数学、物理、化学甚至生物医学等非代码领域的难题**。通过工具产生结果而非回归生成，显著降低了长文本场景下的**Token消耗**（最高达8倍）。
+且sandbox就和LLM部署在同一台机器上。**论文的实验都是单台DGX GPU服务器：每个沙盒容器在空闲时仅消耗约 50 MB内存，峰值时～ 200 MB。对于一台拥有 2TB 内存的典型 GPU 服务器，即使同时运行 512 个并发沙盒**，也仅占用约 5% 的内存资源。且延迟极低。
 <img width="649" height="329" alt="image" src="https://github.com/user-attachments/assets/1f344bae-2821-41ac-a492-da1eb4aaca29" />
 <img width="675" height="457" alt="image" src="https://github.com/user-attachments/assets/d50f9575-77ac-47ea-8620-830aa9a669a2" />
 
