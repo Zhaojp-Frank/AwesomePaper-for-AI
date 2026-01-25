@@ -1,12 +1,111 @@
 # AwesomePaper-for-AI
 Awesome or inspiring papers for AI
 
+# StaleFlow
+Unleashing Efficient Asynchronous RL Post-Training via Staleness-Constrained Rollout Coordination
+
+https://arxiv.org/pdf/2601.12784 2026.1.19 北大 崔斌团队 上交 腾讯等。
+
+1. StaleFlow旨在解决**异步强化学习**（RL）后训练中普遍存在的**数据陈旧度（data staleness）和数据倾斜**（data skewness）两大挑战，通过引入**全局一致性协议严格控制陈旧度**，并创新性地重塑系统架构以有效缓解倾斜。
+2. 该系统通过虚拟**陈旧度缓冲区**（virtual staleness buffer）实现**细粒度的轨迹级**（trajectory-level）陈旧度管理，确保即使在支持如**部分rollout和迁移等高级协调技术时，也能严格遵守预设的陈旧度上限**。
+3. StaleFlow通过**Trajectory Server (TS) 和 Parameter Server (PS) 解耦**数据流，并由中央协调器（**centralized coordinator**）运用一**系列吞吐量导向的rollout协调策略**，最终实现了高达2.68倍的系统吞吐量提升，同时保持了收敛性（测了几十～100step）。
+
+-   StaleFlow实现基于 Python 合计22K LoC: 1) Staleness: 2K; 2) 支持Megatron和FSDP，2K； 3）Rollout service: 10K, 其中PS 4K， TS 1K；vLLM: 3K, coordinator:2K; 利用 NVIDIA NIXL和UCX进行高效通信。
+-   PS部署在 CPU 资源上，与训练和 Rollout 工作器协同工作，通过 PCIe DMA 和 RDMA 实现高效的参数传输。PS 的通信开销不随集群规模增加而显著增长。
+-   Redundant Rollout 在消融研究中被证明可以进一步缩短平均轨迹长度并略微提升吞吐量，但考虑到它会改变生成长度分布，未在主要对比实验中启用。
+  
+<img width="552" height="375" alt="image" src="https://github.com/user-attachments/assets/147b4ca8-14d4-4328-85f1-67d1a3967159" />
+<img width="550" height="362" alt="image" src="https://github.com/user-attachments/assets/be62e45c-fd67-45b5-8403-2570b68db965" />
+
+异步 RL 系统中普遍存在的 **数据陈旧性（data staleness）** 和 **数据倾斜性（data skewness）** 问题。现有系统往往需要在 RL 收敛性和系统性能之间进行权衡，因为严格控制陈旧性会限制数据倾斜性缓解技术的使用，而激进的倾斜性缓解则会加剧数据陈旧性。StaleFlow 通过创新的架构设计和算法策略，在保持严格的陈旧性约束下，显著提高了系统吞吐量。
+<img width="736" height="641" alt="image" src="https://github.com/user-attachments/assets/0e5dc929-5447-48c4-a978-432d53915fa9" />
+<img width="1498" height="450" alt="image" src="https://github.com/user-attachments/assets/95a9821e-4f85-4005-807f-955a1bbdf1f2" />
+
+**背景与动机**
+异步执行带来了两个关键数据问题：
+1.  **数据陈旧性（Data Staleness）**：由于 rollout 阶段使用的模型参数可能不是最新的，训练阶段会消耗**陈旧轨迹（stale trajectories）**，这可能损害 RL 的**收敛性（convergence）**。RL 算法通过重要性采样（Importance Sampling）或修正来容忍一定程度的模型不匹配，但过度的陈旧性会导致收敛性下降。可以通过设定**陈旧性上限（staleness bound）** $\eta$ 来限制。
+2.  **数据倾斜性（Data Skewness）**：轨迹长度差异大，导致**工作负载倾斜（workload skewness）**。这体现在**实例内部（within-instance）**（短轨迹早完成，长尾轨迹长时间占用资源）和**实例之间（across-instance）**（不同实例进度不同，快实例需等待慢实例）。这两种倾斜都会降低资源利用率和系统吞吐量。
+
+现有系统应对这些问题的方式各有侧重：
+-   **严格陈旧性控制**（如 VeRL-Async、AReaL、Roll Flash）：允许用户定义 $\eta$，通过限制**在途数据（in-flight data）**量来强制执行，但限制了多种 **rollout coordination** 技术的使用。
+-   **一步陈旧性**（如 VeRL-Pipeline、AsyncFlow、RhymeRL）：固定 $\eta=1$，保证了更灵活的协调，但无法根据需求放宽 $\eta$ 以获得更高性能。
+-   **无陈旧性保证**（如 LlamaRL、Laminar、APRIL、SortedRL）：不限制陈旧性，自由应用协调技术，但可能导致陈旧性无界，损害收敛。
+
+**rollout coordination 技术**主要包括：
+-   **Partial Rollout Trajectories**：中断进行中的轨迹，同步模型，重计算 **KV Cache**，然后恢复生成。
+-   **Redundant Rollout Trajectories**：过采样轨迹，丢弃长尾轨迹。
+-   **Multi-Version Rollout Instances**：不同实例独立同步模型。
+-   **Migration Across Rollout Instances**：动态迁移轨迹到其他实例。
+
+**StaleFlow 的核心贡献**在于：
+1.  提出了一种**全局一致性协议（global consistency protocol）**，在轨迹级别强制执行严格的陈旧性控制，同时支持高级 rollout coordination 技术。
+2.  引入了架构创新，通过**轨迹服务器（Trajectory Server, TS）**和**参数服务器（Parameter Server, PS）**将数据移动解耦，实现了灵活的 rollout coordination。
+3.  设计了一套**陈旧性感知（staleness-aware）**、**吞吐量导向（throughput-oriented）**的 rollout coordination 策略，通过**快照-命令循环（snapshot-command cycle）**统一各种技术以最大化系统吞吐量。
+
+**核心方法学**
+
+StaleFlow 的设计围绕**陈旧性管理器（Staleness Manager）**和增强的 **Rollout Service** 展开。
+
+**1. 控制数据陈旧性：全局一致性协议**
+StaleFlow 引入**虚拟陈旧性缓冲区（virtual staleness buffer）**抽象和**轨迹版本标识符（$V_{traj}$）**来精细化控制陈旧性。
+-   **轨迹版本标识符（$V_{traj}$）**：每个初始轨迹都被分配一个 $V_{traj}$，表示用于生成该轨迹的模型版本。如果启用了 Partial Rollout，则 $V_{traj}$ 指的是可容忍的最旧模型版本。$V_{traj}$ 由 Rollout Coordinator 和 Staleness Manager 共同处理。
+-   **虚拟陈旧性缓冲区（Virtual Staleness Buffer）**：
+    -   Staleness Manager 维护一系列虚拟缓冲区，每个缓冲区容量等于**批次大小（batch size）**。
+    -   每个缓冲区有一个**缓冲区版本（$V_{buf}$）**，表示该缓冲区中的轨迹将用于训练模型从 $V_{buf}$ 更新到 $V_{buf}+1$。
+    -   **陈旧性约束**：所有轨迹必须满足 $V_{traj} + \eta \ge V_{buf}$，其中 $\eta$ 是用户定义的陈旧性上限。
+    -   **核心原语**：
+        1.  **Reserve**：当轨迹开始执行时，Staleness Manager 从 $V_{buf} = V_{traj} + \eta$ 开始向后扫描，保留一个空条目作为占位符。这代表了在不违反 $\eta$ 的情况下，轨迹可能驻留的最差情况缓冲区位置。
+        2.  **Occupy**：当轨迹生成完成并计算奖励后，Staleness Manager 从前向扫描，贪婪地占用最早可用的空条目，将轨迹注册为可供消费。
+        3.  **Consume**：训练工作器消耗一个完整的缓冲区后，该缓冲区的数据不再被跟踪。
+    -   **缓冲区状态**：缓冲区可以处于 **Waiting**（有空条目），**Ready**（所有条目被 Occupy，可供训练），或 **Stuck**（已满但包含未完成的 Reserved 条目）。
+    -   **条目删除和移动**：当一个 Reserved 条目完成并被 Occupy 时，其占位符被删除。协议会移动其他 Reserved 条目（例如，将满足 $V_B + \eta \ge V_{buf}$ 的最早 Reserved 条目 B 移动到已删除的条目 A 的位置），以确保 Ready 状态的条目尽可能早地被训练。
+-   **与高级技术的兼容性**：该协议天然支持 Partial Rollout、Rollout Migration、Group Sampling（按组进行 Reserve/Occupy，组 $V_{traj}$ 为组内所有轨迹的最小 $V_{traj}$），以及 Redundant Rollout 和 Filtering（可以通过扩展缓冲区条目或每组轨迹数量来实现冗余，并选择性地丢弃轨迹）。
+
+**2. 缓解数据倾斜性：Rollout Service 架构与策略**
+
+StaleFlow 通过重新设计的 Rollout Service 架构和一套协调策略来缓解数据倾斜。
+
+-   **Rollout Service 架构**：
+    -   **TS（Trajectory Server）**：存储所有用于 Rollout 的轨迹，作为数据集和 Rollout 实例之间的中介。其容量为 $(\eta+1) \times \text{batch_size}$。它不断从数据集中采样 Prompt，并将其作为初始轨迹排队。当轨迹被中断时，它会被返回到 TS 以便重新路由。
+    -   **PS（Parameter Server）**：存储最新的模型参数，部署在 CPU 资源上，在训练工作器和 Rollout 实例之间提供同步接口。训练完成后，训练工作器通过 **Push** 操作将更新的参数立即推送到 PS。Rollout Coordinator 指示 Rollout 实例根据需要从 PS **Pull** 参数。PS 使用读写锁机制确保正确性（Push 为排他写，Pull 为共享读）。
+    -   **Rollout Coordinator**：作为中央控制平面，周期性地捕获系统**快照（snapshot）**，应用协调策略，并发出 Rollout 命令。
+-   **快照-命令循环（Snapshot-Command Cycle）**：
+    -   Coordinator 周期性捕获每个 Rollout 实例的快照 $S$，包含其 **KV Cache** 使用情况、正在运行的轨迹（**run_trajs**）、等待队列中的轨迹（**wait_trajs**）、已完成轨迹（**complete_trajs**）和当前模型版本（**inst_version**）。
+    -   **推测状态（Speculative State, $P$）**：为了解决决策和系统状态变化之间的时间耦合问题，StaleFlow 引入 $P$ 来表示命令执行后的预期系统状态。每次发出命令（**Pull**、**Route**、**Interrupt**、**Abort**）后，都会更新 $P$。新的快照 $S_{t+1}$ 只有在与 $P$ 表示的预期状态一致时才被接受，确保 Coordinator 基于最新有效信息做出决策。
+    -   **并发命令执行**：命令可以并发执行，StaleFlow 通过等待或挂起数据来处理命令之间的依赖关系。
+-   **Rollout 协调策略**：StaleFlow 实现了一套陈旧性感知、吞吐量导向的策略：
+    -   **成本模型（Cost Model）**：用于估计路由决策导致的吞吐量变化。实例 $i$ 的生成吞吐量 $T_i(S)$ 被建模为：
+        $$T_i(S) = \frac{|\text{run_trajs}|}{k_1 \times \text{kv_cache} + \max(k_2, k_3 \times |\text{run_trajs}|) + k_4}$$
+        其中 $k_1$、$k_2$、$k_3$、$k_4$ 是通过离线分析得到的常数系数。**attention** 操作的延迟与 **KV Cache** 大小呈线性关系（$k_1 \times \text{kv_cache}$），矩阵乘法延迟取决于运行轨迹数量（$\max(k_2, k_3 \times |\text{run_trajs}|)$），$k_4$ 是常数开销。该模型用于计算**边际吞吐量增益（marginal throughput gain）** $\Delta T_i$。
+    -   **路由策略（Routing Strategy）**：
+        1.  **多级队列（Multi-Level Queue, MLQ）**：TS 中的轨迹按 $V_{traj}$ 升序排序，优先处理陈旧性更高的轨迹。
+        2.  **候选实例识别**：根据 Staleness Manager 规则和 Check Routable 算法（Algorithm 2），识别可路由轨迹的实例。
+        3.  **瀑布模型（Waterfall Model）**：从最高优先级的实例组开始，选择具有最大估计边际吞吐量增益的实例。如果该增益超过阈值 $\mu \times \Delta T_{ideal}$（$\Delta T_{ideal}$ 为理想空闲实例的增益），则路由轨迹；否则，尝试下一个组，若无实例达标则暂缓路由。
+    -   **同步策略（Synchronization Strategy）**：
+        1.  **选择性同步**：仅当实例的模型版本落后于 PS 且在当前版本下无法接受更多轨迹时，才考虑同步。
+        2.  **试探性更新**：通过模拟路由来评估更新模型版本是否会带来新的轨迹路由机会，若会，则进行同步。
+    -   **迁移策略（Migration Strategy）**：
+        1.  **处理过多等待轨迹**：若实例的 **wait_trajs** 数量超过阈值 $\phi_{wait}$，则中断超额轨迹并返回 TS。
+        2.  **处理吞吐量不平衡**：若最高和最低吞吐量实例之间的差距超过 $\phi_{throughput}$，则中断最高吞吐量实例上的所有轨迹并返回 TS 进行再分配。
+
+**评估与结果**
+StaleFlow 在 128卡H20集群上进行评估，使用了 Qwen 系列模型（包括 Dense-32b 和 MoE 30b-A3b 模型），并与 VeRL（同步系统）、VeRL-Pipeline（一步陈旧性）以及 VeRL-Async、AReaL、Roll Flash（严格陈旧性控制）等基线系统进行了比较。
+
+-   **端到端吞吐量**：StaleFlow 始终表现出最高的吞吐量，比同步系统 VeRL 高达 2.68 倍（平均 2.01 倍），比一步陈旧性系统 VeRL-Pipeline 高达 1.95 倍（平均 1.52 倍），比最佳严格陈旧性控制系统 VeRL-Async 高达 1.42 倍（平均 1.17 倍）。在更大的陈旧性上限下，StaleFlow 的优势更明显。
+-   **收敛性**：在陈旧性上限 $\eta$ 设置在 1 到 3 之间时，StaleFlow 的收敛性与无陈旧性的 VeRL 相当，表明其能在提高吞吐量的同时，有效维持 RL 收敛。过大的 $\eta$（如 10）会导致训练崩溃。
+-   **可扩展性**：StaleFlow 在响应长度、批次大小和 GPU 数量等方面的可扩展性均优于或媲美基线，尤其在长响应和大数据量下，其缓解数据倾斜的能力更强。
+-   **性能分析**：
+    -   **消融研究（Ablation Study）**：逐步引入 StaleFlow 的路由、同步和迁移策略，性能均有提升，三者结合效果最佳。StaleFlow 的策略能够更有效地管理资源和负载，例如，StaleFlow 的同步策略基于实际负载进行实例级同步，显著减少了 KV Cache 重计算开销。
+    -   **陈旧性分布**：实验显示，没有轨迹的陈旧性超过设定的上限 $\eta$。大多数缓冲区中的轨迹陈旧性达到了 $\eta$，表明 StaleFlow 充分利用了最大的陈旧性容忍度来榨取系统吞吐量。
+    -   **时间开销**：解码占总时间的绝大部分（89.9%），KV Cache 预填充或重填充占 7.9%。StaleFlow 的 Rollout 命令（Pull、Route、Interrupt）引入的开销低于 3%，TS 和 PS 作为中间件引入的额外开销微不足道。
+
+
 # Injecting RL Skills
 Knowledge is Not Enough: Injecting RL Skills for Continual Adaptation
 
-https://arxiv.org/pdf/2601.11258 2026.1.16 北大团队
+https://arxiv.org/pdf/2601.11258 2026.1.16 北大 Zhang muhan团队
 
-1. 大型语言模型（LLMs）面临知识更新挑战，监督微调（SFT）虽能更新知识但难以提升推理技能，而强化学习（RL）虽能培养技能但成本高昂，本文提出PaST框架，利用**SFT和RL参数更新的近似正交性**，将RL技能模块化注入SFT模型。
+1. 大型语言模型面临知识更新挑战，监督微调（SFT）虽能更新知识但难以提升推理技能，而强化学习（RL）虽能培养技能但成本高昂，本文提出PaST框架，利用**SFT和RL参数更新的近似正交性**，将RL技能模块化注入SFT模型。
 2. 该方法通过在**源域中计算RL优化模型与SFT模型的参数差异**来提取领域无关的reasoning “Skill Vector”，随后将其线性注入到在目标域上进行了轻量SFT的模型中，实现了高效的技能适应。
 3. 基于Qwen2.5-7b，PaST在SQuAD知识整合任务中超越现有SFT基线9.9分，在LooGLE长文本问答中提升8.0分，并在ToolBench工具使用中平均提高10.3%成功率，展现出其强大的可扩展性和跨域迁移能力。
    
