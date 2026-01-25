@@ -9,15 +9,16 @@ https://arxiv.org/abs/2601.16206v1 2026.1.22 微软 人大等
 https://github.com/llm-in-sandbox/llm-in-sandbox
 
 https://mp.weixin.qq.com/s/AebCuUQZ3RBI5oG0uU64Rg 
+
+LLM-in-Sandbox不需要额外的训练，强大的大模型就能自发地利用代码沙箱解决数学、物理、化学甚至生物医学等非代码领域的难题。通过工具产生结果而非回归生成，显著降低了长文本场景下的Token消耗（最高达8倍）。
+且sandbox就和LLM部署在同一台机器上。**论文的实验都是单台DGX GPU服务器：每个沙盒容器在空闲时仅消耗约 50 MB 内存，峰值时～ 200 MB。对于一台拥有 2TB 内存的典型 GPU 服务器，即使同时运行 512 个并发沙盒**，也仅占用约 5% 的内存资源。且延迟极低。
 <img width="649" height="329" alt="image" src="https://github.com/user-attachments/assets/1f344bae-2821-41ac-a492-da1eb4aaca29" />
 <img width="675" height="457" alt="image" src="https://github.com/user-attachments/assets/d50f9575-77ac-47ea-8620-830aa9a669a2" />
 
-LLM-in-Sandbox 给出了惊人的答案：不需要额外的训练，强大的大模型就能自发地利用代码沙箱解决数学、物理、化学甚至生物医学等非代码领域的难题。显著降低了长文本场景下的Token消耗（最高达8倍）
 <img width="799" height="393" alt="image" src="https://github.com/user-attachments/assets/a8ab30f2-f0c5-44b8-9f1c-6421b4d688cb" />
 <img width="498" height="715" alt="image" src="https://github.com/user-attachments/assets/cdfe9bfa-6f90-4f11-8e26-8024348dc9a5" />
 <img width="669" height="354" alt="image" src="https://github.com/user-attachments/assets/11f79ace-a6ea-4da2-91ff-a83857876ed7" />
 <img width="932" height="268" alt="image" src="https://github.com/user-attachments/assets/80ca4a16-8118-4a0b-af46-b65d2260c852" />
-LLM-in-Sandbox Elicits General Agentic Intelligence 这篇论文介绍了LLM-in-Sandbox，一个使大型语言模型（LLMs）能够在代码沙盒（即虚拟计算机）中探索以激发非代码领域通用智能的范式。
 
 **核心思想与方法 (Core Idea and Methodology)**
 
