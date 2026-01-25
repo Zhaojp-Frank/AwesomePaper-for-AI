@@ -1,6 +1,87 @@
 # AwesomePaper-for-AI
 Awesome or inspiring papers for AI
 
+## LLM in Sandbox
+LLM-in-Sandbox Elicits General Agentic Intelligence
+
+https://arxiv.org/abs/2601.16206v1 2026.1.22 微软 人大等
+
+https://github.com/llm-in-sandbox/llm-in-sandbox
+
+https://mp.weixin.qq.com/s/AebCuUQZ3RBI5oG0uU64Rg 
+<img width="649" height="329" alt="image" src="https://github.com/user-attachments/assets/1f344bae-2821-41ac-a492-da1eb4aaca29" />
+<img width="675" height="457" alt="image" src="https://github.com/user-attachments/assets/d50f9575-77ac-47ea-8620-830aa9a669a2" />
+
+LLM-in-Sandbox 给出了惊人的答案：不需要额外的训练，强大的大模型就能自发地利用代码沙箱解决数学、物理、化学甚至生物医学等非代码领域的难题。显著降低了长文本场景下的Token消耗（最高达8倍）
+<img width="799" height="393" alt="image" src="https://github.com/user-attachments/assets/a8ab30f2-f0c5-44b8-9f1c-6421b4d688cb" />
+<img width="498" height="715" alt="image" src="https://github.com/user-attachments/assets/cdfe9bfa-6f90-4f11-8e26-8024348dc9a5" />
+<img width="669" height="354" alt="image" src="https://github.com/user-attachments/assets/11f79ace-a6ea-4da2-91ff-a83857876ed7" />
+<img width="932" height="268" alt="image" src="https://github.com/user-attachments/assets/80ca4a16-8118-4a0b-af46-b65d2260c852" />
+LLM-in-Sandbox Elicits General Agentic Intelligence 这篇论文介绍了LLM-in-Sandbox，一个使大型语言模型（LLMs）能够在代码沙盒（即虚拟计算机）中探索以激发非代码领域通用智能的范式。
+
+**核心思想与方法 (Core Idea and Methodology)**
+
+论文的核心在于将LLM与一个具有以下三种元能力（meta-capabilities）的虚拟计算机相结合：
+1.  **外部资源访问 (External resource access)**：例如访问互联网、调用API。
+2.  **文件管理 (File management)**：进行文件的读取、写入和组织。
+3.  **代码执行 (Code execution)**：运行任意程序。
+
+这使得LLM能够像人类使用计算机一样解决问题。
+
+**LLM-in-Sandbox环境设计 (LLM-in-Sandbox Environment Design)**
+
+LLM-in-Sandbox的设计遵循“最小化”和“探索性”原则。
+*   **代码沙盒 (Code Sandbox)**：采用轻量级、通用目的的Docker容器，提供Ubuntu基础系统和终端访问。与现有SWE agents（例如Claude Code）使用的复杂、特定任务环境不同，**LLM-in-Sandbox环境仅预装标准的Python解释器和必要的科学计算库（如NumPy, SciPy）**。模型被鼓励在运行时自主安装所需的领域特定工具（如Java运行时、RDKit等）。这种设计保证了通用性（同一环境支持多种任务）和可扩展性（统一设置便于大规模推理和训练，存储占用仅约1.1 GB）。
+*   **最小化工具集 (Minimal Toolset)**：LLM在沙盒中拥有三个基本工具：
+    *   `execute_bash`: 执行任意bash命令，这是最基础且通用的接口，允许安装包、管理文件和运行程序。
+    *   `str_replace_editor`: 用于文件创建、查看和编辑。
+    *   `submit`: 指示任务完成。
+*   **工作流 (Workflow)**：工作流基于ReAct框架，模型迭代地推理和行动。在每个回合中，模型生成一个工具调用（例如`execute_bash('ls -la /testbed/documents/')`），从**沙盒接收执行结果，并根据观察决定下一步行动。这个多回合交互持续到模型调用`submit`或达到最大回合限制。**
+    *   **提示工程 (Prompting)**：系统提示（System Prompt）**引导模型充分利用沙盒，鼓励其使用计算工具而非自然语言进行计算**，并**通过程序执行获取答案，而不是直接硬编码结果。**
+    *   **输入/输出处理 (Input/Output Handling)**：利用沙盒的文件系统灵活处理输入和输出。任务输入可从模型提示提供，也可通过文件（例如将长文本文档放置在`/testbed/documents/`中）。最终输出被指示写入指定位置（例如`/testbed/answer.txt`），确保仅包含最终结果。
+
+**训练前的泛化能力 (Training-free Generalization Capabilities)**
+
+论文首先展示了在不进行额外训练的情况下，强大的LLM（如Claude-Sonnet-4.5-Thinking、GPT-5、DeepSeek-V3.2-Thinking）如何自发地利用代码沙盒解决非代码任务，表现出显著的泛化能力。
+*   **性能提升 (Performance Gains)**：在数学、物理、化学、生物医学、长上下文理解和指令遵循等六个非代码领域均获得显著性能提升。例如，Qwen3-Coder**在数学任务上性能提升高达+24.2%**。
+*   **沙盒利用分析 (Sandbox Utilization Analysis)**：
+    *   **案例研究 (Case Study)**：模型自**主安装领域特定工具（如化学任务中的Java和OPSIN库），利用文件管理工具（如`grep`和`sed`）处理长文档，并编写Python脚本进行字符计数、词语重叠检测等复杂计算**。
+    *   **定量分析 (Quantitative Analysis)**：统计模型对外部资源访问、文件管理和计算能力的使用频率。强大的模型会根据任务需求调整使用模式，例如数学任务中计算频率高（43.4%），化学任务中外部资源访问频率高（18.4%）。在长上下文任务中，将文档置于沙盒而非提示中，能带来显著性能提升，最高可达8倍的token消耗降低。
+
+**LLM-in-Sandbox强化学习 (LLM-in-Sandbox Reinforcement Learning, LLM-in-Sandbox-RL)**
+
+为进一步提升模型的沙盒探索能力，论文提出了LLM-in-Sandbox-RL。
+*   **方法 (Method)**：该方法在沙盒内使用通用的、非代理（non-agentic）的上下文相关（context-based）数据训练LLM。
+    *   **数据源 (Data Source)**：采用来自Instruction Pre-Training的通用上下文相关任务数据集，包含百科、小说、专家材料、新闻等多种领域。
+    *   **沙盒配置 (Sandbox Configuration)**：任务上下文以文件形式存储在沙盒内（`/testbed/documents/`），多文档或长上下文会被分割成多个文件，单文件上下文会添加无关的干扰文件，以鼓励模型主动探索和筛选信息。
+    *   **RL训练 (RL Training)**：采用基于结果的奖励（outcome-based rewards）。与仅在文本模式下训练的LLM-RL基线不同，LLM-in-Sandbox-RL在沙盒模式下生成轨迹。
+*   **实验结果 (Experimental Results)**：
+    *   **广泛泛化 (Broad Generalization)**：LLM-in-Sandbox-RL在训练数据之外的所有评估领域（包括SWE任务）都取得了性能提升，即使训练数据与这些任务无重叠。
+    *   **模型能力提升 (Improved Model Capabilities)**：对于初始代理能力较弱的模型（如Qwen3-4B-Instruct），LLM-in-Sandbox-RL训练后，其在沙盒模式下的性能显著优于LLM模式。对于强模型，仍能获得持续提升。
+    *   **推理模式泛化 (Generalization across Inference Modes)**：尽管LLM-in-Sandbox-RL完全在沙盒模式下训练，但它也出人意料地提升了LLM模式（即非沙盒直接生成）的性能，甚至优于LLM-RL。这表明通过沙盒交互学习到的代理技能可以迁移到非代理生成中。
+    *   **数据消融 (Data Ablation)**：对比了不同训练数据（数学、SWE、通用提示内、通用沙盒内）的效果，通用沙盒内训练效果最佳，强调了沙盒交互的重要性。
+*   **泛化分析 (Analysis on Generalization)**：训练后，模型对沙盒能力的利用率显著提高，特别是弱模型，其平均回合数大幅减少（从23.7降至7.0），表明其学会了更有效和有目的的交互。此外，模型在非沙盒LLM模式下的推理模式（如结构化组织和验证行为）也得到了增强，这归因于沙盒交互中每次行动都能得到明确反馈的学习过程。
+
+**效率部署 (Efficient Deployment)**
+
+论文分析了LLM-in-Sandbox在实际系统中的效率。
+*   **计算成本 (Computational Cost)**：
+    *   **Token消耗 (Token Consumption)**：通常沙盒模式由于多回合探索会消耗更多token。然而，在长上下文任务中，通过将内容存储在本地文件而非提示中，可将token消耗减少高达8倍（从100K降至13K token）。总体而言，LLM-in-Sandbox模式的平均总token消耗仅为LLM模式的0.5-0.8倍。
+    *   **速度 (Speed)**：沙盒模式下，大量token来自环境输出，这些token通过快速的Prefill（而非慢速的自回归解码）处理。环境执行时间仅占总时间的不到4%。总体查询吞吐量（Queries Per Minute, QPM）具有竞争力，部分模型甚至实现加速（如MiniMax实现2.2倍加速）。
+*   **沙盒基础设施开销 (Sandbox Infrastructure Overhead)**：开销可忽略不计。存储方面，LLM-in-Sandbox使用一个通用的Docker镜像（约1.1 GB），显著小于特定任务SWE agents所需的数TB存储。内存方面，每个沙盒容器空闲时约50 MB，峰值约200 MB，即使并发512个沙盒也仅占用DGX节点总RAM的5%。
+
+**超越文本生成 (Beyond Text Generation)**
+
+LLM-in-Sandbox使LLM能够超越传统的“文本输入-文本输出”范式，解锁了独立LLM无法实现的能力：
+*   **跨模态能力 (Cross-Modal Capabilities)**：通过编排沙盒内的专业软件，LLM可以处理和生成图像、视频、音频和交互式应用程序。
+*   **文件级操作 (File-Level Operations)**：直接生成可用的实际文件（`.png`, `.mp4`, `.wav`, `.html`），并从实际执行中获得反馈。
+*   **自主工具获取 (Autonomous Tool Acquisition)**：LLM可以按需自主发现、安装和学习使用任意软件库，实现无限的工具访问。
+论文通过生成交互式地图（.html）、会议海报（.png）、动画视频（.mp4）和原创音乐（.wav/.mid）的案例研究，展示了其巨大的潜力。尽管当前结果仍有局限，但这一范式代表了迈向通用数字创作系统和通用智能的有力方向。
+
+**结论与未来工作 (Conclusion and Future Work)**
+
+论文认为LLM-in-Sandbox有望成为LLM服务的默认范式，将LLM从文本生成器转变为通用数字工作者。它也提供了一个评估代理能力的标准化基准，通过$\Delta = \text{LLM-in-Sandbox} - \text{LLM}$衡量模型利用计算环境的能力。未来工作包括推动“沙盒原生模型训练（Sandbox-Native Model Training）”，将沙盒交互作为首要训练目标，并通过大规模强化学习和预训练阶段融入沙盒式推理。
+
 ## PLA-Serve
 PLA-Serve: A Prefill-Length-Aware LLM Serving System 
 
