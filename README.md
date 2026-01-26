@@ -1,6 +1,21 @@
 # AwesomePaper-for-AI
 Awesome or inspiring paper for AI
 
+## MEPIC
+MEPIC: Memory Efffcient Position Independent Caching for LLM Serving  
+
+https://arxiv.org/pdf/2512.16822 2025.12.18 华为
+
+将chunk KV与分页存储对齐、将重计算从token级别转移到块级别（仅首个块为请求特定），以及利用注意力核中的RoPE融合来消除位置编码，从而使得剩余块可完全共享。
+实验结果表明，MEPIC相较于最先进的PIC技术可减少高达2倍的HBM内存使用，对于长提示甚至可达5倍，同时保持了可比的延迟和准确性，且无需修改模型。基于vLLM。
+不足：模型只选择了Mixtral-7b！！
+
+<img width="757" height="476" alt="image" src="https://github.com/user-attachments/assets/b4bd5043-99d8-4726-b939-3592b90fe3e1" />
+
+<img width="766" height="745" alt="image" src="https://github.com/user-attachments/assets/3913a686-5b6c-4bb3-ac42-3b953b893b48" />
+
+<img width="939" height="429" alt="image" src="https://github.com/user-attachments/assets/774b1cd6-e248-4e20-8d66-e33eea993f1c" />
+
 ## SDC
 中文汇总（通用 + 偏训练）https://mp.weixin.qq.com/s/_tlHqVmHjul8XvUvd0OQOg 
 
