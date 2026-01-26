@@ -1,25 +1,46 @@
 # AwesomePaper-for-AI
 Awesome or inspiring paper for AI
 
+## SDC
+中文汇总（通用 + 偏训练）https://mp.weixin.qq.com/s/_tlHqVmHjul8XvUvd0OQOg 
+
+PyTorch 训练时可以从如下几方面保证：
+随机种子：random 库、numpy 库，torch，torch.cuda 的随机种子等。
+CUDNN 确定性：torch.backends.cudnn.deterministic = True 和 torch.backends.cudnn.benchmark = False。
+PyTorch 的确定性算法：torch.use_deterministic_algorithms(True)。
+环境的一致：不同的硬件，GPU Driver，CUDA Version 也可能引入误差。
+DataLoader：DataLoader 也可能引入顺序的不一致，需要保证分布式场景 DataLoader 的不一致性。
+NCCL 通信： NCCL 中的 AllReduce 可以通过指定算法、协议、拓扑等最大程度降低不确定性，但是依然无法严格保证。
+
+https://arxiv.org/abs/2502.12340 Understanding Silent Data Corruption in LLM Training
+
+https://www.opencompute.org/documents/sdc-in-ai-ocp-whitepaper-final-pdf
+https://arxiv.org/abs/2509.16293
+https://arxiv.org/abs/2509.01322
+https://docs.nvidia.com/datacenter/tesla/tesla-release-notes-535-288-01/index.html
+
 ## TTT-Discover
 Learning to Discover at Test Time 
 
 https://arxiv.org/abs/2601.16175 2026.1.22 斯坦福 NVIDIA TogetherAI等
 
 https://github.com/test-time-training/discover
+
+中文解读：https://mp.weixin.qq.com/s/uPcljKORt_7wnyD9q_BGRw
+
 https://www.gpumode.com/v2/home 
 https://www.gpumode.com/v2/leaderboard/496?tab=rankings 
 
 它不追求「平均分」，它只想要那一次可复现的满分！
-<img width="826" height="501" alt="image" src="https://github.com/user-attachments/assets/ae58c4ec-aae6-4b17-a94b-1277df111447" />
-
 1. 💡 TTT-Discover提出一种测试时训练（Test-Time Training）方法，通过在特定科学问题上对大型语言模型（LLM）进行强化学习来发现新的state-of-the-art解决方案。
 2. 🚀 该方法采用**熵目标函数和PUCT（Predictor-Update Confidence Tree）启发式状态重用机制**，旨在**优化生成单一最佳解决方案**而非追求平均性能。
 3. 🏆 基于开源模型gpt-oss-120b实验，训练采用LoRA微调。在数学、GPU核工程、算法设计和生物学等多个领域刷新了SOTA。
-   
+局限：目前只能解决那些有连续奖励信号的问题，比如代码运行速度（越快越好）、数学边界（越小越好）。
+
 与以往在测试时冻结 LLM 并通过搜索进行优化的方法不同，TTT-Discover 允许 LLM 在测试时继续训练，并通过特定于测试问题的经验进行学习。这种持续学习形式的目标是**找到一个最佳解决方案**，而非平均表现优异的多个解决方案，**并且专注于解决特定问题，而非泛化到其他问题**。
 
 传统的 AI 系统在部署后通常保持静态，难以应对不断变化的世界和超出其训练数据范围的难题。例如，在科学发现问题中，解决方案可能需要超越现有知识的新思路。现有方法，如 AlphaEvolve，通过提示冻结的 LLM 进行搜索，并利用手工设计的启发式方法（如进化搜索）来生成新的提示。然而，这些方法无法使 LLM 本身进行学习和改进。本文认为，在**处理复杂问题时，学习（Learning）通常比搜索（Search）更具优势**，因此提出在**测试时对LLM进行持续训练，使其从解决特定问题的尝试中获取宝贵的、问题专属的训练数据**。
+
 <img width="791" height="209" alt="image" src="https://github.com/user-attachments/assets/ea05d75a-5d37-428f-9228-b5e97d418af7" />
 <img width="860" height="409" alt="image" src="https://github.com/user-attachments/assets/22808e22-a291-485f-bc11-e0171e1db209" />
 <img width="879" height="563" alt="image" src="https://github.com/user-attachments/assets/b5f81857-ea6a-454a-aa29-1f650625145b" />
