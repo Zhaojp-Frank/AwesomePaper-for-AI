@@ -1,6 +1,26 @@
 # AwesomePaper-for-AI
 Awesome or inspiring paper for AI
 
+
+## DeepSeekOCR 能力来源
+Visual Merit or Linguistic Crutch? A Close Look at DeepSeek-OCR
+
+https://arxiv.org/pdf/2601.03714 2026.1.8 中科院等
+
+https://github.com/dududuck00/DeepSeekOCR
+通过系统性实验，揭示了DeepSeek-OCR在高压缩比下表现出的高OCR精度可能**更多地依赖于语言先验，而非真正的视觉理解。**
+
+**句子层面语义扰动的影响**：导致OCR准确率大幅下降，尤其是在高压缩模式下（Tiny模式平均下降11.2%，Small模式下降3.6%，Base模式下降0.6%）。这表明当视觉token稀缺时，全局语言先验知识显著辅助了文本重建。
+
+**词语层面语义扰动的影响**：词语层面的扰动进一步降低了性能。10%的字母打乱（Shuffle）导致 Tiny 模式平均下降11.3%。在零先验随机文本实验中，DeepSeek-OCR 的性能急剧崩溃，Tiny 模式的准确率降至约20%。这证实了模型在很大程度上依赖词汇（n-gram）先验知识，其在压缩模式下报告的“准确率”大部分源于语言幻觉，而非真实的视觉识别。
+
+**跨架构的语言先验依赖**：对13个 OCR/VLM 模型进行基准测试发现，所有端到端（end-to-end）架构均表现出对语言先验知识的严重依赖，在零先验随机文本上，它们的准确率普遍下降40-60%（DeepSeek-OCR Tiny 模式下降68.16%）。相比之下，传统的流水线（pipeline）OCR 方法，如 PaddleOCR-v5，表现出显著更高的抗语义扰动鲁棒性，准确率仅下降4.9%至89.53%，这归因于其将视觉识别与语言解码分离的架构。
+
+**QA和VQA任务表现**：尽管 DeepSeek-OCR 声称 OCR 准确率很高，但在 VQA 任务上其性能接近随机水平（对于四选项问题约20%的准确率）。这表明视觉表征虽然足以触发解码器的语言先验进行文本重建，但未能捕获逻辑推理所需的深层语义关系。与此形成鲜明对比的是，标准 LLM 在直接提供文本内容时能达到90%以上的准确率。这种巨大差异证明，光学压缩破坏了推理所需的结构化语义信息。
+
+**上下文长度限制**：DeepSeek-OCR 的所有模式在文本token数量达到8,000-10,500时均发生性能崩溃。Tiny 模式在约6,000 token后准确率急剧下降，并在8,500 token时降至零。即使是 Base 和 Large 模式也在此附近彻底崩溃。这揭示了当前光学压缩范式的根本限制：固定网格编码器能捕获的信息量是有限的，一旦文本密度超过该限制（约8.5k token/逻辑图像单位），信噪比便会降至解码器恢复阈值以下，使视觉token失去意义。
+
+
 ## Multiplex Thinking
 Reasoning via Token-wise Branch-and-Merge 
 
