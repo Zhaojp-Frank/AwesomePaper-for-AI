@@ -1,6 +1,23 @@
 # AwesomePaper-for-AI
 Awesome or inspiring paper for AI
 
+## Multiplex Thinking
+Reasoning via Token-wise Branch-and-Merge 
+
+https://arxiv.org/abs/2601.08808 2026.1.13
+https://github.com/GMLR-Penn/Multiplex-Thinking 
+
+1. 💡 Multiplex Thinking 是一种创新的推理机制，它通过在**每个思考步骤中独立采样 K 个候选 tokens 并将其 embeddings 聚合成一个连续的 multiplex token**，从而实现了高效推理。
+2. ⚡ 这种方法在保留标准离散生成采样动态的同时，**引入了可追踪的概率分布**，使其能直接通过 on-policy RL 进行优化，并能自适应地在模型不确定时紧凑表示多个 plausible next steps。
+3. 🚀 经验证，Multiplex Thinking 在挑战性数学推理基准上一致优于强大的离散 CoT 和 RL baseline，从 Pass@1 到 Pass@1024 都展现出更高的准确性，同时生成更短的序列。
+
+<img width="786" height="284" alt="image" src="https://github.com/user-attachments/assets/c91c498a-34bb-47eb-a442-2f9dda3cf1a2" />
+<img width="755" height="411" alt="image" src="https://github.com/user-attachments/assets/853377d4-5096-4b93-9cda-891db05d7df8" />
+在每一步推理中，模型从当前概率分布中**独立采样K个离散令牌**，将它们的one-host向量平均后，通过**嵌入矩阵映射为连续多路令牌**。这个过程保留了词汇表嵌入的先验和采样动态：当分布集中时（低熵），**多路令牌退化为标准离散令牌**；当分布**分散时（高熵），它编码多种可能路径，实现高效探索**。
+<img width="1047" height="325" alt="image" src="https://github.com/user-attachments/assets/57e02621-4f3a-495c-ab5d-cb5af6136c69" />
+
+更重要的是，由于采样是独立的，整个多路轨迹的概率可以明确计算，这使得它能直接用于强化学习优化。公式上，多路令牌的概率是各采样令牌概率的乘积，从而支持基于策略的强化学习目标。报告还分析了熵的变化：多路令牌的熵随K值线性增长，相当于将探索空间从|V|扩展到|V|^K，大幅提升了发现正确路径的概率。
+
 ## MEPIC
 MEPIC: Memory Efffcient Position Independent Caching for LLM Serving  
 
