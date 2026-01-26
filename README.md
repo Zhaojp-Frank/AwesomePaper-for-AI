@@ -5,6 +5,7 @@ Awesome or inspiring paper for AI
 MEPIC: Memory Efffcient Position Independent Caching for LLM Serving  
 
 https://arxiv.org/pdf/2512.16822 2025.12.18 华为
+中文解读：https://mp.weixin.qq.com/s/x8loHgF4LSdWR_BIBGUzVg
 
 将chunk KV与分页存储对齐、将重计算从token级别转移到块级别（仅首个块为请求特定），以及利用注意力核中的RoPE融合来消除位置编码，从而使得剩余块可完全共享。
 实验结果表明，MEPIC相较于最先进的PIC技术可减少高达2倍的HBM内存使用，对于长提示甚至可达5倍，同时保持了可比的延迟和准确性，且无需修改模型。基于vLLM。
@@ -33,6 +34,24 @@ https://www.opencompute.org/documents/sdc-in-ai-ocp-whitepaper-final-pdf
 https://arxiv.org/abs/2509.16293
 https://arxiv.org/abs/2509.01322
 https://docs.nvidia.com/datacenter/tesla/tesla-release-notes-535-288-01/index.html
+
+## Uniqueness-Aware RL
+Rewarding the Rare: Uniqueness-Aware RL for Creative Problem Solving in LLMs 
+
+https://arxiv.org/abs/2601.08763 2026.1.15 MIT等
+
+https://github.com/zhiyuanhubj/Uniqueness-Aware-RL 代码待开源，目前空。
+
+中文：https://mp.weixin.qq.com/s/3qiXUQYhPzyPH8xkL-KznQ
+
+**增加多样性**：现有的方法试图通过增加「随机性」（Entropy Bonus）来解决这个问题，但它们只是在**词元（Token） 层面**增加随机性。举个例子：模型可能会生成 设 x 为…… 和 令 x 等于……。这在 Token 上是不同的，但在解题策略上是完全一样的。**这某种程度上是「虚假的探索」**
+应该重奖那些「使用了全新解题思路」的答案。这就是题目中 Rewarding the Rare（奖励稀缺） 的含义。
+- 如果 10 个答案里，有 8 个用了「套公式法」，那这 8 个答案即便对了，奖励也要打折，因为它们太普通了。
+- 如果有 1 个答案用了「对称性法」，且做对了，那这个答案非常珍贵，我们要给**它加倍的奖励**。
+引入了策略层面的唯一性（Strategy-level Uniqueness）
+模型：Qwen2.5-7b，Qwen3-8b，OLmo3-7b
+<img width="761" height="392" alt="image" src="https://github.com/user-attachments/assets/965443d7-6dca-4750-b860-94568b66f9ed" />
+![Uploading image.png…]()
 
 ## TTT-Discover
 Learning to Discover at Test Time 
@@ -1019,6 +1038,8 @@ https://arxiv.org/pdf/2601.10639 Meta CMU等 2026.1.15
 Github: https://github.com/Infini-AI-Lab/STEM
 
 Website: https://infini-ai-lab.github.io/STEM
+
+中文： https://mp.weixin.qq.com/s/js1U3ag2xkXeF_jHpDOS8w
 
 1. STEM（Scaling Transformers with Embedding Modules）是种**静态、token-indexed方法**，它通过层**局部嵌入查找替换FFN的up-projection**，旨在**提高参数容量，同时解决传统MoE训练不稳定、负载不均衡和通信开销大**等挑战。
 2. 设计使得STEM在**极端稀疏性下仍能稳定训练，并在知识和推理密集型**基准测试（如ARC-Challenge、OpenBookQA、GSM8K、MMLU）中**实现显著的下游性能提升**，同时**增强了长上下文性能**。
