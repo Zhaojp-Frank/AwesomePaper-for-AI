@@ -1,13 +1,54 @@
 # AwesomePaper-for-AI
 Awesome or inspiring paper for AI
 
+## Qwen困惑度悖论
+Spurious Rewards Paradox: Mechanistically Understanding How RLVR Activates Memorization Shortcuts in LLMs 
 
-## DeepSeekOCR 能力来源
+https://arxiv.org/abs/2601.11061 2026.1.16 南方科大 阿伯丁大学、穆罕默德·本·扎耶德人工智能大学等
+
+https://github.com/idwts/How-RLVR-Activates-Memorization-Shortcuts 
+
+https://mp.weixin.qq.com/s/qMg2rVabnqS5QbAIaO37pQ
+
+白盒化分析某些模型在预训练的能力 如何在RL阶段激发出来。并且一些诡异的困惑度表现：虚假奖励中，模型对答案的困惑度（Perplexity）持续下降，**但对问题提示的困惑度却不降反升**。像一个学生，为了在考试中答对某道题，不去理解题目本身，而是死记硬背答案。研究团队将这一**现象命名为“困惑度悖论”（Perplexity Paradox），它成为识别记忆激活的关键现象**。
+
+1. 📄 本研究揭示RLVR在LLM（如Qwen2.5/Qwen3）中即使使用**虚假奖励也能提升性能**，这是一种“困惑度悖论”，表明模型通过降低答案困惑度而牺牲提示连贯性来**激活预训练中的记忆**。
+2. 💡 采用Path Patching、Logit Lens、JSD分析和Neural Differential Equations等方法，研究人员发现了**隐蔽的“Anchor-Adapter”电路，其中L18-L20是检索记忆化答案**的“Functional Anchor”，L21+则作**为“Structural Adapters”进行表示转换**。
+3. 🚀 实验验证了这些电路对数据集的依赖性，并通过**干预特定MLP键**，研究者实现了**对模型性能的双向因果操控**，从而**证实了该机制在数据污染引起**的性能提升中的核心作用。
+
+<img width="1082" height="586" alt="image" src="https://github.com/user-attachments/assets/930cb546-4fb2-450c-a90c-5f27f2144950" />
+<img width="894" height="290" alt="image" src="https://github.com/user-attachments/assets/85d866bb-b74e-49d4-b4e0-563eeeae6827" />
+<img width="656" height="402" alt="image" src="https://github.com/user-attachments/assets/4c842b32-f5e0-4e15-a6f7-4a4291bfc50f" />
+
+本文深入探讨了“虚假奖励悖论 (Spurious Rewards Paradox)”现象，即强化学习结合可验证奖励 (RLVR) 即使使用虚假或不准确的奖励信号，仍能显著提升大型语言模型 (LLMs) 的性能，例如 Qwen 2.5 系列模型。研究揭示了这种性能提升并非源于模型泛化推理能力的增强，而是激活了模型在预训练阶段可能已记忆的“捷径 (memorization shortcuts)”。是否有办法针对污染路径进行反向干预？论文研究了一种方法：缩放任务相关神经元。
+
+通过逐层投影隐藏状态到词表空间，研究团队直接观察到了答案token的“**诞生过程**”：
+
+<img width="427" height="553" alt="image" src="https://github.com/user-attachments/assets/8dc19ab2-01a4-4a46-bfff-b8b8f6fd535e" />
+<img width="363" height="661" alt="image" src="https://github.com/user-attachments/assets/b12da729-5ccf-4213-9811-dbedf864a653" />
+
+在第19层，目标答案首次出现高概率
+在第21层，这个概率短暂下降（表征转换）
+在第23层，MLP显著注入正确答案，概率激增
+
+**核心发现：**
+
+1.  **困惑度悖论 (Perplexity Paradox)**：模型在虚假 RLVR 训练下，答案令牌 (answer-token) 的困惑度（Perplexity, PPL）显著下降，表明模型正在“记忆”答案；而同时，提示侧 (prompt-side) 的困惑度却上升，这暗示模型为**走捷径而牺牲了通用的语言建模能力和提示语的连贯性**。这与“过度记忆 (over-memorization)”的特征一致，即模型在任务准确性高的情况下，整体语言建模性能却可能下降。
+
+2.  **锚点-适配器电路 (Anchor-Adapter Circuit)**：
+    *   **功能性锚点 (Functional Anchor)**：位于模型中间层 (L18-20)。这是**因果决定记忆检索的关键点，高概率的触发令牌** (trigger token) 在此注入。
+    *   **结构性适配器 (Structural Adapters)**：位于后续层 (L21+)。这些层**发生显著的权重变化，但并非为了存储新知识，而是进行表征转换** (representational transformation)，以适应并传播来自功能性锚点的捷径信号。
+<img width="840" height="470" alt="image" src="https://github.com/user-attachments/assets/647c3e84-1d94-47de-b4ba-107e8c8a67d8" />
+
+
+## DeepSeekOCR 能力来源质疑
+
 Visual Merit or Linguistic Crutch? A Close Look at DeepSeek-OCR
 
 https://arxiv.org/pdf/2601.03714 2026.1.8 中科院等
 
 https://github.com/dududuck00/DeepSeekOCR
+
 通过系统性实验，揭示了DeepSeek-OCR在高压缩比下表现出的高OCR精度可能**更多地依赖于语言先验，而非真正的视觉理解。**
 
 **句子层面语义扰动的影响**：导致OCR准确率大幅下降，尤其是在高压缩模式下（Tiny模式平均下降11.2%，Small模式下降3.6%，Base模式下降0.6%）。这表明当视觉token稀缺时，全局语言先验知识显著辅助了文本重建。
