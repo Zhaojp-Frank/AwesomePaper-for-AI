@@ -1,5 +1,33 @@
 # AwesomePaper-for-AI
-Awesome or inspiring papers for AI
+Awesome or inspiring paper for AI
+
+## TTT-Discover
+Learning to Discover at Test Time 
+
+https://arxiv.org/abs/2601.16175 2026.1.22 斯坦福 NVIDIA TogetherAI等
+
+https://github.com/test-time-training/discover
+https://www.gpumode.com/v2/home 
+https://www.gpumode.com/v2/leaderboard/496?tab=rankings 
+
+它不追求「平均分」，它只想要那一次可复现的满分！
+<img width="826" height="501" alt="image" src="https://github.com/user-attachments/assets/ae58c4ec-aae6-4b17-a94b-1277df111447" />
+
+1. 💡 TTT-Discover提出一种测试时训练（Test-Time Training）方法，通过在特定科学问题上对大型语言模型（LLM）进行强化学习来发现新的state-of-the-art解决方案。
+2. 🚀 该方法采用**熵目标函数和PUCT（Predictor-Update Confidence Tree）启发式状态重用机制**，旨在**优化生成单一最佳解决方案**而非追求平均性能。
+3. 🏆 基于开源模型gpt-oss-120b实验，训练采用LoRA微调。在数学、GPU核工程、算法设计和生物学等多个领域刷新了SOTA。
+   
+与以往在测试时冻结 LLM 并通过搜索进行优化的方法不同，TTT-Discover 允许 LLM 在测试时继续训练，并通过特定于测试问题的经验进行学习。这种持续学习形式的目标是**找到一个最佳解决方案**，而非平均表现优异的多个解决方案，**并且专注于解决特定问题，而非泛化到其他问题**。
+
+传统的 AI 系统在部署后通常保持静态，难以应对不断变化的世界和超出其训练数据范围的难题。例如，在科学发现问题中，解决方案可能需要超越现有知识的新思路。现有方法，如 AlphaEvolve，通过提示冻结的 LLM 进行搜索，并利用手工设计的启发式方法（如进化搜索）来生成新的提示。然而，这些方法无法使 LLM 本身进行学习和改进。本文认为，在**处理复杂问题时，学习（Learning）通常比搜索（Search）更具优势**，因此提出在**测试时对LLM进行持续训练，使其从解决特定问题的尝试中获取宝贵的、问题专属的训练数据**。
+<img width="791" height="209" alt="image" src="https://github.com/user-attachments/assets/ea05d75a-5d37-428f-9228-b5e97d418af7" />
+<img width="860" height="409" alt="image" src="https://github.com/user-attachments/assets/22808e22-a291-485f-bc11-e0171e1db209" />
+<img width="879" height="563" alt="image" src="https://github.com/user-attachments/assets/b5f81857-ea6a-454a-aa29-1f650625145b" />
+<img width="877" height="486" alt="image" src="https://github.com/user-attachments/assets/6f11adec-86d6-4656-975d-2385dedf9f22" />
+<img width="650" height="309" alt="image" src="https://github.com/user-attachments/assets/5dc4bbaf-f647-497a-a804-3d9683b65407" />
+<img width="1225" height="450" alt="image" src="https://github.com/user-attachments/assets/2755a79b-42e5-49f4-941d-b0e4660e6562" />
+<img width="651" height="273" alt="image" src="https://github.com/user-attachments/assets/611194ce-4f94-4015-bdd2-9c9acd550334" />
+
 
 ## LLM in Sandbox
 LLM-in-Sandbox Elicits General Agentic Intelligence
