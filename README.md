@@ -1,6 +1,22 @@
 # AwesomePaper-for-AI
 Awesome or inspiring paper for AI
 
+## Kitty 2bitKV
+Kitty: Accurate and Efficient 2-bit KV Cache Quantization with Dynamic Channel-wise Precision Boost 
+
+https://arxiv.org/pdf/2511.18643 2025.11.23 
+
+https://github.com/Summer-Summer/Kitty
+
+1. 💡 针对LLM推理中KV cache的内存瓶颈及2-bit量化造成的精度显著下降，本文提出了Kitty，一种精确高效的**2-bit KV cache量化与动态通道级精度**提升的算法-系统协同设计方案。
+2. ⚙️ Kitty的核心是**Dynamic Channel-wise Precision Boost**，它通过对**Key通道按敏感性排序**，仅将**12.5%~25%的key关键通道保持在高精度**，Value则采用 per-token 滑动窗口量化。
+3. 🚀  Kitty设计了**page KV布局和Triton兼容的deQuant内核**，Qwen最大32b/llama8b~70b精度评测。Qwen3-8b A100KV内存减少近8倍，相同内存预算下实现～8倍的批处理量和**2.1~4.1x**的吞吐量提升。
+   
+<img width="396" height="416" alt="image" src="https://github.com/user-attachments/assets/865cfc61-6da1-4170-bc4e-3115ae8fae32" />
+<img width="743" height="344" alt="image" src="https://github.com/user-attachments/assets/11049e21-9ef8-4018-85a6-787a57c75920" />
+<img width="787" height="454" alt="image" src="https://github.com/user-attachments/assets/7375799f-1e39-4d38-a2b1-2d854471c10d" />
+<img width="394" height="472" alt="image" src="https://github.com/user-attachments/assets/6361f26d-844c-4708-9c1e-07e644173c88" />
+
 ## Qwen困惑度悖论
 Spurious Rewards Paradox: Mechanistically Understanding How RLVR Activates Memorization Shortcuts in LLMs 
 
