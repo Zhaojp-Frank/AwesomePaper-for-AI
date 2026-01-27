@@ -1,6 +1,73 @@
 # AwesomePaper-for-AI
 Awesome or inspiring paper for AI
 
+## longcat-flash-thinking
+LongCat-Flash-Thinking-2601 Technical Report 
+
+https://arxiv.org/pdf/2601.16725 2026.1.23
+
+https://github.com/meituan-longcat/LongCat-Flash-Thinking-2601
+中文解读：https://mp.weixin.qq.com/s/p4f5fbNpdpW4QerMeP2SAw
+
+1. 💡 560b-A27b开源MoE推理模型，在广泛的**agentic基准测试**（包括agentic搜索和工具使用）中，实现了开源模型的顶尖性能。
+2. ⚙️ 其卓越的agentic推理能力得益于统一的训练框架，该框架结合了大规模**多环境训练、DORA异步强化学习系统**以及通过**注入真实世界噪声**提升模型鲁棒性的方法。
+3. 🧠 模型还引入了“**Heavy Thinking**”模式，通过**并行思考增强推理的深度和广度**；同时，通过实验性的**Zigzag Attention机制，实现了高达1M tokens**的超长上下文高效处理。
+
+<img width="1065" height="558" alt="image" src="https://github.com/user-attachments/assets/4e12afbd-c4db-459e-819d-f93683413e8e" />
+<img width="1143" height="445" alt="image" src="https://github.com/user-attachments/assets/e8773df2-77e3-418b-9bca-2c148eb3f8d8" />
+<img width="1027" height="393" alt="image" src="https://github.com/user-attachments/assets/fe560cc4-5896-4f80-bf03-cf359bd0f6a8" />
+<img width="1144" height="416" alt="image" src="https://github.com/user-attachments/assets/a4f8d8e7-c599-4518-9e9e-b8fc383b075f" />
+<img width="1039" height="482" alt="image" src="https://github.com/user-attachments/assets/34dd9d6b-6fd1-47ca-8415-1e9df3a17d1c" />
+<img width="1036" height="522" alt="image" src="https://github.com/user-attachments/assets/a1a9cdc6-3d43-48d9-9f10-12333ff3ece8" />
+
+LongCat-Flash-Thinking-2601技术报告介绍了LongCat-Flash-Thinking-2601模型，这是一个拥有560亿参数的开源Mixture-of-Experts (MoE) 推理模型，以其卓越的Agentic Reasoning能力脱颖而出。该模型在Agentic Search、Agentic Tool Use和Tool-Integrated Reasoning等广泛的Agentic基准测试中，在开源模型中达到了最先进的性能。
+
+模型的核心能力源于一个统一的训练框架，该框架结合了领域并行专家训练与后续融合，以及从预训练到后训练阶段在数据构建、环境、算法和基础设施方面的端到端协同设计。该模型的Agentic Reasoning能力通过以下核心方法论得到增强：
+
+**1. 预训练与中训练：**
+LongCat-Flash-Thinking-2601的预训练沿袭了LongCat-Flash-Chat的方案，保留了原有数据分布以确保通用推理性能。在此基础上，通过精心设计的中训练阶段进一步将模型扩展到大规模Agentic Reasoning。
+*   **长上下文建模：** 引入了分阶段、逐步增加上下文长度的中训练过程，分配了5000亿Token用于32K/128K阶段，并额外分配了400亿Token用于256K阶段。
+*   **Agentic数据合成：** 为了弥补Agentic轨迹在真实世界语料库中的稀缺性，构建了一个混合数据合成流程。
+    *   **Text-driven Synthesis (文本驱动合成)：** 从大规模文本语料库中挖掘并重构隐式过程为显式Agentic交互轨迹。包括文本过滤与工具提取、合成与精炼（增强Agentic模式多样性、严格质量过滤）。通过Tool Decomposition（逐步隐藏工具参数到环境中）和Reasoning Decomposition（生成多候选动作并合成模型推理以选择最佳）增强结构复杂度。
+    *   **Environment-grounded Synthesis (环境驱动合成)：** 直接从可执行环境中构建Agentic数据，以保证逻辑正确性和执行一致性。通过轻量级Python环境、受控工具链采样和执行验证来生成轨迹。基于现有工具定义，实现可验证的Python环境，显式建模工具间依赖，并通过逆向合成（Reverse-Synthesis）和执行验证确保数据与实际执行逻辑相符。
+*   **Planning-Oriented Data Augmentation (面向规划的数据增强)：** 专门设计了数据构建策略，将现有轨迹转化为以规划为中心的决策过程，以强化模型的规划能力。第一种侧重于合成有效的问题分解轨迹和正确的初始动作选择；第二种通过在每个决策步骤生成多个替代候选，并训练模型推理和选择，将线性轨迹转化为结构化的多步骤决策过程。
+
+**2. 强化学习扩展：**
+*   **RL准备：**
+    *   **环境构建：** 针对Agentic任务，需要可靠、可扩展的环境基础。
+        *   Code Sandbox：设计了可扩展的执行沙盒系统，提供统一工具接口和高并发调度器，统一处理搜索、文件读写、代码编辑和Shell执行等常用工具。
+        *   Agentic Tool-Use Environment：设计了全自动Pipeline，将高层级领域规范转化为可执行图。从领域定义合成特定领域工具集，抽象为统一数据库Schema并生成工具代码，通过单元测试和辅助调试Agent验证。构建工具依赖图G，并基于G进行可验证性保持的环境扩展（Verifiability-preserving Environment Expansion），通过BFS式扩展添加新工具节点，仅当所有依赖已满足时，确保环境可执行性并随着任务难度增加复杂性。环境复杂性增加通过初始工具链$s_1$扩展为更大的子图$R(s_1)$，并基于当前环境结构复杂性$c(E_n)$、从剩余图中识别新有效工具链的难度$g(D_n)$以及剩余未使用的节点数量$|D_n|$来决定是否引入新的种子工具链$s_{n+1}$，概率为$p = f(c(E_n), g(D_n), |D_n|)$。
+    *   **初始策略 (Cold-start Policy)：** 旨在为后续大规模探索提供高效初始策略。
+        *   General Thinking：采用K-Center-Greedy (KCG) 结合Sliding-Window PPL进行数据选择，强调暴露模型推理能力差距的样本。
+        *   Agentic Coding：构建严格的代码交互轨迹策展流程，要求轨迹完全可执行、可验证，并进行细粒度动作级过滤。
+        *   Agentic Search：构建合成推理轨迹，强调正确性、推理完整性和抵御快捷行为。通过Graph-based QA Synthesis（从Wikipedia实体构建关系图，生成模糊问题的图基问答）和Agent-based QA Synthesis（多Agent协作，FSM编排，生成高吞吐量、高质量问答对）实现。
+        *   Agentic Tool-Use：利用环境扩展Pipeline构建可扩展数据合成Pipeline，确保领域覆盖、轨迹结构和交互长度的多样性，并通过基于Rubric的验证和回合级质量控制进行严格过滤。
+    *   **RL任务集：** 通过Agentic Search和Agentic Tool-Use环境构建。
+*   **可扩展异步Agentic RL框架 (DORA)：**
+    *   **架构：** 采用生产者-消费者架构（RolloutManager、SampleQueue、Trainer）与RPC进行协调。
+    *   **全流式异步Pipeline：** 移除RolloutManager内的批处理障碍，实现LLM生成、环境执行和奖励评估的样本粒度执行，并支持多版本异步训练以处理长尾生成问题。
+    *   **大规模Agentic训练扩展：** 将RolloutManager分解为Lightweight-RolloutManager和多个RolloutController，利用PyTorch RPC扩展实现CPU空闲感知的远程函数调用和对象实例化。
+    *   **PD Disaggregation with CPU Swapping：** 对于MoE模型，将Prefill和Decode部署在独立设备组上，通过KV-cache交换（chunked异步传输）和CPU-resident KV-cache解决设备内存限制和重计算开销，提高生成效率和吞吐量。
+![Uploading image.png…]()
+
+
+**3. Test-Time Scaling (测试时扩展) 通过Heavy Thinking：**
+为进一步提升推理能力，引入了Heavy Thinking模式，通过联合扩展推理的广度和深度来优化测试时计算。
+*   **两阶段框架：**
+    *   并行推理 (Parallel Reasoning)：让一个Thinking模型并行生成多个候选推理轨迹，扩展探索广度。
+    *   重度思考 (Heavy Thinking)：利用一个Summary模型对这些轨迹进行反思性推理，综合中间结果以得出最终决策。
+*   **上下文内存模块：** 支持工具使用和多轮对话场景，存储消息历史。
+*   **Prompting策略：** 设计特定Prompt模板，组织当前回合并行轨迹的排列，促使Summary模型聚合或精炼答案。
+*   **增强：** 引入额外的强化学习阶段专门用于Summary阶段。
+
+**4. Zig-Zag Attention设计：**
+为解决长上下文效率问题，引入了实验性的Zigzag Attention机制，并发布了LongCat-Flash-Thinking-ZigZag模型。
+*   **核心机制：** 结合Multi-head Latent Attention (MLA) 和Streaming Sparse Attention (SSA)，将注意力限制在局部窗口和序列起始的一小组Token，实现亚二次方的计算复杂度。
+*   **Zigzag Connectivity：** 层级交错稀疏化策略，约50%的全注意力层被SSA层替换，通过层间组合保持全局信息传递，形成“之”字形连接路径。
+*   **Zigzag Integration：** 在中训练阶段引入，通过校准数据集估计注意力层的重要性，将最低重要性层替换为SSA层，并结合YaRN-based positional encoding扩展，支持高达1M Token的序列长度。
+*   **效果：** 相较于全注意力，实现约1.5倍的推理速度提升，同时保持推理性能和Agentic能力。
+
+LongCat-Flash-Thinking-2601在数学推理、Agentic Search、Agentic Tool-Use、General QA和Coding等多个基准测试中均展现出极强的竞争力，特别是在Agentic推理任务中达到开源模型的最先进水平，并显著缩小了与闭源领先模型之间的性能差距。
 ## Kitty 2bitKV
 Kitty: Accurate and Efficient 2-bit KV Cache Quantization with Dynamic Channel-wise Precision Boost 
 
