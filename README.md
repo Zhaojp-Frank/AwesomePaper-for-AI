@@ -1,6 +1,11 @@
 # AwesomePaper-for-AI
 Awesome or inspiring paper for AI
 
+## 阶跃Step3-VL-10b
+
+https://www.paperscope.ai/hf/2601.09668 tech report
+中文快速解读：https://mp.weixin.qq.com/s/DEeYuMgnw0CK1QhnH_NdZw
+
 
 ## Speculative Decoding
 Speculative Decoding: Performance or Illusion?
