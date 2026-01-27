@@ -13,6 +13,9 @@ https://github.com/SpecDecode-Bench/simulator
 2. 📊 论文深入分析了SD的性能瓶颈，揭示目标模型验证是主要开销，且令牌接受率在不同输出位置、请求和数据集间存在显著波动，其中n-gram在代码编辑等重复性任务中表现突出。
 3. 🚀 研究量化了SD的理论加速上限，并指出当前SD方法与理想性能存在较大差距，展望了通过优化验证过程和自适应结合不同SD策略（例如实现高达4.9倍的总加速）的未来优化方向。
 
+<img width="1285" height="597" alt="image" src="https://github.com/user-attachments/assets/54889fa9-e135-43ae-956c-0b89602d1e6d" />
+![Uploading image.png…]()
+
 本文对LLM (Large Language Model) 推理加速技术Speculative Decoding (SD) 进行了首次系统性研究，其评估基于生产级推理引擎vLLM，而非以往研究中常见的原型系统和不切实际的单Batch Size配置。
 
 **1. 引言与背景**
