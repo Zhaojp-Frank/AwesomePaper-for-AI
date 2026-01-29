@@ -1,6 +1,45 @@
 # AwesomePaper-for-AI
 Awesome or inspiring paper for AI
 
+## SOAR
+Teaching Models to Teach Themselves: Reasoning at the Edge of Learnability
+
+https://arxiv.org/pdf/2601.18778 2026.1.27 MIT，Meta等
+
+1. 大型语言模型在低初始成功率的推理任务中面临学习停滞，本研究为此引入了SOAR，一个**基于元RL的自改进框架**，旨在通过**模型自生成课程**来解决这一难题。
+2. 🤖 SOAR的核心在于**教师模型通过学生在少量难题上的可衡量进步**来获得奖励，这种基于实际进展的奖励机制优于传统的内在奖励，有效避免了多样性崩溃和不稳定性。
+3. ✨ llama3.2-3b实验 方法显著提升了**模型在极难数学基准上的性能**，并揭示出问题结构质量和良好定性对学习进展更为关键，即使答案不完全正确也能提供有效信号，为模型突破学习瓶颈提供了新途径。
+   
+<img width="723" height="305" alt="image" src="https://github.com/user-attachments/assets/7a050a3f-1550-4348-9705-4bf4461c18eb" />
+<img width="716" height="347" alt="image" src="https://github.com/user-attachments/assets/4250c52a-4839-4ca5-b87a-ab64e691b545" />
+<img width="525" height="400" alt="image" src="https://github.com/user-attachments/assets/a6a15e5b-8ea4-4ba1-b45f-f8c118c9af4c" />
+
+大型语言模型（LLM）在解决高难度推理任务时，尤其是在数学和编程领域，常因奖励信号稀疏而陷入学习停滞。当初始成功率极低时，传统的基于可验证奖励的强化学习（RLVR）方法难以提供足够的训练信号，导致模型无法从其尚未解决的问题中学习。
+
+本研究旨在探索一个根本性问题：预训练LLM能否利用其内在知识自主生成“垫脚石”课程，以克服其在难解问题上的学习瓶颈？为解答此问题，论文设计并提出了一种名为 SOAR (Self-Optimization via Asymmetric RL) 的自改进框架。SOAR是一个非对称的教师-学生 meta-RL (meta-Reinforcement Learning) 框架，旨在挖掘LLM中潜在的教学信号。
+
+**核心方法论：SOAR框架**
+<img width="861" height="308" alt="image" src="https://github.com/user-attachments/assets/33007de9-920d-4f15-b984-7d5ccd9996f1" />
+<img width="946" height="471" alt="image" src="https://github.com/user-attachments/assets/ecb4e3cb-6388-4e90-a228-ce0bb8415a7b" />
+
+
+**2. 内层循环：学生训练 (Inner Loop: Student Training)**
+学生模型 $\pi^S_\theta$ 在教师生成的合成数据集 $X_k$ 上进行训练，同样使用 RLOO/RLVR。学生模型训练的步数较少（例如10步），以保持计算效率。学生训练的奖励信号由 Math-Verify 工具包提供，用于验证学生生成的答案的正确性。奖励函数定义为：
+$$ R(y, a) = \begin{cases} 120.0 & \text{if has\_boxed}(y) \land \text{verify}(y, a) \\ 20.0 & \text{if has\_boxed}(y) \land \neg\text{verify}(...) \land a \in y_{ans} \\ 10.0 & \text{if has\_boxed}(y) \land \neg\text{verify}(...) \land a \notin y_{ans} \\ 0.0 & \text{otherwise} \end{cases} $$
+其中 $y$ 是学生模型生成的解决方案，$a$ 是教师提供的正确答案。`has_boxed(y)` 检查答案格式，`verify(y, a)` 检查数学正确性，`a \in y_{ans}` 检查学生答案是否包含正确值。
+**晋升机制 (Promotion Mechanism)**：为了让教师适应不断进步的学生，SOAR引入了一个晋升机制。当教师奖励的移动平均值 $\bar{R}_t$ 超过一个固定阈值 $\tau$（例如 $0.01$）时，表现最好的学生模型 $\pi^S_{\theta'_{k^*, j^*}}$ 会被“晋升”为新的学生基线 $\pi^S_\theta$。这意味着后续的奖励计算将以这个新的、更强的学生模型为参照，促使教师生成更高难度的“垫脚石”问题，从而持续推动学习进程。被晋升的学生模型所训练的数据集（Dbest）会被累积为 Promotion Questions (PQ)。
+**拒绝采样 (Rejection Sampling)**：教师生成的 (q,a) 对需要遵循特定格式。对于不符合格式的生成结果，SOAR 采用拒绝采样（resample）策略。论文中证明了在 RLOO 的上下文下，这种拒绝采样不会影响梯度更新，因为 RLOO 的优势函数 (advantage function) 求和为零。
+
+**实验设置与结果**
+实验基于 Llama-3.2-3B-Instruct 模型，在数学推理基准 MATH, HARP 和 OlympiadBench 上进行。为模拟真实难题情境，研究专门筛选出在128次尝试中成功率为0的问题子集（fail@128数据集）。
+**主要发现：**
+1.  **Meta-RL 开启学习 (Meta-RL Discovers Effective Questions)**：SOAR 生成的合成问题（PQ）和晋升后的学生模型（PS）显著优于直接在难解问题上训练（Hard-Only）以及使用内在奖励（Intrinsic-T）的基线模型。例如，在 MATH 数据集上，SOAR 实现了 4倍的 pass@1 提升和 2倍的 pass@32 提升。这些合成问题即使在 OOD (Out-of-Distribution) 的 OlympiadBench 数据集上也能实现泛化，表明其捕获了可泛化的推理路径。此外，合成问题仅需少量（128-256个）即可恢复使用大量人工策展数据（如完整的 MATH 训练集）约75%的性能提升。这证明了模型的教学能力可以与解决问题的能力解耦，并且 meta-RL 能够从基础模型中提取和强化这种潜在能力。
+2.  **接地奖励优于内在奖励 (Grounded Rewards over Intrinsic Rewards)**：将教师奖励与学生在真实问题上的进展挂钩，相比自玩（self-play）中常见的内在奖励，能显著提升性能。接地奖励训练的教师策略（Grounded-T）更为稳定且能保持生成问题的多样性（通过 Vendi Score 衡量，Grounded-T 的 Vendi Score 高于 Intrinsic-T，接近 Base-T），有效避免了内在奖励方法常出现的退化或多样性崩溃问题。
+3.  **问题结构重于答案正确性 (Question Structure over Solution Correctness)**：研究发现，教师生成的有效“垫脚石”问题并非都拥有完全正确的答案。对 PQ 问题的分析显示，只有约32.8%的问题答案完全正确，但高达63%的问题在数学上是“well-posed”（结构良好、可解）。这表明对于处于学习停滞期的模型而言，问题的结构质量和概念内容比答案的精确正确性更重要，它们能够提供有用的学习信号。Meta-RL 还能减少问题中的歧义错误，进一步验证了问题连贯性的重要性。
+
+
+
+
 ## PrefixRL
 Reuse your FLOPs: Scaling RL on Hard Problems by Conditioning on Very Off-Policy Prefixes
 
