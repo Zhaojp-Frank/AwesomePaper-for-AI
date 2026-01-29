@@ -1,6 +1,46 @@
 # AwesomePaper-for-AI
 Awesome or inspiring paper for AI
 
+## LLM-42
+LLM-42: Enabling Determinism in LLM Inference with Verified Speculation
+
+https://arxiv.org/pdf/2601.17768 2026.1.25 微软
+
+https://github.com/microsoft/llm-42
+
+1. 💡 LLM-42，一个受 speculative decoding 启发的方法，旨在解决 LLM 推理中因浮点非结合性、动态批处理和 GPU kernel 还原顺序变化导致的非确定性问题。
+2. ⚙️ LLM-42 采用**decode–verify–rollback 协议**，使用**非确定性的 fast path 生成 token**，并通过一个**轻量级 verifier 在固定形状还原调度下**重放和验证 token，**仅在检测到不一致时进行回滚和 KV cache 修复**。
+3. 🚀  Llama-3.1-8B-Instruct，LLM-42 在保持与**非确定性模式接近的性能的同时，显著优于批处理不变（batch-invariant）的确定性方法**，其开销与实际需要确定性的流量比例成正比。
+
+<img width="407" height="333" alt="image" src="https://github.com/user-attachments/assets/70a1c11b-8993-401c-87c8-1a59723f2506" />
+<img width="940" height="300" alt="image" src="https://github.com/user-attachments/assets/2f27658c-d217-4383-a59c-89700c01efcc" />
+<img width="937" height="319" alt="image" src="https://github.com/user-attachments/assets/8913030a-69b0-4029-973e-5813fc701124" />
+
+LLM-42 是一种新颖的调度方法，旨在解决大型语言模型 (LLM) 推理中的非确定性问题。LLM 推理的非确定性源于浮点运算的非结合性（non-associativity），结合动态批处理（dynamic batching）以及 GPU 核函数（kernel）随批次大小变化而改变的归约顺序（reduction order）。
+
+传统的解决方案存在缺陷：禁用动态批处理会导致吞吐量严重下降；使核函数批次不变（batch-invariant）则要求重新实现核函数，这既增加了工程负担，又强制所有请求承担固定的运行时开销，无论它们是否需要确定性。例如，SGLang 和 VLLM 采用的批次不变计算方法，强制所有核函数使用统一的归约策略，牺牲了性能优化（如 GEMM 中的 split-K 策略）。实验表明，与非批次不变的 cuBLAS 相比，批次不变的 Triton GEMM **核函数性能下降 63%**；RMSNorm 核函数性能下降高达 50-700%。在端到端吞吐量测试中，当单个请求需要确定性时，强制整个批次使用批次不变核函数会导致**吞吐量骤降 56%**。
+
+LLM-42 受到推测解码（speculative decoding）的启发，其核心观察基于以下四点（Observations）：
+1.  **O1 (Token-level Inconsistencies are Rare):** 如果一个序列处于一致状态，下一个生成的 Token 通常也是一致的，即使在动态批处理下。序列级别的分歧主要发生在一个 Token 出现不一致后，自回归解码（autoregressive decoding）会逐渐放大这种差异。实证研究显示，许多初始 Token 能够匹配，但一旦出现差异，后续序列会迅速发散。
+2.  **O2 (Most GPU Kernels use Shape-Consistent Reductions):** 大多数 GPU 核函数采用形状一致的归约策略。这意味着它们**对给定形状的所有输入都采用相同的归约策略**，只有当输入形状改变时，策略才会改变。这些核函数通常是位置不变的（position-invariant），即给定总批次大小，输入元素的输出与其在批次中的位置无关。
+3.  **O3 (Determinism Requires Only Position-Consistent Reductions):** 对于确定性推理，只需确保给定 Token 位置在所有运行中采用相同的归约策略即可，不同 Token 位置之间或不同序列之间的归约策略可以不同。
+4.  **O4 (Selective Determinism):** 实际 LLM 系统**并非所有任务都要求确定性**，例如创意性工作负载可能受益于随机性，而评估、审计或回归测试则需要确定性。因此，**全局强制确定性是一种资源浪费**。
+
+基于这些观察，LLM-42 提出了一种解码-验证-回滚（Decode-Verify-Rollback, DVR）协议。其核心方法是：
+1.  **快速路径（Fast Path）**：LLM-42 首先使用高吞吐量的非确定性执行（即，标准优化的 GPU 核函数和动态批处理）来乐观地生成候选 Token。
+2.  **验证器（Verifier）**：**验证器周期性地对最近生成的一固定大小 Token 窗口进行重放和验证**。为了确保验证器的输出本身是确定性的，验证器总是处理固定数量的 Token（例如 $T=32$ 或 $64$），对于短序列会进行填充以保持形状一致性（利用 O2）。验证器使用特定的、确定性的归约策略，例如，对于 FlashAttention-3 核函数，将 `num_splits` 设置为 1；对于通信集体操作，优先使用 multimem-based AllReduce 或固定配置的 tree-based AllReduce，避免使用 ring-based AllReduce。
+3.  **KV 缓存一致性（KV Cache Consistency）**：验证器生成的 KV 缓存条目会覆盖快速路径生成的对应条目，确保后续解码迭代的状态一致性。
+4.  **回滚机制（Rollback）**：如果验证器发现快速路径生成的 Token 与其确定性重放的结果不一致，LLM-42 **会将序列回滚到最后一个匹配的 Token 位置，**并从该已知的一致状态继续解码。每个验证步骤至少会产生一个新的确定性 Token，从而保证了前向进展（forward progress）。
+5.  **选择性确定性（Selective Determinism）**：LLM-42 通过引入一个 `is_deterministic=True|False` 的 API 标志，**允许用户按需启用确定性**。只有需要确定性输出的请求才会触发验证过程，其他请求则直接走非确定性快速路径，避免了不必要的开销（利用 O4）。
+
+为了平衡验证成本和重计算成本，LLM-42 引入了**分组验证（Grouped Verification）**。验证操作在小窗口（例如，每个请求 $32$ 个 Token）下内存受限（memory-bound），单 Token 验证延迟较高（$0.75 \text{ ms}$）；在大窗口（例如 $512$ 个 Token）下计算受限（compute-bound），单 Token 验证延迟较低（$0.05 \text{ ms}$），但回滚时需要重计算的 Token 数量会大幅增加（例如，窗口大小为 $256$ 时，重计算开销可达 $46.41\%$）。分组验证通过同时验证多个请求的较小固定窗口（例如，8 个请求，每个 $32$ 个 Token），实现了高 GPU 利用率（如同大批次）的同时，保留了小窗口的回滚特性（限制了重计算成本）。
+
+在评估方面，LLM-42 在 Llama-3.1-8B-Instruct 模型上进行了测试，并与 SGLang 的确定性模式和非确定性模式进行比较。
+-   **离线推理（Offline Inference）**：SGLang 确定性模式的吞吐量比非确定性模式低 $24\% \sim 36\%$。而 LLM-42 在 $100\%$ 确定性流量下，吞吐量依然显著高于 SGLang 确定性模式，在多数场景下仅比 SGLang 非确定性模式慢很少（例如，在 ArXiv 数据集上，当 $5\%$ 确定性流量时，LLM-42 吞吐量在最佳情况的 $92\%$ 以内；在 $10\%$ 确定性流量时，吞吐量可达最佳情况的 $98\%$）。LLM-42 的回滚频率和重计算开销适中，最坏情况下（ArXiv 数据集，$100\%$ 确定性流量）平均每个请求回滚少于一次，总重计算 Token 占比最高为 $10.97\%$。
+-   **在线推理（Online Inference）**：LLM-42 的端到端延迟分布曲线（CDF）紧密跟随 SGLang 非确定性基线，即使确定性流量比例增加，延迟也只适度增加。与 SGLang 确定性模式相比，LLM-42 在高负载下仍能保持显著更低的尾延迟（P99）。例如，在 $18 \text{ QPS}$ 下，LLM-42 在 $100\%$ 确定性流量下的 P90 TTFT 仅为 $101.2 \text{ ms}$，远低于 SGLang 确定性模式的 $171.6 \text{ ms}$。
+-   **消融研究（Ablation Study）**：分组验证显著降低了端到端延迟，例如，在 $12 \text{ QPS}$ 下，未分组验证（批次大小 $1$）的最佳 P99 延迟为 $56.18 \text{ s}$（窗口大小 $128$），而分组验证（例如，批次大小 $8$，窗口大小 $32$）可将 P99 延迟降低到 $34 \sim 35 \text{ s}$。
+
+
 ## SOAR
 Teaching Models to Teach Themselves: Reasoning at the Edge of Learnability
 
