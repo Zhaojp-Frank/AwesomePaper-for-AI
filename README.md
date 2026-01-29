@@ -1,6 +1,66 @@
 # AwesomePaper-for-AI
 Awesome or inspiring paper for AI
 
+## PrefixRL
+Reuse your FLOPs: Scaling RL on Hard Problems by Conditioning on Very Off-Policy Prefixes
+
+https://arxiv.org/pdf/2601.18795 2026.1.27 Meta, CMU
+1. 💡 PrefixRL是一种新的强化学习方法，它通过将历史off-policy**成功轨迹的前缀作为大型语言模型（LLM）推理任务的训练条件**，旨在更高效地利用FLOPs并解决“硬问题”。
+2. 🔬 该方法通过将RL策略置于**更易获得奖励的状态来增强学习信号**，并被证明与**标准RL目标一致且更具样本效率**，同时规避了直接监督off-policy数据所导致的不稳定性。
+3. 🏆 Qwem3-4b/Llam3-8b实验结果显示，PrefixRL在相同训练奖励下比**最强基线快2倍****，最终奖励提高3倍**，并且其收益可泛化到未见过的数据集，即使off-policy轨迹来源于不同模型家族也依然有效。
+<img width="758" height="268" alt="image" src="https://github.com/user-attachments/assets/651fb689-f9cf-4dc7-ab3d-d95d8db04a5d" />
+<img width="759" height="304" alt="image" src="https://github.com/user-attachments/assets/dbcdc1f1-895e-44b6-843e-ad25292389f6" />
+<img width="1017" height="353" alt="image" src="https://github.com/user-attachments/assets/53a29590-78cc-4d54-84ad-b0287513fd04" />
+<img width="1018" height="249" alt="image" src="https://github.com/user-attachments/assets/c9616902-a460-4402-8e16-5e5fdba35956" />
+<img width="1017" height="380" alt="image" src="https://github.com/user-attachments/assets/5e45972a-a5e0-49dd-ba11-7e6f9d9182c7" />
+<img width="1027" height="293" alt="image" src="https://github.com/user-attachments/assets/4e6678de-7f11-4573-89de-daa8df6102b1" />
+<img width="1018" height="261" alt="image" src="https://github.com/user-attachments/assets/4ae5ab83-977b-4bf2-a2a1-52963a1e9be3" />
+<img width="1010" height="392" alt="image" src="https://github.com/user-attachments/assets/2037a0c7-c87e-4947-984f-11afc975365f" />
+
+
+提出了一种名为 PrefixRL 的强化学习（RL）方法，旨在解决大型语言模型（LLMs）在处理困难推理问题时计算资源浪费、策略梯度消失和学习停滞的问题。
+
+**1. 问题背景与现有方法的局限性**
+LLM 在数学和编码等推理任务中，通常采用 RL 进行训练。多数成功的 RL 方法是 `on-policy` 的，即从当前模型采样推理轨迹（`rollouts`），并根据正确（和不正确）的轨迹进行更新。然而，当问题难度很高，导致 `pass@k` （例如 `pass@2k`）接近 0 时，模型很难采样到正确轨迹，`on-policy` RL 学习信号稀疏，导致学习停滞，浪费大量 `FLOPs`。
+为了利用之前计算（例如推理或旧的 RL 训练）产生的 `off-policy traces`，常见的尝试方法有：
+*   **Supervised Fine-Tuning (SFT)**：将 `off-policy traces` 视为监督数据进行 `fine-tuning`，然后进行标准 `on-policy RL`。但 SFT 在小规模正确轨迹上可能导致模型记忆化（`memorization`）和 `entropy collapse`，损害后续 RL 的探索能力。
+*   **Importance Weighting Off-policy RL**：直接在 RL 中使用 `importance weighting` 来处理 `off-policy` 数据。然而，由于 `off-policy traces` 在 RL 策略下概率极低，这通常会导致不稳定性，例如梯度估计方差高，甚至引发训练崩溃。
+
+**2. PrefixRL 核心思想**
+PrefixRL 提出了一种新的范式：不直接在 `off-policy traces` 上进行监督或更新，而是通过条件化（`conditioning`）于成功的 `off-policy traces` 的前缀（`prefixes`），然后运行 `on-policy RL` 来完成这些轨迹。
+具体步骤如下：
+1.  **提取并固定前缀**：从成功的 `off-policy traces` 中提取并固定其前缀 `yx1:h`。
+2.  **创建带前缀的问题**：将这些前缀添加到原始问题 `x` 中，形成“带前缀的问题”（`prefixed problems`）$\text{concat}(x, y_{x}^{1:h})$。论文通常选择 $h$ 使得在给定前缀的情况下，`base LLM` 有合理的准确性。
+3.  **运行 `on-policy RL`**：**在这些“带前缀的问题”和原始的“无前缀问题”（`no-prefix problems`）上同时运行 `on-policy RL`**。
+关键在于，在处理“带前缀的问题”时，梯度计算在 `off-policy prefix` 上被遮蔽（`masked`）。这意味着模型不会修改生成前缀的参数，而**只学习如何从前缀之后的更高奖励状态进行有效探索和完成**。
+PrefixRL 的训练目标函数定义为：
+<img width="1011" height="462" alt="image" src="https://github.com/user-attachments/assets/d85404b9-6c3b-4c63-b484-6bf8007c1a9e" />
+
+    *   **命题 3.4（`Worst-case separation with standard RL`）**：存在一个奖励函数和 `base LLM`，使得 `PrefixRL-NPG` 的性能显著优于标准 RL，尤其是在上下文长度（`context length`）$H$ 较长时。标准 RL 的性能以指数 $2^{-H}$ 衰减，而 PrefixRL 不会。
+
+**4. `Back-Generalization` 现象**
+论文发现一个关键的经验现象，称之为 `back-generalization`：仅在带前缀问题上训练 `on-policy RL`，可以显著提升模型在从未训练过的原始无前缀问题上的测试性能。
+*   **超越 `stitching`**：`back-generalization` 不仅仅是模型学习如何更好地从 `off-policy` 中间状态继续，它还能影响未训练状态（即无前缀问题）的 `next-token distributions`。这表明 LLMs 中的有利函数逼近（`favorable function approximation`）起到了关键作用。
+*   **在仅训练带前缀问题时提升无前缀性能**：实验表明，即使只在带前缀问题上训练，模型的无前缀性能也能提高。训练较长前缀可提高较短前缀的性能，并最终提高无前缀准确率（图 5）。
+*   **发现新策略**：PrefixRL 可以发现并学习超出前缀中提供的策略。模型不只是简单地模仿 `off-policy prefix`。通过控制实验（图 6），PrefixRL 比标准 RL 更有效地放大成功策略和拒绝次优策略。模型甚至可以“遗忘”前缀中暗示的次优策略，转而发现更优的策略（例如，从“Erdős–Gallai theorem”转向“Dirichlet Theorem”）。这支持了 PrefixRL 目标的一致性，因为它能找到前缀中没有的更优解。
+*   **`In-Context Learning` 下的 `Back-Generalization`**：PrefixRL 在 `in-context learning` 设置下进行分析（图 7），即在上下文中给定另一个问题及其解决方案轨迹的情况下运行 RL。
+    *   **相关性影响**：当 `prefix` 和 `suffix` 在结构上相关时，`back-generalization` 效果最强。例如，训练解决 P2 | P3 (P2 以 P3 为上下文) 可以显著提高 P2 和 P3 的性能，而无关问题 (P1 | P3) 则没有这种效果。
+    *   **非模仿性**：模型并不通过简单地记忆 `in-context trace` 来提高性能（图 8a）。`in-context` 解决方案的 `Negative Log-Likelihood (NLL)` 几乎没有下降，最终策略倾向于生成不同的 `token sequence` 也能获得正确答案。这表明模型学习的是深层表示和问题解决策略，而不是表面模仿。
+*   **跨模型家族的 `Prefix` 来源**：即使 `off-policy prefix` 来自不同模型家族（例如，用 `Qwen3-4B-instruct` 的前缀训练 `Llama3.1-8B-instruct`），`back-generalization` 仍然有效。如果前缀长度分布足够广，可以为“无前缀问题”搭建“桥梁”，则 `off-policy` 数据的来源模型家族影响较小（图 8b, 8c）。
+
+**5. 实验结果**
+*   **计算效率和训练准确率提升**：PrefixRL 在计算匹配的评估中，即使计入初始 `rejection sampling` 成本，也比最强的 `baseline`（SFT+RL）提高 `compute-efficiency` 约 2 倍，并在无前缀训练问题上将最终训练准确率提高超过 45%（相对提升 3 倍）（图 2，图 9）。
+*   **`Held-out` 基准测试性能提升**：PrefixRL 的优势可以迁移到 `held-out` 基准测试，例如 AIME '25、HMMT '25 和 IMO-AnswerBench（图 10）。在这些基准上，`pass@k` 提升了超过 10% 的绝对值，且 `pass@1` 提升显著，表明模型在轨迹早期更可能实例化正确的 `high-level plan`。
+*   **扩展可解问题集**：PrefixRL 不仅提高了 `pass@1`，还稳定提高了 `pass@32`，表明它扩展了具有非零成功概率的问题集，而不是仅仅将固定 `pass@k` 转换为更高的 `pass@1`（图 11b）。它实现了训练问题 `pass@1` 的更均匀提升，避免了 RL 常见的“`ray interference`”问题（图 11a）。
+*   **不同模型家族的有效性**：PrefixRL 在 `off-policy prefixes` 来自不同模型家族时仍然有效，显示了其在实际应用中的灵活性（图 12）。
+
+**6. 训练动态分析**
+*   **保留熵**：与 SFT 导致 `token-level entropy` 大幅下降不同，PrefixRL 在利用 `off-policy` 数据的同时，保留了大部分 `token-level entropy`，有利于 RL 探索（图 13 左）。
+*   **减少 `all-negative batches`**：PrefixRL 显著减少了训练过程中 `all-negative problems` 的比例，这意味着它能更频繁地将策略置于可以获得非零奖励的状态，从而打破了 RL 的停滞状态（图 13 中）。
+*   **迭代效率**：PrefixRL 能够以更少的采样 `token` 达到更高的准确率，因为正确轨迹通常更短，并且模型在内部化策略后能更快做出决定（图 13 右）。
+*   **更高的信噪比（`Signal-to-Noise Ratio`）**：PrefixRL 同时拥有更高的梯度范数（`gradient norm`）和更低的梯度标准差（`gradient standard deviation`）（图 14），这意味着它在训练中具有更高的信噪比，优化更稳定。相比之下，`importance-weighted off-policy RL` 存在严重的梯度噪声和不稳定性。
+
+
 ## 阶跃Step3-VL-10b
 
 https://www.paperscope.ai/hf/2601.09668 tech report
