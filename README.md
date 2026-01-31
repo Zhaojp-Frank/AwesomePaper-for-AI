@@ -1,15 +1,28 @@
 # AwesomePaper-for-AI
 Awesome or inspiring paper for AI
 
+## Twill
+Optimal Software Pipelining and Warp Specialization for Tensor Core GPUs
+
+https://arxiv.org/pdf/2512.18134 2025.12.19 斯坦福，NVIDIA 未开源
+
+1. 提出了 Twill，一个将软件流水线 (SWP) 和 Warp Specialization (WS) 建模为联合优化问题的新系统，旨在为 Tensor Core GPU 自动生成最优调度。
+2. Twill 利用现成的约束求解器，通过整合模调度、内存感知和 warp 分配约束，自动发现无启发式、可扩展且保证最优的调度。
+3. 针对FlashAttn前向/后向+Hopper/B200, Twill的FA算法重新发现，**并证明专家手动开发的 SWP 和 WS 策略是最佳的**，其性能可达到手调实现的 1-2% 以内。
+
+Twill是首个能够自动推导此类迭代程序最优调度方案的系统，它不依赖启发式方法，易于扩展到新的GPU架构，并能保证生成最优调度。
+<img width="930" height="474" alt="image" src="https://github.com/user-attachments/assets/524efbc9-c37c-4f8c-a4b6-16b19cb0be1b" />
+<img width="946" height="527" alt="image" src="https://github.com/user-attachments/assets/401d128d-98cd-4401-9929-8f04a702088e" />
+
 ## Hummingbird
 Hummingbird: SLO-Oriented GPU Preemption at Microsecond-scale
 
 https://arxiv.org/pdf/2601.04071 2026.1.7 北大谢涛团队， 中科大等
 
-1. 🐦 Hummingbird是一种面向SLO的GPU共享-抢占调度系统，通过**微秒级GPU抢占**和有效利用空闲GPU时间片，解决了现有GPU共享技术在确保SLO和最大化效率方面的挑战。
-2. ⚙️ 该系统包含**kerel split更小抢占粒度(<400usec)**，运行时调度器动态管理，以及利用**NVLink进行分层内存卸载**的内存管理模块。
-3. 🦜 截获CUDA driver API, 基于SOSP25 NEUTRINO提取PTX然后split kernel；对闭源cublas/cuddn则手工用cutlass替换kernel。部分cross-block sync cuda graph不支持split。
-4. llama.cpp作推理；torch作训练。A100+cuda12.6(最多2机16卡；以及H100，L40)，Hummingbird将高优先级任务的SLO达成率分别提升9.7倍和3.5倍，同时将低优先级任务的吞吐量提高2.4倍，且高优先级任务的SLO仅下降不到1%；平均抢占延迟121～165usec。
+1. Hummingbird是一种面向SLO的GPU共享-抢占调度系统，通过**微秒级GPU抢占**和有效利用空闲GPU时间片，解决了现有GPU共享技术在确保SLO和最大化效率方面的挑战。
+2. 系统包含**kerel split更小抢占粒度(<400usec)**，运行时调度器动态管理，以及利用**NVLink进行分层内存卸载**的内存管理模块。
+3. 截获CUDA driver API, 基于SOSP25 NEUTRINO提取PTX然后split kernel；对闭源cublas/cuddn则手工用cutlass替换kernel。部分cross-block sync cuda graph不支持split。
+4. llama.cpp作推理；torch作训练。A100+cuda12.6(最多2机16卡；以及H100，L40)，Hummingbird将高优任务的SLO达成率分别提升9.7倍和3.5倍，同时将低优任务吞吐提高2.4x，且高优任务的SLO仅下降不到1%；平均抢占延迟121～165usec。
    
 <img width="538" height="322" alt="image" src="https://github.com/user-attachments/assets/4d7b19cb-8486-4882-bc4e-9392c7479191" />
 
