@@ -1,6 +1,83 @@
 # AwesomePaper-for-AI
 Awesome or inspiring paper for AI
 
+## Hummingbird
+Hummingbird: SLO-Oriented GPU Preemption at Microsecond-scale
+
+https://arxiv.org/pdf/2601.04071 2026.1.7 北大谢涛团队， 中科大等
+
+1. 🐦 Hummingbird是一种面向SLO的GPU共享-抢占调度系统，通过**微秒级GPU抢占**和有效利用空闲GPU时间片，解决了现有GPU共享技术在确保SLO和最大化效率方面的挑战。
+2. ⚙️ 该系统包含**kerel split更小抢占粒度(<400usec)**，运行时调度器动态管理，以及利用**NVLink进行分层内存卸载**的内存管理模块。
+3. 🦜 截获CUDA driver API, 基于SOSP25 NEUTRINO提取PTX然后split kernel；对闭源cublas/cuddn则手工用cutlass替换kernel。部分cross-block sync cuda graph不支持split。
+4. llama.cpp作推理；torch作训练。A100+cuda12.6(最多2机16卡；以及H100，L40)，Hummingbird将高优先级任务的SLO达成率分别提升9.7倍和3.5倍，同时将低优先级任务的吞吐量提高2.4倍，且高优先级任务的SLO仅下降不到1%；平均抢占延迟121～165usec。
+   
+<img width="538" height="322" alt="image" src="https://github.com/user-attachments/assets/4d7b19cb-8486-4882-bc4e-9392c7479191" />
+
+Hummingbird是一个面向服务水平目标（SLO）的GPU调度系统，旨在实现微秒级GPU抢占，并最大限度地利用GPU。针对现有GPU共享技术（包括空间共享和时间共享）在确保SLO的同时最大化效率方面所面临的挑战，Hummingbird通过在闭源GPU上启用微秒级抢占并有效利用空闲GPU时间片来克服这些困难。
+
+**问题背景与现有方案局限性**
+
+随着深度神经网络（DNN）模型（特别是Transformer-based架构如ChatGPT和Gemini）的普及，GPU资源面临前所未有的计算需求压力。然而，现有的GPU分配方案通常采用粗粒度方式，为特定任务独占分配多块GPU以保证SLO，导致GPU利用率极低（如微软GPU集群利用率仅52%，阿里巴巴甚至低于25%）。
+
+为提升GPU利用率，业界提出了多种GPU共享技术：
+1.  **空间共享（Spatial Sharing）**：如CUDA GPU Streams（`multi-streams`）、`Multi-Instance GPU` (MIG)和LithOS。
+    *   **优点：** 允许不同任务在同一GPU上并发执行，通过提高SM（`Stream Multiprocessors`）内部/外部的并行度来提升GPU利用率。
+    *   **局限性：** 难以提供严格的SLO保证。由于闭源GPU（如NVIDIA）不提供细粒度任务调度和资源隔离能力，导致L2 cache、HBM带宽和PCIe带宽等硬件资源无法被用户有效控制，从而产生严重的干扰。`multi-streams`虽然允许设置优先级，但仍难以控制干扰。`MIG`通过静态分区提供隔离，但无法根据应用的行为动态重新分配资源，导致低利用率或SLO违规。LithOS提供了TPC（`Thread Processing Cluster`）级别的计算控制，但HBM带宽和L2 cache干扰仍未解决。图1显示，空间共享方案如Orion和LithOS在SLO达标率方面表现较差（分别为7.2%和31%）。
+2.  **时间共享（Temporal Sharing）**：如REEF。
+    *   **优点：** 通过允许任务独占GPU来提供更好的SLO达标率。
+    *   **局限性：**
+        *   **高抢占延迟：** NVIDIA GPU不支持主动抢占（proactive preemption），高优先级任务必须等待当前运行的低优先级`kernel`完成。`kernel`执行时间差异巨大（从几微秒到数毫秒，如`GEMM`核可达7.49毫秒），导致不可预测的抢占时间。这可能导致SLO违规。
+        *   **同步与重启动开销：** 低优先级任务频繁被抢占和重新调度，导致非微不足道的同步和重启动开销。现有方案通常限制设备队列容量（如REEF为4个`kernel`），以减少`kernel`逐出和重启动，但这又引入了额外的同步开销。
+        *   **低优先级任务吞吐量受限：** 现有时间共享方案无法有效利用GPU的小型空闲时间片（`bubbles`），且频繁的同步开销显著限制了低优先级任务的吞吐量。REEF的低优先级任务吞吐量远低于Orion（2.1倍）。
+
+**Hummingbird的设计理念与核心洞察**
+
+Hummingbird的核心设计原则是确保高优先级任务以严格的性能隔离执行，而低优先级任务则伺机利用空闲时间片。关键在于，低优先级任务必须以微秒级（μs-scale）及时释放GPU。Hummingbird基于两大洞察：
+1.  **微秒级抢占的可行性：** 尽管一个`kernel`的执行时间可能长达数毫秒，但单个线程块（`thread block`）的持续时间通常在微秒级别，因为每个块只处理一小部分工作以最大化并行性。通过调整启动的线程块数量（称为`split-kernel`），可以精细控制低优先级任务占用的GPU时间，从而创建一系列微秒级的抢占点。分析显示，对于广泛的AI工作负载，99.999%的线程块执行时间都在390微秒以内，因此将`kernel`执行时间限制在400微秒内是可行的。
+2.  **高效利用GPU空闲时间片（`bubbles`）：** GPU时间轴上存在大量的空闲时间片，可分为两类：
+    *   **大型`bubbles`：** 持续时间从秒到分钟不等，由请求波动引起（如真实世界GPT服务追踪中占GPU时间的23.6%）。
+    *   **小型`bubbles`：** 持续时间在数百微秒级别，由内存操作和同步（如设备-主机内存传输、连续批处理的元数据更新）、GPU间通信和CPU端瓶颈引起。例如，Llama-8B和DeepSeek-16B推理中超过15%的GPU时间被这些`bubbles`消耗。在分布式设置中，小`bubbles`的比例甚至可以放大1.8倍。
+
+**Hummingbird的系统架构与关键组件**
+
+Hummingbird包含三个核心组件：
+1.  **`Kernel Splitter`（`kernel`分割器）：** 分析低优先级`kernel`的特性和底层硬件的能力，确定每个`kernel`的最佳分割大小，并生成详细的分割日志以指导运行时调度器。
+    *   **最优`split-kernel`大小：** 较小的`kernel`有助于降低抢占延迟并提供更多机会填充不同大小的`bubbles`，但可能导致GPU利用率不足和`kernel`启动开销增加。最佳`split-kernel`执行时间是当`kernel`线程数与GPU计算能力（即刚好填满SMs或饱和HBM带宽）对齐时。
+    *   **两步分析法：**
+        1.  计算`split-kernel`应包含的最大线程块数量（$N_{block}$），考虑SMs计算能力：
+            $N_{block} = \frac{N_{SM} \cdot o \cdot SM\_MAX\_THREADS}{THREADS\_PER\_BLOCK}$
+            其中，$N_{SM}$是SMs数量，$o$是`kernel`占用率（`occupancy`），$SM\_MAX\_THREADS$是单个SM内的线程数，$THREADS\_PER\_BLOCK$是开发人员指定的每块线程数。
+        2.  从计算出的$N_{block}$开始，逐渐减少线程块数量，同时观察`kernel`的执行时间。如果减少块数量导致执行时间缩短，则表明`kernel`是内存密集型的。此过程持续到执行时间稳定，达到最短执行时间。
+    *   **PTX `kernel`转换：** 通过PTX汇编级别的代码转换实现`kernel`分割，保证了通用性。通过PTX注入技术，修改`kernel`参数列表以接受额外的偏移参数，并注入算术指令来偏移原生的`blockIdx`（在PTX中表示为`ctaid`），从而保持原始的寻址语义。这种方法适用于AOT（如CUDA）和JIT（如Triton）编译的代码。
+2.  **`Runtime Scheduler`（运行时调度器）：** 根据分割日志，将`kernel`分割成更小的`split-kernel`，并动态检测空闲GPU `bubbles`，自适应地合并`split-kernel`，并采用`kernel-tick`调度策略来提高系统吞吐量。
+    *   **高优先级`kernel`调度：** 当高优先级`kernel`到达时，调度器会立即停止任何新的低优先级`kernel`启动，并启动高优先级`kernel`。Hummingbird实现了平均139微秒的抢占延迟。
+    *   **低优先级`kernel`调度：**
+        *   **`Kernel`分割：** 当接收到低优先级任务的`kernel`启动请求时，调度器查询`kernel`分割器的日志，并根据最优分割大小将`kernel`分割成`split-kernel`。
+        *   **`Bubbles`检测：** 只有当GPU空闲（高优先级`kernel`队列为空）时才调度低优先级`kernel`。
+            *   **小`bubbles`：** 主要源于跨设备数据传输和同步。Hummingbird提出了基于`hint`的`bubble`检测机制，通过分析特定框架和应用的API模式（如LLM推理中的`cudaMemcpyAsync`后接`cudaStreamSynchronize`，或`NCCL`通信API）来识别这些`bubbles`。在主机侧通过`cudaEvent`插入标记事件。
+            *   **大`bubbles`：** 持续时间从数十毫秒到数秒，主要由请求波动或网络延迟引起。调度器周期性扫描GPU设备队列，当在一定时间阈值内没有高优先级`kernel`出现时，则识别为大`bubble`。识别到大`bubble`后，调度器会合并`kernel`（恢复原始`grid size`和重置偏移量），以减少启动开销。
+        *   **`Kernel-tick`调度策略：** 在检测到`bubble`后，调度器会同步GPU等待当前高优先级`kernel`完成，然后设置`Pflag`为False，并启动一个异步线程来应用`kernel-tick`调度策略启动低优先级`kernel`。该线程会在`Pflag`被设为True时（表示有新的高优先级`kernel`或`bubbles`结束）停止。此策略通过限制GPU设备队列中最多只有一个`kernel`来保证抢占延迟被单个`split-kernel`的执行时间所限制。为避免每次`kernel`启动后的同步开销（约5微秒），调度器利用`kernel`执行时间的可预测性，计算启动间隔，在当前`kernel`即将完成时精确地启动下一个`kernel`，形成流水线，从而减少同步频率和开销。
+3.  **`Memory Management`（内存管理）：** 集成了NVLink扩展的分层内存卸载，支持`hierarchical memory offloading`。
+    *   **设计原则：** 高优先级任务必须保留对全部GPU内存容量的无障碍访问，而低优先级任务则伺机利用剩余内存。
+    *   **优化：**
+        1.  **优先级隔离：** 利用CUDA Driver APIs中的`cuMemAdvise`来优先分配高优先级任务的内存。当GPU内存满时，只允许驱逐低优先级任务的页面。
+        2.  **干扰感知：** 改进了HUVM（`hierarchical unified virtual memory`）中的页面驱逐策略。Hummingbird整合了一个全局监视器，通过`ping-like`方法测量实时带宽，并在带宽冲突时优先交换到低竞争的GPU。如果NVLink连接的内存耗尽或硬件不支持，则回退到系统DRAM。
+
+**系统实现**
+
+Hummingbird在NVIDIA GPU上实现，大约8000行C++/CUDA代码。它不依赖特定硬件指令，支持所有代次的GPU架构。通过拦截低级CUDA Driver API（如`cuLaunchKernel`和`cuMemAlloc`）来实现通用性和透明性。其轻量级在线`profiler`使用`cudaEvent`记录`kernel`执行时间。`kernel`转换基于NEUTRINO的`probe`引擎，在运行时进行PTX `kernel`转换。
+
+**评估结果**
+
+Hummingbird在多种GPU（L40s、A100、H100）上，使用两类高优先级任务和四类低优先级任务（涵盖CNN到LLM，推理到训练）进行了全面评估，包括内存密集型场景和分布式设置（多达16块GPU）。
+*   **高优先级任务SLO达标率：** Hummingbird在所有场景下均达到近99%的SLO达标率。相比Orion和LithOS（空间共享），SLO达标率分别提高了9.7倍和5.6倍；相比REEF（时间共享），提高了3.0倍。高优先级任务的SLO下降不到1%（与独占执行相比）。
+*   **低优先级任务吞吐量：** Hummingbird的低优先级任务吞吐量比REEF高出2.4倍（平均1.9倍）。这得益于Hummingbird有效利用小`bubbles`的能力，以及通过`kernel-tick`调度策略减轻了同步开销。
+*   **内存密集型场景：** 在内存密集型场景下，Hummingbird相比REEF实现了5.6倍的SLO改进和4.2倍的吞吐量提升。这证明了Hummingbird在确保高优先级任务SLO的同时，仍能有效提高低优先级任务吞吐量的能力。
+*   **抢占延迟：** Hummingbird将平均抢占延迟显著降低至121-165微秒，比REEF快4.3-6.6倍。
+*   **多GPU环境：** 在多GPU设置下，Hummingbird将SLO达标率提高了9.7倍，低优先级任务吞吐量提高了3.3倍，尤其在分布式环境中，由于频繁的GPU间数据传输和同步产生大量小`bubbles`，Hummingbird的优势更为明显。
+*   **通用性：** Hummingbird在不同型号GPU上均表现出良好的通用性，确保了高优先级任务的SLO，同时最大化了GPU利用率。
+
+
 ## Tetris
 Tetris: Efficient and Predictive KV Cache Offloading for Agentic and Reasoning Workloads
 
