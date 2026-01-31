@@ -1,6 +1,50 @@
 # AwesomePaper-for-AI
 Awesome or inspiring paper for AI
 
+## MARS
+MARS: Unleashing the Power of Speculative Decoding via Margin-Aware Verification 
+
+https://arxiv.org/pdf/2601.15498 2026.1.20 港大 麦克吉尔大学等
+
+1. MARS (Margin-Aware Speculative Verification) 提出了一种训练无关的SD验证策略，旨在解决现有方法在LLM低裕度区域因**严格逐token验证导致的效率低下和高回滚成本问题**。
+2. 通过引入**Logit Ratio来衡量目标模型对其预测的局部决策确定性**，并在模型对前两个候选项偏好微弱时（即低裕度）**自适应地放宽验证，允许接受次优草稿token**。
+3. MARS在8B到235B的多种LLM和任务上，相对于现有基线实现了**显著的推理加速（最高达4.76倍），同时保持了近乎无损的生成质量**。
+如果draft token 与目标token.Top2相同，且目标模型 top1/top2 token等logit差异很小（不确定性大），则也接受。
+<img width="888" height="510" alt="image" src="https://github.com/user-attachments/assets/3dd717a7-0c35-4b8f-bdb6-703046bacbf1" />
+
+大型语言模型（LLM）的自回归推理因内存带宽限制而面临高延迟问题。Speculative Decoding（SD）通过解耦生成（由轻量级 Draft Model 完成）和验证（由 Target Model 并行完成）来解决此瓶颈。然而，尽管 Medusa 和 EAGLE 等现有方法显著提升了 Drafting 质量，其验证机制仍主要依赖严格的 token-level rejection sampling。这种标准方法隐含地假设 Target Model 在每个步骤都具有明确的偏好，但实际上，LLM 常常在“Low-Margin Regimes”下运行，即排名靠前的候选 token 之间的似然差异统计上可忽略不计。在此类情况下，拒绝看似合理的 runner-up token 带来的信息增益微乎其微，却会产生巨大的 Rollback 成本，导致验证效率低下。
+
+本文提出了一种名为 Margin-Aware Speculative Verification（MARS）的策略。MARS 是一种无需训练（training-free）且领域无关（domain-agnostic）的验证方法，它根据 Target Model 的“局部决策性”（local decisiveness）自适应调整。MARS 通过直接从 Target Model 的 Logits 测量决策稳定性（decision stability），仅在严格验证收益最小化时才放松拒绝条件。重要的是，该方法仅修改验证规则，与现有 Target-Coupled Speculative Decoding 框架完全兼容。
+
+**核心方法（Methodology）**
+
+<img width="1069" height="485" alt="image" src="https://github.com/user-attachments/assets/00f78f56-6aa9-4eea-bfb4-9376634c785c" />
+
+<img width="1067" height="159" alt="image" src="https://github.com/user-attachments/assets/cc5c581f-b37b-4c6a-a275-82f9e6b6b700" />
+
+<img width="864" height="519" alt="image" src="https://github.com/user-attachments/assets/02774d57-abca-4659-8f2e-5fbef9bf94c6" />
+
+**整体性能（Overall Performance）：**
+实验结果（如表 1 所示）表明，MARS 在所有模型系列和规模上都一致优于 EAGLE-3，实现了更高的 Speedup Ratio 和更长的平均接受长度 $\tau$。例如，在 Vicuna-13B 上，MARS 实现了 3.74x 的平均 Speedup，$\tau=7.20$，而 EAGLE-3 仅为 3.12x，$\tau=5.64$。在 LLaMA-3.3-70B 上，MARS 达到了 4.76x 的 Speedup。$\tau$ 的持续增加表明在随机解码下 Draft 效率更高，从而实现了可靠的端到端加速。
+
+**精度保持（Accuracy Preservation）：**
+尽管 MARS 是一个 lossy 的 SD 方法，其加速解码不保证与标准解码完全一致，但实验（图 3）显示，MARS 在各项任务和模型规模上实现了近乎完全的 Accuracy Recovery（98.1% 至 100%），在 HumanEval 上达到 100%，在 MBPP 上达到 99.2%-100%。在代码基准测试中观察到的退化可忽略不计，这可能是因为偶尔的分歧大多是表面性的（例如命名/格式），很少影响功能正确性。
+
+**消融研究（Ablation Studies）：**
+*   **Logit Ratio Threshold $\theta$：** $\theta$ 值控制 MARS 自适应放松的程度。 Speedup 随 $\theta$ 的增加而单调下降，而 Accuracy 通常在 $\theta \approx 0.90$ 附近达到峰值（图 4）。因此，0.90 被选作默认值，以实现 Accuracy-Speed 的良好权衡。
+*   **Temperature t：** Speedup 和 $\tau$ 在不同 Temperature (0.2 到 1.0) 下保持相对稳定。Accuracy 随着 Temperature 的升高而降低（基线和 MARS 都如此），但 MARS 的效率提升不受影响。
+*   **Draft Length K：** 增加 K 会导致更大的 $\tau$，但 Speedup 并非单调递增。中等 Draft Length（如 K=9）通常能实现最佳加速，过大的 K 可能增加 Draft/Verification 开销。
+
+
+## LoPA
+
+https://arxiv.org/pdf/2512.16229 上海交大 邓志杰
+
+1. 💡 本文提出LoPA一种无需训练的即插即用算法，旨在通过识别并优化Token Filling Order (TFO) 来解决Diffusion Large Language Models (dLLMs) 推理中Tokens Per Forward pass (TPF) 较低的并行性瓶颈。
+2. ✨ LoPA的核心机制是在每次迭代中并行探索多个候选TFO分支，并通过评估分支置信度来选择具有最高未来并行潜力的路径，从而有效提高解码效率。
+3. 🚀 结合专门设计的Branch Parallel分布式推理系统LoPA-Dist，LoPA将D2F-Dream模型的TPF提升至GSM8K上的10.1，并在多GPU部署下实现了高达1073.9 tokens/s的单样本吞吐量，显著超越了现有基线。
+
+      
 ## Tawa
 Tawa: Automatic Warp Specialization for Modern GPUs with Asynchronous References
 
