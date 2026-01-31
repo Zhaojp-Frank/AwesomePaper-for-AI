@@ -1,6 +1,32 @@
 # AwesomePaper-for-AI
 Awesome or inspiring paper for AI
 
+## Tawa
+Tawa: Automatic Warp Specialization for Modern GPUs with Asynchronous References
+
+https://arxiv.org/pdf/2510.14719 2025.12.10 康内尔 NVIDIA等 已经开源 提交到Triton
+
+https://github.com/triton-lang/triton/tree/aref_auto_ws PR:6288
+
+1. 提出了 Tawa，一个自动化编译器，旨在通过异步引用（`aref`）实现现代 GPU 的自动 warp spec，以解决 SIMT 编程模型与任务并行硬件之间的可编程性差距。
+2. Tawa 的核心是一个新颖的 `aref` IR 抽象，它表达了**warp 级别的通信意图，使得编译器能够自动将程序划分为生产者-消费者角色并管理多粒度软件流水线**。
+3. NVIDIA H100，Tawa对GEMM比cuBLAS12.7提速1.1 倍，Attention 工作负载上比 Triton 提速 1.2 倍，并可媲美手动优化的 CUTLASS 4.0 FlashAttention-3 性能。
+   - 不支持B200
+
+<img width="953" height="275" alt="image" src="https://github.com/user-attachments/assets/1c692646-a9a9-49b4-83bd-6209a2c87c18" />
+<img width="459" height="233" alt="image" src="https://github.com/user-attachments/assets/99fdb697-472b-4b3e-8246-98dbd89f1449" />
+
+Tawa 在 NVIDIA H100 SXM5 GPU 上使用 CUDA 12.7 进行了评估，与 cuBLAS、CUTLASS、Triton、ThunderKittens 和 TileLang 等先进框架和库进行比较。
+
+**矩阵乘法 (GEMM)**：对于 M=N=8192M=N=8192M=N=8192M=N=8192，K 介于 256 到 16384 的 FP16 和 FP8 GEMM，Tawa 在大多数形状上达到了与高度优化的 cuBLAS 相同的性能水平，同时优于其他通用框架。在 FP16 中，Tawa 平均比 cuBLAS 快 1.01 倍，比 Triton 快 1.13 倍，比 TileLang 快 1.15 倍，比 ThunderKittens 快 1.09 倍。Triton 相对于 Tawa 的劣势在于其采用 Ampere 风格的软件流水线而非利用 Hopper 的硬件 warp 特化。在 FP8 中，Tawa 的优势更为明显，因为更小的瓦片和更快的计算使得内存传输和同步成为瓶颈，而 Tawa 的 warp 特化流水线通过持续数据流缓解了这一问题。
+
+**GEMM 变体**：batched GEMM和grouped GEMM始终优于 Triton，并显著优于 TileLang。这些优势源于 Tawa 基于 aref 的分区和自动 warp 特化，它能够将一个 GEMM 的数据移动与另一个 GEMM 的计算重叠。
+
+**多头注意力MHA**：对于序列长度 L \in [1024, 16384]L∈[1024,16384]L \in [1024, 16384]L∈[1024,16384] 的 MHA，Tawa 实现了与手写 FlashAttention-3 (FA3) 相似的性能，并持续比 Triton 快 1.21 倍。尤其在长序列（L \ge 4K≥4K\ge 4K≥4K）时，Tawa 显著优于 TileLang 和 ThunderKittens，表明其在数据移动和计算之间的重叠更有效。在 FP8 MHA 中，Tawa 的优势甚至更为显著。这些结果表明 aref 提供了一个原理性抽象，能将普通内核转换为数据流流水线，并在不同精度和语义下都表现良好。
+
+**超参数选择与消融研究**：
+评估了 aref 大小 D 和 MMA 深度 P 对性能的影响。结果表明，增大 D 有助于预取和隐藏延迟，而适度的 P（1-2）则平衡了重叠和资源压力。持久化内核能持续提升 5-10% 的性能。消融研究显示，自动 warp 特化带来了显著的性能提升（在 GEMM 中提升 3.78 倍，MHA 中提升 2.84 倍），结合协作 warp 组、大瓦片尺寸、持久化内核和 aref 优化，Tawa 最终将性能提升了近七倍。
+
 ## Twill
 Optimal Software Pipelining and Warp Specialization for Tensor Core GPUs
 
