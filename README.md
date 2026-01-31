@@ -1,6 +1,37 @@
 # AwesomePaper-for-AI
 Awesome or inspiring paper for AI
 
+## Tetris
+Tetris: Efficient and Predictive KV Cache Offloading for Agentic and Reasoning Workloads
+
+https://saa2025.github.io/papers/Tetris%20-%20Efficient%20and%20Predictive%20KV%20Cache%20Offloading%20for%20Agentic%20and%20Reasoning%20Workloads.pdf SOSP25 Workshop
+
+<img width="399" height="269" alt="image" src="https://github.com/user-attachments/assets/99812df2-24ee-4abd-a17c-13ceac22ef91" />
+<img width="329" height="263" alt="image" src="https://github.com/user-attachments/assets/60958310-ab87-4f2d-850f-7e8eef89b3f6" />
+
+1. 💥 Tetris旨在解决**Agentic和推理LLM工作负载中**，因KV cache使用**量大和缺乏预测性而导致的级联抢占**问题。
+2. 💡 该系统通过**轻量级逐token序列长度预测、动态结合重计算与卸载机制**，以及**分层 异步KV cache传输与预测调度**来缓解级联抢占。
+3. 🚀 基于vLLM 0.8.3实现，Tetris显著**降低了抢占频率，并在内存受限环境下提升了P99 TPOT性能**。
+Tetris是一种针对Agentic和推理LLM工作负载的高效、预测性KV Cache卸载系统，旨在解决推理时扩展和工具调用导致KV Cache使用量急剧增加的问题，尤其是在长中间推理步骤和API调用历史记录场景下。该研究指出，虽然长输入场景已得到广泛研究，但长输出场景（对于代理和推理工作负载，输出长度可达数十万token）仍未被充分探索，这导致了服务质量的下降，特别是“级联抢占（cascading preemption）”现象：由于受害者序列选择不当，内存不足时会连续发生多次抢占。
+Tetris通过以下三个核心创新来缓解级联抢占并优化KV Cache管理：
+
+轻量级逐token序列长度预测（Lightweight Per-token Sequence Length Prediction）
+为了解决传统提前（AOT）的、基于代理LLM的预测方法（如[3, 6, 11]）计算量大、适应性差的问题，Tetris利用LLM隐藏状态编码未来输出长度结构信息的洞察（[1]）。它采用一个参数量仅为302K的MLP模型进行在线序列长度预测，这仅是LLM-based预测方法的1%。这种轻量级设计使得系统能够进行逐token的长度更新，并能通过在线更新MLP模型来适应新的工作负载。这种预测能力对于实现最优的受害者序列选择至关重要，因为它可以预判未来的KV Cache需求。
+
+**重计算与卸载的权衡分析**
+当系统内存不足需要进行抢占时，通常有两种策略：重计算（recomputation）和卸载（offloading）。
+<img width="1044" height="437" alt="image" src="https://github.com/user-attachments/assets/0ff038c4-0337-46c3-8f52-61a90c104bf6" />
+
+**分层异步KV Cache传输与预测调度**:
+现有的系统如vLLM [4]和SGLang [10]通常采用**同步KV Cache卸载**，这会阻塞GPU的推理进程。Tetris通过识别并利用两个优化机会来缓解这种阻塞：
+分层传输（Layerwise Transfer）：不再等待整个前向传播结束后再复制KV Cache，Tetris在当前层的KV Cache计算完成后立即开始复制。这使得设备到主机的KV Cache数据传输可以与后续的前馈网络（feedforward computation）计算重叠进行，从而提高GPU利用率。
+预测调度/提前传输（Predictive Scheduling/Ahead-of-time Transfer）：借助其序列长度预测能力，Tetris能够预判未来的KV Cache需求并与可用内存进行比较，从而在实际抢占发生之前，异步地启动KV Cache的卸载操作。这种“in-flight offloading”机制可以在不中断序列生成的情况下驱逐受害者序列，从而最大程度地减少实际抢占时需要复制的KV Cache量。同样，在从主内存重新加载KV Cache到GPU时，Tetris也可以提前开始加载过程，以最小化GPU的停机时间。
+为了解决分层传输中涉及大量小张量传输的效率问题，Tetris实现了一种打包机制，将批处理维度上的小张量打包在一起，以分摊卸载成本。
+
+**评测**：
+Tetris在vLLM v0.8.3上实现。其系统架构包括一个调度器（Scheduler），负责查询KV Cache可用性和预测的序列长度以选择受害者并构建输入批次。实际的KV Cache传输在一个专用的CUDA Stream和pinned memory上进行，以最大程度减少对主要解码操作的干扰。每个Worker在另一个CUDA Stream上执行解码步骤。解码完成后，系统会利用截获的隐藏状态更新序列长度预测。
+Tetris的评估结果表明，在内存受限的环境下，它显著减少了抢占频率，并改善了P99 TPOT（Time-per-output-token）性能，同时保持了吞吐量。
+
 ## LLM-42
 LLM-42: Enabling Determinism in LLM Inference with Verified Speculation
 
