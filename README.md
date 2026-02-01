@@ -1,7 +1,18 @@
 # AwesomePaper-for-AI
 Awesome or inspiring paper for AI
 
-##
+## errors modeling
+A model of errors in transformers
+https://arxiv.org/pdf/2601.14175 2026.1.20
+
+探讨了LLM在**需要确定性输出和重复处理Token（例如算术任务）方面的错误率**。
+作者提出，LLM的**错误源于其Attention机制中细微错误的累积**，最终导致错误向量的长度超出某个阈值。
+基于这一洞察，论文推导出了一个定量的双参数模型，用于描述准确率与任务复杂度之间的关系。这两个参数——基本“噪声率”r和“合理错误方向”的数量 q ——随Prompt和模型而异。此分析借鉴了物理学中“Effective Field Theory”的视角，将LLM的众多底层参数重组为仅两个主导错误率的有效参数。
+
+用Gemini 2.5 Flash, Gemini 2.5 Pro和DeepSeek R1三种SOTA LLM，对8种不同任务进行了广泛的经验测试，总计使用了20万个不同的Prompt。这些任务包括列表反转、嵌套线性变换、动态规划、汉诺塔、普通加法、算法加法、二进制加法和乘法。
+论文还展示了如何通过精心设计的Prompt来降低错误率。例如，在乘法任务中，通过指导模型将数字转换为多项式进行中间计算，Flash模型的准确率显著提高，甚至超越了使用普通Prompt的Pro模型。这表明，通过Prompt引导模型更精确地关注相关Token可以有效减少Attention机制中的噪声积累。
+
+## S3 attention
 S3-Attention:Attention-Aligned Endogenous Retrieval for Memory-Bounded Long-Context Inference
 
 https://arxiv.org/pdf/2601.17702 2026.1.29 北邮
@@ -13,7 +24,7 @@ https://arxiv.org/pdf/2601.17702 2026.1.29 北邮
   
 <img width="815" height="315" alt="image" src="https://github.com/user-attachments/assets/bede198a-7573-4ffc-815f-e44bbf792f7b" />
 
-S3-Attention 是一种为解决大型语言模型 (LLM) 长上下文推理中的内存限制问题而提出的框架。当前 LLM 在处理长上下文时面临两大困境：一是维护完整的 KV cache 会导致 GPU 内存呈线性增长，进而迅速饱和；二是采用外部检索器（如 RAG）往往会遭遇“语义不匹配”问题，即检索到的段落可能在词汇上相似，但在因果关系上与模型的内部推理不相关，从而引入噪声并导致幻觉。S3-Attention 旨在弥合这一差距，将内存受限的推理过程转变为一个流式、注意力对齐的内生检索过程。
+为解决大型语言模型 (LLM) 长上下文推理中的内存限制问题而提出的框架。当前 LLM 在处理长上下文时面临两大困境：一是维护完整的 KV cache 会导致 GPU 内存呈线性增长，进而迅速饱和；二是采用外部检索器（如 RAG）往往会遭遇“语义不匹配”问题，即检索到的段落可能在词汇上相似，但在因果关系上与模型的内部推理不相关，从而引入噪声并导致幻觉。S3-Attention 旨在弥合这一差距，将内存受限的推理过程转变为一个流式、注意力对齐的内生检索过程。
 S3-Attention 的核心在于将模型的瞬态注意力状态解码为稀疏的特征 ID，并构建一个可搜索的内存索引，而无需保留庞大的 KV cache。其方法论可分为三个主要阶段：
 <img width="1190" height="589" alt="image" src="https://github.com/user-attachments/assets/27cae263-e1ad-4f4e-928b-6a7ee8ce09f5" />
 <img width="1198" height="148" alt="image" src="https://github.com/user-attachments/assets/4c437148-98b7-4043-b019-86bdc28b4c8e" />
