@@ -1,6 +1,23 @@
 # AwesomePaper-for-AI
 Awesome or inspiring paper for AI
 
+##
+S3-Attention:Attention-Aligned Endogenous Retrieval for Memory-Bounded Long-Context Inference
+
+https://arxiv.org/pdf/2601.17702 2026.1.29 北邮
+1. S3-Attention 提出了一种将**内存受限的长上下文推理**转换为**流式、注意力对齐的内生检索过程的框架**，旨在解决传统 KV cache 扩展性和外部检索器语义不匹配的问题。
+2. 该框架通过 **Top-k sparse autoencoders (SAEs) 将 Key 和 Query** 投影解码为稀疏语义特征，构建了 **CPU 上的倒排索引并立即丢弃 KV cache**，从而实现了 O(1) 的 GPU 内存占用。
+3. Qwen7b/llama3-8b/Mixtral实验，S3-Hybrid 在 LongBench 基准测试中几乎保留了 full-context 的性能（如 Llama-3-8B 达到 99.4%），并通过有效过滤噪音提升了信息密集型任务的鲁棒性，甚至偶尔超越 full-context 基线。
+- 不足：只评测检索/总结类负载，没测试普通问答 数学 代码等。
+- 当前实现速度欠优化/延迟高：索引和检索阶段Python 级别的 Posting Lists 和频繁的CPU-GPU 同步
+  
+<img width="815" height="315" alt="image" src="https://github.com/user-attachments/assets/bede198a-7573-4ffc-815f-e44bbf792f7b" />
+
+S3-Attention 是一种为解决大型语言模型 (LLM) 长上下文推理中的内存限制问题而提出的框架。当前 LLM 在处理长上下文时面临两大困境：一是维护完整的 KV cache 会导致 GPU 内存呈线性增长，进而迅速饱和；二是采用外部检索器（如 RAG）往往会遭遇“语义不匹配”问题，即检索到的段落可能在词汇上相似，但在因果关系上与模型的内部推理不相关，从而引入噪声并导致幻觉。S3-Attention 旨在弥合这一差距，将内存受限的推理过程转变为一个流式、注意力对齐的内生检索过程。
+S3-Attention 的核心在于将模型的瞬态注意力状态解码为稀疏的特征 ID，并构建一个可搜索的内存索引，而无需保留庞大的 KV cache。其方法论可分为三个主要阶段：
+<img width="1190" height="589" alt="image" src="https://github.com/user-attachments/assets/27cae263-e1ad-4f4e-928b-6a7ee8ce09f5" />
+<img width="1198" height="148" alt="image" src="https://github.com/user-attachments/assets/4c437148-98b7-4043-b019-86bdc28b4c8e" />
+
 ## MARS
 MARS: Unleashing the Power of Speculative Decoding via Margin-Aware Verification 
 
