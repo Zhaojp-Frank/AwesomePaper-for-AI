@@ -1,6 +1,23 @@
 # AwesomePaper-for-AI
 Awesome or inspiring paper for AI
 
+## FinDEP
+Efficient MoE Inference with Fine-Grained Scheduling of Disaggregated Expert Parallelism
+
+https://arxiv.org/pdf/2512.21487 2025.12.25 港科广楚晓文团队
+
+1. 🛠️ MoE模型推理因其内存密集型特性和现有AF分离 Disaggregated Expert Parallelism (DEP)方法（如PPPipe）的粗粒度调度，导致GPU空闲时间长、性能次优。
+2. 💡 为解决这些问题，FinDEP提出了一种细粒度任务调度框架，通过**将计算和通信任务划分为更小的段，并将其表述为一个优化问题**，以最大化任务重叠和资源利用。
+3. 🚀 该框架利用性能模型和高效的多项式时间求解器，在PCIe单机多卡 和H20多机，DeepSeekv2-236b Qwen2356b-A22b模型；pytorch推理吞吐量比现有最先进方法提高了高达1.61倍，并在不到一秒内实现配置自适应。
+   
+MoE (Mixture-of-Experts)架构因其在LLM (Large Language Models)中能够以亚线性（sublinear）计算开销扩展模型规模的优势而被广泛采用。然而，MoE模型的推理需要大量的内存，特别是在注意力层（attention layers）需要访问KV (Key-Value)缓存，以及在专家层（expert layers）仅利用有限数量的专家时，内存需求尤为显著。现有研究尝试通过DEP (Disaggregated Expert Parallelism)将注意力层和专家层分配到两个专用的GPU组——AG (Attention Group)和EG (Expert Group)——以提高推理效率。但现有DEP方法对包含共享专家（shared experts）的现代MoE模型支持有限，并且对GPU组中复杂的通信和计算任务的调度探索不足，导致推理性能次优。
+为解决这些问题，本文提出了FinDEP，一种用于DEP的细粒度（fine-grained）任务调度算法，旨在通过最大化任务重叠（maximal task overlap）来提高MoE模型的推理吞吐量（throughput）。FinDEP整合了三项关键创新：
+
+细粒度任务划分（Fine-Grained Task Partitioning）：将AG和EG中计算密集型任务（computation-intensive tasks）和通信任务（communication tasks）划分为多个更小的任务。具体而言，通过将每个任务的输入张量（input tensor）分割成多个片段（segments），创建了rrrr个小任务。这种划分允许进行动态调度，无论MoE模型是否包含共享专家，都能提高吞吐量。它将时间消耗任务，包括EG中的计算、A2E（Attention-to-Expert）和E2A（Expert-to-Attention）中的通信，以及AG中的计算，通过沿输入张量的batch维度（对于AG）和token维度（对于EG）进行切分，分别产生了r_1r1r_1r1​和r_2r2r_2r2​个更小的任务。这种细粒度处理使得更大的并行化成为可能。
+
+<img width="975" height="358" alt="image" src="https://github.com/user-attachments/assets/ba72eb9c-2196-4127-8504-f6582a4dec1f" />
+<img width="920" height="281" alt="image" src="https://github.com/user-attachments/assets/e1043d14-a254-4a20-b127-65cdced9faf1" />
+
 ## token-filtering
 Shaping capabilities with token-level data filtering 
 
@@ -568,7 +585,7 @@ https://github.com/SpecDecode-Bench/simulator
 3. 🚀 研究量化了SD的理论加速上限，并指出当前SD方法与理想性能存在较大差距，展望了通过优化验证过程和自适应结合不同SD策略（例如实现高达4.9倍的总加速）的未来优化方向。
 
 <img width="1285" height="597" alt="image" src="https://github.com/user-attachments/assets/54889fa9-e135-43ae-956c-0b89602d1e6d" />
-![Uploading image.png…]()
+<img width="975" height="358" alt="image" src="https://github.com/user-attachments/assets/8dc23734-7294-44fc-923d-c553b1eb3e7f" />
 
 本文对LLM (Large Language Model) 推理加速技术Speculative Decoding (SD) 进行了首次系统性研究，其评估基于生产级推理引擎vLLM，而非以往研究中常见的原型系统和不切实际的单Batch Size配置。
 
