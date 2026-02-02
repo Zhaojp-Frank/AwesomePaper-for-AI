@@ -1,6 +1,27 @@
 # AwesomePaper-for-AI
 Awesome or inspiring paper for AI
 
+## Kascade
+Kascade: A Practical **Sparse Attention Method for Long-Context LLM Inference**
+
+https://arxiv.org/pdf/2512.16391 2025.12 微软老印
+https://github.com/microsoft/kascade 待开源
+
+1. Kascade是一种**无需训练的稀疏注意力方法**，它利用了后**softmax注意力固有的稀疏性**以及高权重**key在相邻层间结构的稳定性**来加速长上下文LLM推理。
+2. 该方法通过动态规划算法选择“**锚点层**”以计算**精确的Top-k索引**，并在“**复用层”中重用这些索引**，同时结合了头部重映射和tile-level池化等机制以确保高效和准确性。
+3. Tile-Lang中实现了FlashAttention内核的修改版本，支持prefill和decode阶段; H100 GPU了最高**4.1倍的decode注意力加速**和2.2倍的prefill注意力加速，并在LongBench和AIME-24等长上下文基准测试中保持了与密集注意力相近的精度。
+- 主要优化attn 计算，不减少内存容量需求，KV caches仍可能很大
+  
+Kascade是一种无需训练的稀疏注意力方法，旨在解决长上下文LLM推理中注意力操作带来的延迟瓶颈。该方法基于两个核心观察：
+1) post-softmax 注意力天然稀疏；
+2) high-weight keys 的身份在相邻层之间保持稳定。Kascade通过在**少量anchor layers中计算精确的Top-k索引**，并在**中间的reuse layers中重用这些索引**，从而实现显著的性能提升，同时保持与稠密注意力相当的准确性。
+
+<img width="1163" height="630" alt="image" src="https://github.com/user-attachments/assets/a5a350d5-7cf4-459f-a598-f5ebd4cc28b2" />
+
+<img width="797" height="475" alt="image" src="https://github.com/user-attachments/assets/bde4d6eb-4e19-449b-bcd3-eb3490516425" />
+
+<img width="771" height="551" alt="image" src="https://github.com/user-attachments/assets/22fe02fa-727c-4703-bd0f-47be16cbce1b" />
+
 ## FinDEP
 Efficient MoE Inference with Fine-Grained Scheduling of Disaggregated Expert Parallelism
 
