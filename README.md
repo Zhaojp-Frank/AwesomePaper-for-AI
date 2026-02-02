@@ -1,6 +1,40 @@
 # AwesomePaper-for-AI
 Awesome or inspiring paper for AI
 
+## OPSD自蒸馏
+Self-Distilled Reasoner: On-Policy Self-Distillation for Large Language Models 
+
+https://arxiv.org/pdf/2601.18734 Meta等 2026.1.27
+
+1. 提出了一种名为 **On-Policy Self-Distillation** (OPSD) 的新框架，其中单个大型语言模型通过**使用特权信息充当教师**并仅观察问题充当学生来实现自蒸馏。
+2. OPSD 通过在**学生自己的生成轨迹上提供密集的、token-level 的监督**，有效解决了传统off-policy**蒸馏的分布不匹配**和强化学习的**稀疏奖励问题**，且无需外部教师模型。
+3. Qwen3（1.7B, 4B, 8B），OPSD 在多个数学推理基准上优于SFT和GRPO，实现了**4-8倍的token效率提升**，并且效果随模型规模增大而增强，同时全词汇蒸馏优于采样token蒸馏。
+4. 
+<img width="799" height="308" alt="image" src="https://github.com/user-attachments/assets/75ab1a9c-eba3-47b5-be39-9fccc037d8f1" />
+<img width="800" height="191" alt="image" src="https://github.com/user-attachments/assets/6abb08ff-8100-4252-a666-4263bf53ca52" />
+<img width="800" height="374" alt="image" src="https://github.com/user-attachments/assets/b7ef4e67-0176-4db3-aeaf-8491ef279519" />
+
+本文提出了一种名为 On-Policy Self-Distillation (OPSD) 的新型框架，旨在通过自蒸馏（self-distillation）来提升大型语言模型 (LLM) 在推理任务上的性能。该框架通过让**同一个 LLM 扮演教师和学生的角色**，解决了传统知识蒸馏（Knowledge Distillation, KD）方法中分布不匹配（distribution mismatch）以及需要额外大型教师模型的问题，并克服了强化学习方法如 GRPO面临的计算效率低下、奖励稀疏（sparse reward）及梯度消失（vanishing gradient）等挑战，同时弥补了监督微调（Supervised Fine-Tuning, SFT）在泛化能力上的不足。
+
+<img width="907" height="533" alt="image" src="https://github.com/user-attachments/assets/a6a04127-bf95-47bc-a4b7-8ee58d5c311f" />
+<img width="904" height="491" alt="image" src="https://github.com/user-attachments/assets/ed2415be-ca4a-4c29-b06b-399759ff7807" />
+<img width="809" height="644" alt="image" src="https://github.com/user-attachments/assets/defb1af3-517d-498b-a9ab-efa23f8ba423" />
+
+
+**实验与结果**
+本文在 Qwen3 系列模型（1.7B, 4B, 8B）上进行了实验，并使用 OpenThoughts 的数学推理子集进行训练（包含 30K 个带有 CoT 的问题-解决方案对）。评估基准包括 AIME 2024、AIME 2025、HMMT 2025 和 Amo-Bench 等竞赛级数学数据集。对照基线为 SFT 和 GRPO。
+<img width="743" height="430" alt="image" src="https://github.com/user-attachments/assets/28c4208d-3b71-43aa-96e3-7be8643dc911" />
+<img width="795" height="281" alt="image" src="https://github.com/user-attachments/assets/4f517a3e-60c3-4a2f-9e73-7cbf102ff794" />
+
+*   **主要性能**：OPSD 持续优于 SFT，并在 4B/8B 模型规模上匹配或超越 GRPO，在 1.7B 模型上性能相当。
+*   **令牌效率**：OPSD 在每个问题上仅需采样 1 个响应，而 GRPO 需要 8 个响应，显著提升了样本效率。在 Qwen3-4B 模型上，OPSD 实现了 4-8 倍的令牌效率提升，用更少的生成令牌（2k vs. GRPO 的 16k）达到更高的性能，显著降低了采样成本和训练时间。
+*   **模型规模效应**：实验发现 OPSD 的性能提升随着模型规模的增大而增强（在 1.7B 上提升有限，在 4B/8B 上提升显著），这验证了“自合理化（self-rationalization）能力需要足够的模型容量”的假设。
+*   **生成长度效应**：增加策略内采样时学生的生成长度（从 1k 到 2k 再到 4k 令牌）可以提供更多的教师信号，从而持续提高 Pass@K 性能。
+*   **学习目标比较**：全词汇表 Logits Distillation (GKD 风格) 优于采样令牌蒸馏（Lu & Lab 2025 风格）。全分布（full distribution）提供了更丰富的监督信息，但代价是更高的峰值内存使用。
+
+**相关工作**
+OPSD 与多种 LLM 训练范式相关，包括其他 OPD 方法（但 OPSD 采用自蒸馏而非独立教师）、通过 SFT 和 RL 改进 LLM 推理（SFT 易记忆而 RL 更泛化），以及 LLM 自训练（如 Self-Instruct, Self-Align, Context Distillation, ReST, STaR）。OPSD 的独特性在于其是策略内、令牌级的自蒸馏，模型在特权信息（ground-truth solutions）的引导下从自身输出中学习。
+
 ## SDFT 自蒸馏
 Self-Distillation Enables Continual Learning 
 
