@@ -1,6 +1,50 @@
 # AwesomePaper-for-AI
 Awesome or inspiring paper for AI
 
+## Hot Mess
+The Hot Mess of AI: How Does Misalignment Scale With Model Intelligence and Task Complexity? 
+
+https://arxiv.org/abs/2601.23045 ICLR26 Anthropic等 2026.1.30
+
+https://github.com/haeggee/hot-mess-of-ai 
+
+中文解读：https://mp.weixin.qq.com/s/_5P7SYkZEZ8_-m5AUS9U-w
+本研究的期望（expectation）不是针对训练随机性（\varepsilonε\varepsilonε）进行，而是针对固定模型在同一任务上的输入（如few-shot上下文）和输出（采样）随机性进行。这意味着通过多次运行模型，观察其在相同输入下的行为变化来估计方差。
+<img width="951" height="487" alt="image" src="https://github.com/user-attachments/assets/69f4a1b2-ed0b-4baa-8b40-961f3263ae3f" />
+<img width="965" height="638" alt="image" src="https://github.com/user-attachments/assets/ead807d0-b695-473a-bc73-4f3f625f80fe" />
+<img width="1132" height="683" alt="image" src="https://github.com/user-attachments/assets/a841a8ea-e89c-4557-97d5-522cd9e0bc87" />
+
+**论文在以下任务上进行实验**：
+
+Multiple Choice Tasks (**GPQA, MMLU**): 模型需选择正确答案，目标明确。
+Agentic Coding (**SWE-BENCH**): 评估AI解决GitHub问题的能力，通过单元测试衡量成功率。
+**Safety and Alignment**(Model-Written Evals - MWE): 评估模型在AI风险方面的自我报告行为，包括多项选择和开放式格式。
+**Synthetic Settings**: 训练Transformer模型模拟优化器在病态二次损失函数上的轨迹，以控制设定验证理论。
+**Survey**: 引用了Sohl-Dickstein (2023) 的人类主观调查，评估AI、人类、组织等的智能与不连贯性。
+
+模型： 探索了Anthropic的**SONNET 4、OpenAI的O3-MINI、O4-MINI**等前沿模型，以及QWEN3系列（1.7B至**32B**）模型。
+采样策略： 除非另有说明，每道题至少**进行30次采样以估计偏差和方差**。对于GPQA和MMLU，采样除了生成随机种子外，还使用了不同的few-shot上下文。
+主要发现：
+
+**推理长度与不连贯性**：
+模型推理时间**越长、采取的行动越多，其失败就越不连贯**。这在多项选择、Agentic Coding和安全任务中均观察到。
+对于**推理时间更长的任务，其错误主要由方差主导**。
+即使任务固定且推理预算固定，**自然变异（即模型在某些问题上“过度思考”）也导致更高的不连贯性**。
+
+**模型规模、智能与不连贯性**：
+**更大、能力更强的模型有时反而更不连贯**。
+任务**复杂性依赖**： 随着模型规模的扩大，简单任务上的不连贯性会降低（更连贯），而**困难任务上的不连贯性会增加（更不连贯）。这表明虽然整体错误率下降，但对于难题，方差成为限制因素**。
+**合成优化器实验**： 在模拟优化器轨迹的受控合成任务中，随着模型**规模的增加，模型能更快地降低偏差，但方差降低得较慢**，**使得最终的性能更多地由方差主导，即模型变得更不连贯**。这支持了AI系统在追求目标时可能变得更混乱的观点。
+人类调查结果： 人类受试者主观评价更智能的实体（AI模型、非人类生物、人类组织）也往往被评价为更不连贯，与实验结果一致。
+
+**推理预算和集成**：
+推理预算： 增加推理预算（模型API提供的“thought”时间）可以轻微降低不连贯性，并提升性能。但这种效果远不如模型自然思考长度的变动对不连贯性的影响大。
+**集成（Ensembling）： 对模型多次尝试的结果进行集成，能显著降低方差**（接近1/E1/E1/E1/E，其中EEEE是集成大小），从而降低不连贯性。这表明错误纠正机制可以提升连贯性。
+
+讨论与启示：
+论文指出，不连贯性增加的可能原因包括：LLMs作为动态系统，难以被约束为固定损失的有效优化器，因为在状态空间中，作为优化器的动态系统是零测度的；以及方差在轨迹中通常会累积，除非有主动的纠正机制。
+研究结果表明，当先进的AI系统执行复杂任务时，其失败更可能是以不一致的方式发生，而不是因为持续追求一个稳定的错误目标。这意味着在AI风险研究中，相比于奖励劫持或目标错配等“系统性失准”，可能需要更多关注由不可预测的“工业事故”造成的风险。
+
 ## Kascade
 Kascade: A Practical **Sparse Attention Method for Long-Context LLM Inference**
 
