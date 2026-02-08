@@ -1,7 +1,97 @@
 # AwesomePaper-for-AI
 Awesome or inspiring paper for AI
 
-# ECO 
+## MetaAttention
+MetaAttention: A Unified and Performant Attention Framework across Hardware Backends
+
+https://dl.acm.org/doi/pdf/10.1145/3774934.3786444 微软 上海交大陈海波等 PPoPP2026
+
+https://github.com/SJTU-IPADS/MetaAttention
+
+1. 现有Attention优化方法难以应对多样化的Attention算法和不断演进的硬件平台，因其手写内核代码量大、灵活性差且移植困难。
+2. MetaAttention通过将Attention**抽象为相关性评分和聚合两大核心操作**，并引入**可定制函数和基于IntermediateTensor的两层调度策略**，实现了统一的Attention机制编程和自动化性能优化。
+3. **NVIDIA H100**和AMD MI250等硬件上，性能可**媲美手工优化库**，对未支持配置提供高达10.4倍的加速，同时显著降低了开发代码量。
+
+现有的高性能 `Attention` 实现，如 `FlashAttention` 和 `Mamba2`，通常是为特定算法或硬件平台手工优化的，这导致它们难以泛化到其他算法变体或不同硬件后端，并且开发成本高昂。
+<img width="499" height="509" alt="image" src="https://github.com/user-attachments/assets/3faaf82e-7585-4e36-92e1-d0760ea9230b" />
+<img width="1066" height="220" alt="image" src="https://github.com/user-attachments/assets/fda3bd0a-4ff5-4c9f-b017-94ca6dfcee11" />
+<img width="446" height="480" alt="image" src="https://github.com/user-attachments/assets/dbb87a56-79a2-4345-8421-a93e689c1590" />
+<img width="428" height="290" alt="image" src="https://github.com/user-attachments/assets/70aa8ca6-76ec-484c-ab7e-752ab59a533d" />
+
+### 论文深入解析
+
+**1. 问题背景与挑战**
+`Attention` 机制是 `LLMs` 的核心，其计算量在模型训练和推理中占据主导地位，尤其随着序列长度的增加，这一比例持续上升（例如，在 `Llama-3.2-3B` 中，当序列长度从 2048 增加到 8192 时，`Attention` 的计算时间占比从 55% 上升到 82%）。然而，优化 `Attention` 面临多重挑战：
+*   **计算与内存需求高昂**：需要精细的内存管理和并行计算策略。
+*   **手工优化成本高**：现有高性能库（如 `FlashAttention` 系列）依赖于大量人工编写的 `CUDA` 或 `Triton` 内核，这些内核针对特定硬件和配置硬编码了执行策略（如融合、并行和流水线），导致其灵活性和可移植性差。例如，`FlashMLA` 的 `Multi-head Latent Attention` 实现需要超过1000行 `CUDA` 代码。
+*   **算法多样性激增**：研究人员不断提出新的 `Attention` 变体，如 `Sigmoid Attention`、`Linear Attention`（如 `Mamba2`）、`Sparse Attention`（如 `Seer Attention`），以及需要非标准张量维度（如 `DeepSeek MLA` 和 `RetNet`）的变体。这些变体与传统 `Attention` 模式的微小偏差，都可能导致现有优化库失效或性能急剧下降。
+*   **硬件平台差异大**：`NVIDIA` `A100`、`H100` 与 `AMD` `MI300X` 等不同 `GPU` 架构在 `tile` 大小、内存层级和流水线策略上存在差异，使得为不同平台进行优化变得更加复杂和耗时。
+
+**2. MetaAttention 的核心洞察与统一抽象**
+`MetaAttention` 的关键洞察在于，尽管 `Attention` 变体繁多，但它们都可以被抽象为两个核心操作：
+*   **Relevance Scoring (相关性评分)**：计算输入 `token` 之间的两两相似度或交互。这通常通过点积或其他相似度度量来实现。
+*   **Aggregation (聚合)**：利用相关性评分将上下文信息整合到每个 `token` 的表示中。
+
+基于此，`MetaAttention` 提出了一个统一的 `Attention` 模板，该模板固定了 `Relevance Scoring` 和 `Aggregation` 的核心操作，并通过可定制的函数来扩展。该模板捕获了 `Attention` 机制的本质，同时提供了灵活性，使其能够适应各种 `Attention` 变体。
+标准 `Attention` 机制可表示为：
+$$Attention(Q, K, V) = softmax(\frac{QK^T}{\sqrt{d_k}})V$$
+`MetaAttention` 将这一过程分解为：
+*   `relevance = relevance_scoring(Q[i], K, state)`
+*   `state = aggregate(relevance, V, state)`
+
+**3. 编程接口与可定制性**
+`MetaAttention` 的编程接口允许用户通过定义输入张量形状、`Attention` 模式和可定制函数来设计 `Attention` 机制。
+*   **`Attention` 模式**：
+    *   **Parallel Pattern (并行模式)**：适用于需要全局上下文信息（如传统 `softmax Attention`、`DeepSeek MLA`、`RetNet` 并行模式）。 `relevance scoring` 和 `aggregation` 实现为并行矩阵乘法，形式为 $scores = matmul(Query, Key)$ 和 $state = matmul(scores, Value)$。
+    *   **Recurrent Pattern (循环模式)**：适用于迭代遍历序列，将上下文信息存储在固定大小的隐藏状态中（如 `Mamba2`、`RetNet` 循环模式）。`relevance scoring` 和 `aggregation` 迭代计算，形式为 $output = matmul(Query, h)$ 和 $h = h + matmul(Key[i], Value[i])$。
+*   **可定制函数 (`Customizable Functions`)**：这些函数应用于中间张量，支持元素级转换（如缩放、掩码）或全局张量调整（如归一化）。
+    *   **Modification (Mod)**：支持细粒度的元素级转换，例如在标准 `softmax Attention` 中将 `Query` 张量按 $1/\sqrt{d_k}$ 缩放，或在稀疏 `Attention` 中应用稀疏掩码。
+    *   **Row-wise Normalization (RowNorm)**：支持跨张量行的全局调整，如行级 `softmax` 归一化或数值稳定技术。
+    *   **RowNorm Online Interface**：为支持在线处理（如 `FlashAttention` 中的在线 `softmax`）而设计，分块处理数据，避免中间结果写入全局内存。它包含 `online_prologue`（初始化状态）、`online_forward`（每块内部计算，更新状态）和 `online_epilogue`（最终化计算）三个组件。
+
+**4. 核心方法论：MetaAttention Runtime**
+`MetaAttention` 的核心创新在于其 `Attention Runtime` 和 **两层调度策略**，实现了在高性能下的自动化优化。
+*   **调度空间 (`Scheduling Space`)**：由两个关键组件定义：
+    *   **`IntermediateTensor` (中间张量)**：代表 `Attention` 计算过程中设备内存中的所有瞬态张量。其属性包括：
+        *   `tile`：张量 `tile` 形状，影响计算并行度与片上内存消耗的平衡。
+        *   `mem`：内存位置（如全局内存、共享内存、寄存器），影响延迟、带宽和资源可用性。
+        *   `pipelineStage`：流水线阶段（如内存复制、计算），决定了缓冲需求和调度灵活性。
+    *   **`DeviceConfig` (设备配置)**：提供硬件特定的约束，如：
+        *   `basetile`：目标硬件上计算的最佳 `tile` 形状，与硬件的矩阵乘法指令和内存事务对齐。
+        *   `memoryInfo`：可用的内存层级及其容量信息。
+*   **两层调度策略 (`Two-Layer Scheduling Policy`)**：
+    `MetaAttention` 采用两层调度策略来生成最优执行计划，即 `IntermediateTensor` 的属性配置。
+    *   **Tile Config Scheduling (外层)**：负责探索 `IntermediateTensor` 的 `tile` 大小属性。
+        1.  以 `Attention` 计算图和 `DeviceConfig` 作为输入。
+        2.  枚举输出张量的所有可能 `tile` 大小。
+        3.  通过计算图将这些 `tile` 大小传播到所有中间张量，生成一系列 `tile_graphs`。
+        4.  对于每个 `tile_graph`，调用内层的 `Tile Resource Scheduling`，并通过性能分析进行评估，最终选择最佳 `tile` 配置。
+    *   **Tile Resource Scheduling (内层)**：负责确定给定 `tile` 配置下 `IntermediateTensor` 的内存位置和流水线阶段属性。
+        1.  初始化所有中间张量到最高的可用内存层级（例如，寄存器），以最小化内存 `I/O` 开销。
+        2.  通过枚举未配置属性（如流水线阶段）来生成候选计划。
+        3.  根据 `DeviceConfig` 中的硬件约束（如内存容量）检查计划的可行性。
+        4.  如果找不到有效的计划，则迭代地将张量降级到较低的内存层级（例如，从寄存器到共享内存，或从共享内存到全局内存），并重新尝试计划生成。这一过程平衡了延迟和片上资源利用。
+
+*   **代码生成与执行 (`Code Generation & Execution`)**：
+    *   **可定制函数的编译**：用户定义的可定制函数被追踪成一个张量 `DAG`。 `DAG` 中的每个节点代表一个计算原语（如元素级操作或行归约操作）。 `MetaAttention` 将这些原语映射到优化的硬件特定实现：元素级操作采用 `SIMT` 风格并融合到寄存器或片上内存中，行归约操作利用 `intra-warp` 并行归约。
+    *   **`Attention Runtime` 实现**：`Attention Runtime` 是一个编排层，将优化的调度计划转化为完整的内核。它包含一套用于并行和循环模式的内核模板，包括在不同内存层级之间移动中间张量的操作和矩阵乘法。
+    *   **代码内联 (`Code Inlining`)**：根据调度计划，`Attention Runtime` 选择合适的模板，并将硬件映射的可定制函数直接融合到高性能 `Attention` 执行循环中。这消除了额外的内核启动开销，并受益于相同的内存高效流水线和硬件原生优化。
+    *   **硬件后端映射**： `MetaAttention` 利用 `TileLang` 和 `CUTE` 等框架，将内核模板映射到 `NVIDIA` `GPU`（利用 `Tensor Memory Accelerator` (`TMA`) 和 `Tensor Cores`）和 `AMD` `GPU`（利用 `AMD Matrix Cores` 和异步复制单元）等不同硬件后端，以实现峰值性能。
+
+**5. 实验评估与成果**
+`MetaAttention` 在 `NVIDIA H100` 和 `AMD MI250` `GPU` 上进行了广泛评估，测试了包括 `Softmax Attention`、`Sigmoid Attention`、`ReLU Attention`、`RetNet`、`Mamba2` 和 `DeepSeek MLA` 在内的10种 `Attention` 机制。
+*   **性能提升**：
+    *   在 `NVIDIA H100` 上，`MetaAttention` 对于之前不支持的 `Attention` 配置（如 `ReLU Attention`）实现了最高达 **10.4 倍** 的加速，对 `Sigmoid Attention` 实现了平均 **3.6 倍** 的加速。
+    *   与高度优化的 `FlashAttention-3` 相比，在 `Diff-Transformers-3B` 的前向计算中实现了 **1.61 倍** 的平均加速，并在其他 `Softmax Attention` 任务上保持了可比性能。
+    *   在循环模式 `Attention`（如 `Mamba2`、`RetNet`、`Gated Retention`）上，相比 `Flash-Linear-Attention` 实现了前向 **1.66 倍** 和反向 **1.78 倍** 的平均加速。
+    *   在 `DeepSeek MLA` 上，性能与手工优化的 `FlashMLA` 库相当，比 `Triton` 提升 **4.6 倍**。
+    *   在 `AMD MI250` `GPU` 上，相比基线实现了前向 **3.3 倍** 和反向 **2.0 倍** 的平均加速，证明了其多后端支持能力。
+*   **开发效率提升**：`MetaAttention` 显著降低了开发工作量，例如，实现 `Softmax Attention` 仅需 **87 行代码**，而手工优化的 `CUDA` 库需要 **2.7k 行**。
+*   **编译时间**：受益于高效的调度策略，框架的编译时间控制在分钟级别（例如，在 `H100` 上编译 `Softmax Attention` 为 46 秒，`Mamba2` 为 82 秒），远低于传统深度学习编译器。
+*   **端到端性能**：在 `H100` 上的 `LLM` 推理和训练中，`MetaAttention` 带来了平均 **1.4 倍** 的端到端加速。
+
+
+## ECO 
 ECO: Quantized Training without Full-Precision Master Weights
 
 https://arxiv.org/pdf/2601.22101 Google Research等 2026.1.29
