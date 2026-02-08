@@ -1,6 +1,23 @@
 # AwesomePaper-for-AI
 Awesome or inspiring paper for AI
 
+# ECO 
+ECO: Quantized Training without Full-Precision Master Weights
+
+https://arxiv.org/pdf/2601.22101 Google Research等 2026.1.29
+
+1. 提出了Error-Compensating Optimizer (ECO)，这是一种**无需全精度master weights即可进行量化LLM训练的方法**，通过将**量化误差注入优化器momentum缓冲区**来显著降低内存开销。
+2. ECO在不增加额外内存的情况下形成了一个误差反馈循环，使得更新能够直接应用于量化参数，理论分析表明，在衰减学习率下，ECO能收敛到最优点的常数半径邻域，而朴素的master weight移除会导致误差发散。
+3. 在30M–800M Transformers、Gemma-3 1B和2.1B SMoE模型的**FP8量化预训练以及DeepSeek-MoE-16B的INT4微调中**，ECO达到了**与有master weights基线模型近乎无损的精度**，并将静态内存使用量降低了高达25%。
+<img width="447" height="414" alt="image" src="https://github.com/user-attachments/assets/57b1d52f-4a50-4ed9-b2ff-63d2fa4f1d24" />
+<img width="874" height="571" alt="image" src="https://github.com/user-attachments/assets/8f948183-606f-4d24-aad0-69d6e6e197b5" />
+
+传统上，quantized training 方法仍依赖高精度的 master weights 来累积 gradient updates，因为低精度格式难以精确捕获微小更新，易导致更新消失或引入巨大 quantization noise。
+
+master weights 尤其在 Sparse Mixture of Experts (SMoE) 模型中造成显著内存负担。ECO 通过**将updates直接应用于 quantized parameters 来消除 master weights**，并在每个训练 step 后，**将产生的 quantization error 精心注入到 optimizer 的 momentum buffer 中**，从而形成一个无需额外内存的 error-feedback loop。
+
+<img width="798" height="316" alt="image" src="https://github.com/user-attachments/assets/933efcb7-7fd9-4352-b324-aab5d1a61e52" />
+
 ## ContextMATH
 From Abstract to Contextual: What LLMs Still Cannot Do in Mathematics
 
