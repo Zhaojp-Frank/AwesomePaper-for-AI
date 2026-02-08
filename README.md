@@ -1,6 +1,56 @@
 # AwesomePaper-for-AI
 Awesome or inspiring paper for AI
 
+## Quartet2
+Quartet II: Accurate LLM Pre-Training in NVFP4 by Improved Unbiased Gradient Estimation
+
+https://arxiv.org/pdf/2601.22813 2026.2.2 Dan Alistarh团队
+
+code: https://github.com/IST-DASLab/Quartet-II
+
+1. 提出了一种名为MS-EDEN的新型无偏量化：基于NVFP4微缩放格式，相较于现有**随机舍入（SR）方法，其量化误差降低超过2倍**。
+2. 基于MS-EDEN构建了Quartet II：一种**全NVFP4线性层量化方案**，fwd中引入更精细的4/6尺度动态选择，bwd用MS-EDEN替代了SR量化。
+3. 1.9B参数、38B token的**LLM预训练中持续提高了准确性**，并提供专为NVIDIA Blackwell GPU优化的CUDA内核，实现了**相较于BF16高达4.2倍的速度提升**。
+
+现有的量化训练方法，特别是那些依赖 SR (Stochastic Rounding) 进行无偏梯度估计的方法，在 NVFP4 精度下会牺牲模型表示能力，并导致相对于标准 FP16 和 FP8 训练显著的精度损失。
+
+**核心方法：MS-EDEN (MicroScaling EDEN) 无偏量化**
+
+本文提出了一种名为 MS-EDEN 的新型无偏量化例程，专门为微尺度 (micro-scaled) 格式设计。MS-EDEN 的量化误差比 SR 低两倍以上，其核心创新在于将**随机性从单个 FP4 值转移到微尺度因子** (microscale factors)，同时保持预期上的可证明无偏性。
+
+为了实现无偏性，梯度估计必须满足：$\forall x_d \in \mathbb{R}^d : \mathbb{E}_{\omega}[\text{Q}(x_d, \omega)] = x_d$，其中 $\text{Q}$ 是量化操作符，$\omega$ 是随机性来源。
+
+NVFP4 格式使用 E2M1 浮点编码表示值，并结合两级尺度：每 16 个值一个 FP8 E4M3 组尺度，以及每个张量一个 FP32 全局尺度。传统的 SR 量化器 QSR 定义为：
+<img width="557" height="647" alt="image" src="https://github.com/user-attachments/assets/50578038-d6aa-43dc-a7c5-c01faa92eeb2" />
+
+传统的 EDEN 方法通过引入一个偏置校正因子 $S = \frac{\langle x, x \rangle}{\langle \text{RHT}(x, \omega), \text{Q}(\text{RHT}(x, \omega)) \rangle}$ 来确保无偏性，即 $Q_{\text{EDEN}}(x, \omega) = S \cdot Q(\text{RHT}(x, \omega))$。然而，该 $S$ 因子需要高精度表示（精细表示0.94～1.06），与 NVFP4支持的最小scale FP8不兼容（仅能表示精度1.0625）。
+
+<img width="748" height="292" alt="image" src="https://github.com/user-attachments/assets/f366f03f-24e2-44b9-a3d1-9d20f051bb8e" />
+
+
+MS-EDEN 实现了无偏性，并显著降低了 MSE (9.8e-3)，远低于传统 SR 的 MSE (23.5e-3)。理论上，MS-EDEN 量化器 $Q_{\text{MS-EDEN}}$ 满足 $\mathbb{E}_{\omega_{\text{RHT}},\omega_{\text{SR}}}[\text{RHT}^{-1} (b_x, \omega_{\text{RHT}})] = x$，其中 $b_x = Q_{\text{MS-EDEN}}(x, \omega_{\text{RHT}}, \omega_{\text{SR}}, s)$。
+
+Quartet II 是一个全 NVFP4 线性层计算方案，它结合了：
+*   **前向传播 (Forward Pass)：** 采用原生 NVFP4 尺度 (每 16 个元素一个 FP8 E4M3 尺度，以及一个每个张量的 FP32 尺度) 的 RTN FP4 量化，并辅以 "Four-over-Six" (4/6) 局部尺度选择启发式算法。4/6 算法通过评估两个潜在的尺度因子（4.0 和 6.0）来选择 MSE 较低的那个。研究表明，4/6 与原生 NVFP4 尺度（1x16gs）协同效应更好，能带来显著的精度提升。前向传播中量化后的权重和激活值会被保存用于反向传播。
+*   **反向传播 (Backward Pass)：** 首先生成一个 RHT 旋转矩阵。然后，保存的量化权重和激活值被反量化、转置，并与张量 E 和 ET 一起使用 MS-EDEN 进行重新量化，以获得无偏估计。这些量化后的张量在 NVFP4 Tensor Cores 中进行乘法运算。乘积输出无需进一步处理，因为旋转在 GEMM 的内维上相互抵消。
+
+
+<img width="541" height="399" alt="image" src="https://github.com/user-attachments/assets/c777a679-612e-4a7e-9203-f648db4251ab" />
+<img width="936" height="406" alt="image" src="https://github.com/user-attachments/assets/1cd9a7b2-8c21-45a9-be3c-d4eb99127940" />
+<img width="400" height="338" alt="image" src="https://github.com/user-attachments/assets/08d6a15e-4cfa-4d30-bd5e-f74fd1e0f05c" />
+
+**实验验证与扩展**
+
+*   **LLM 预训练：** 在 Llama 2 架构模型上（参数量从 30M 到 200M，C4 数据集）进行了验证。结果显示，MS-EDEN 在所有适用场景下都持续优于 SR。即使 MS-EDEN 需要在反向传播中重新量化权重，其全量化版本（图 1(e)）仍优于无需重新量化权重的全量化 SR 版本（图 1(d)）。
+*   **Nanochat 预训练：** 在更大规模（560M 和 1.9B 参数，38B tokens，FineWeb-Edu 数据集）上进行了验证。Quartet II 稳定，并使预训练损失相对于 BF16 的差距减少了 15-25%，优于现有 NVFP4 方法。零样本基准测试显示，与 BF16 相比，不同 QAT 方法之间的性能差异不显著。
+
+**内核支持和性能**
+
+*   **融合重向量化内核优化：** 传统的 NVFP4 量化中的全局最大值归约操作构成全局屏障，阻止了操作的完全融合，导致需要两个内核传递，加倍了内存带宽和矩阵乘法成本。
+*   **事后范围对齐 (Post Hoc Range Alignment)：** 为 MS-EDEN 引入了一种硬件感知的实现启发式方法。在第一个内核中，尺度被对齐到 E8M3（一种在 BF16 中表示的扩展范围 FP8 代理），而不是预先计算的 AbsMax。张量值被尺度除后舍入到 FP4，形成 ER-NVFP4。同时计算 EDEN 校正因子。在第二个内核中，加载 E8M3 伪尺度和缩减后的 FP32 全局最大值，将伪尺度移入 FP8 可表示范围，应用 EDEN 校正，并通过 SR 量化为 FP8。该优化显著减少了内存移动量（理论带宽节省约 20%），第二个内核的延迟也远低于第一个。
+*   **加速效果：** Quartet II 在线性层操作上实现了相对于 BF16 超过 4 倍的训练加速，并比现有 FP4 训练内核（如 Quartet）提升了约 70%。5090单卡1B LLM 预训练中，实现了相对于 BF16 超过 2.4 倍的总吞吐量提升，这主要归因于内存节省使得可以使用更大的 micro-batch size。
+
+
 ## Hot Mess
 The Hot Mess of AI: How Does Misalignment Scale With Model Intelligence and Task Complexity? 
 
