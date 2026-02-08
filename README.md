@@ -1,6 +1,26 @@
 # AwesomePaper-for-AI
 Awesome or inspiring paper for AI
 
+## Qrita TopP
+Qrita: High-performance Top-k and Top-p Algorithm for GPUs
+
+https://arxiv.org/abs/2602.01518 伯克利 2026.2.2
+
+1. 提出了一种用于 GPU 的高性能 **Top-k 和 Top-p** 算法，旨在克服大型语言模型 (LLM) 采样中现有截断方法的**效率**和确定性挑战。
+2. 引入 Gaussian σ-truncation 大幅缩小搜索空间，并结合 Quaternary pivot search with duplication handling，从而实现更快的迭代和确定性结果。
+3. 与 vLLM、SGLang 和 FlashInfer 等现有 LLM 执行引擎相比，Qrita 在提供相同输出的同时，**吞吐量最高可提高 2 倍**，内存使用量减少一半。
+
+该算法解决了传统 Top-k 和 Top-p 实现中存在的效率问题，即基于排序的方法在 GPU 上计算和内存开销大，而随机方法则会改变算法输出的确定性。
+在**H100 和 RTX4090**上与 PyTorch、vLLM、SGLang 和 FlashInfer 等基线进行了广泛评估。
+<img width="889" height="617" alt="image" src="https://github.com/user-attachments/assets/94a2eca2-954c-4611-a3ff-25b19aeb90eb" />
+
+吞吐量： 大部分测试中持续超越所有基线，RTX4090 上甚至实现了高达 2x的吞吐量提升。即使与 FlashInfer 和 SGLang 等功能受限（只返回单个 token）的解决方案相比，Qrita 也能保持竞争力或表现更优。
+内存使用： Qrita 的内存使用与所有基线持平或更低，除了 vLLM 的 Top-k (它使用就地 RadixSelect)。Qrita 的截断缓冲区是其主要内存开销，但其带来的性能提升足以抵消。
+高斯 \sigmaσ\sigmaσ 截断： 该技术提供了最大的加速，使延迟降低了 74%。即使存在约 0.4ms 的开销，它仍是 Qrita 整体性能提升的关键。
+四分位枢轴搜索： 尽管在截断命中（搜索空间已小）时略慢于二分搜索，但在回退到全词汇表搜索时，它带来了 2.3ms 的显著绝对延迟降低，证明了其在处理大规模数据时的优势。
+重复值处理： 引入的开销微乎其微（约 3.5%），但对于保证输出的确定性至关重要。
+分级自适应调优： 这项优化至关重要，将执行延迟降低了近 30%。
+
 ## Quartet2
 Quartet II: Accurate LLM Pre-Training in NVFP4 by Improved Unbiased Gradient Estimation
 
