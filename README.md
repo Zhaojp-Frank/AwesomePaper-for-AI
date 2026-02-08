@@ -1,6 +1,36 @@
 # AwesomePaper-for-AI
 Awesome or inspiring paper for AI
 
+## DASH
+DASH: Deterministic Attention Scheduling for High-throughput Reproducible LLM Training
+
+https://arxiv.org/abs/2601.21824 字节 上海交大冷静文团队，ICLR2026
+
+https://github.com/SJTU-Liquid/deterministic-FA3
+
+1. 提出 DASH 框架，旨在通过将确定性反向传播建模为有向无环图（DAG）上的调度问题来优化关键路径长度，从而解决大型语言模型（LLM）训练中**确定性 FlashAttention 带来的显著性能损失**。
+2. DASH 包含两种互补的调度策略：Descendig Q-Tile Iteration（一种通过反向查询块遍历减少因果注意力（causal attention）流水线停滞的启发式方法）以及 Shift Scheduling（一种在 DAG 模型中理论最优的调度算法）。
+3. 在 NVIDIA H800 GPU 上，DASH 将**确定性注意力的吞吐量提高了高达 1.28 倍**。
+
+DASH（Deterministic Attention Scheduling for High-Throughput）的调度框架，旨在解决大型语言模型（LLM）训练中可重现性所必需的确定性反向传播操作所带来的显著性能损失。在广泛使用的 FlashAttention-3 实现中，**确定性反向传播的吞吐量可能比非确定性版本低 37.9%** 归因于梯度累积操作必须序列化以保证数值一致性。这种性能损失源于计算和梯度规约阶段调度次优，导致硬件利用率低下。
+<img width="810" height="383" alt="image" src="https://github.com/user-attachments/assets/104f7fe8-f3fa-46ce-b14b-1fbe4dc97648" />
+<img width="816" height="303" alt="image" src="https://github.com/user-attachments/assets/30a1b962-985e-4ff0-8ec1-dc5558ee6126" />
+<img width="988" height="297" alt="image" src="https://github.com/user-attachments/assets/84ac6d36-abe6-4351-99de-208f6eb78791" />
+
+为了应对这一挑战，本文将确定性注意力机制的反向传播形式化为一个在有向无环图（DAG）上的调度问题，并推导出最小化关键路径长度的调度方案。基于此，DASH 框架封装了两种互补的调度策略：
+
+1.  **Descending Q-Tile Iteration（降序 Q-Tile 迭代）**：这是一种针对因果注意力（causal attention）的启发式方法。它通过反转查询块（Q-block）的处理顺序来加速依赖解析并减少流水线停顿（pipeline stalls）。对于因果掩码，传统的调度方式会导致明显的流水线气泡（pipeline bubbles），因为后续的计算依赖于先前的规约完成。通过倒序处理 Q-block，更短的任务首先完成，从而更快地释放 SM（Streaming Multiprocessor）资源，使得后续的注意力头能够更紧密地衔接，显著提高流水线效率。其总执行时间约为 $m \cdot \frac{(n+1)(c+r)}{2} + (n-1) \cdot r$，其中 $m$ 是注意力头数量，$n$ 是 SM 数量，$c$ 是计算成本，$r$ 是规约成本。
+
+2.  **Shift Scheduling（移位调度）**：这是一种在作者的 DAG 模型中理论最优的调度算法，旨在减少全掩码（full mask）和因果掩码（causal mask）下的流水线停顿。该策略通过一种相移的计算任务到 GPU SM 的分配方式，创建一个完美交错的执行模式。其核心思想基于一个引理：在包含并行同构链的 DAG 中，如果通过添加零权重依赖边来保持其原始关键路径长度，则每条添加的边 $(u, v)$ 必须满足 $\text{depth}(u) \le \text{depth}(v)$。
+
+    *   **全掩码下的最优调度**：对于全掩码，每个 KV-tile 的工作负载是均匀的。移位调度通过循环分配 KV 块给 SM 实现。具体而言，SM$_i$ 按照 $(i, i+1, \ldots, n-1, 0, \ldots, i-1)$ 的顺序处理 KV 块。这种循环分配自然地为任何给定的 dQ 块创建了无冲突的、顺序的规约次序，直接满足了上述引理的条件，从而达到理论最优。其总执行时间为 $T_{full\ opt} = m \cdot n \cdot (c+r)$。
+    *   **因果掩码下的对称移位调度**：因果掩码会导致严重不平衡的工作负载。对称移位调度通过对称配对原则来解决：SM 共同处理 KV 块 $i$ 和 $n-1-i$，将最长的任务与最短的任务配对，以此类推，从而平衡每个 SM 的任务链长度。它采用两阶段调度：第一阶段对稠密的左下矩形应用循环移位；第二阶段通过“工作负载折叠”（workload folding）处理剩余的三角形区域，将其逻辑地映射到概念上的方形区域，并从主对角线开始遍历。这种等价性确保了工作负载平衡，每个 KV 块的计算连续性，以及满足引理的深度单调累积，最终消除了所有流水线气泡。其总执行时间为 $T_{causal\ opt} = m \cdot \frac{(n+1)(c+r)}{2}$。
+
+在 NVIDIA H800 GPU 上的实证评估表明，DASH 显著缩小了确定性注意力与基线之间的性能差距。所提出的策略将注意力反向传播的吞吐量提高了最高 1.28 倍。然而，实验也揭示了理论最优性与实际应用之间的权衡：在极高的序列长度下（例如 16384），**全掩码的移位调度由于需要频繁的跨 SM 通信，导致 L2 缓存访问延迟**（特别是在访问远程 L2 缓存段时）成为瓶颈，其复杂的依赖图对这种通信开销更敏感，从而略微降低了性能。在因果掩码下，当 `headdim` 较大时（例如 128），对称移位调度因为更高的寄存器使用量，可能触发寄存器溢出（register spilling）到较慢的本地内存，导致性能下降，此时更简单的降序 Q-Tile 迭代反而表现更好。这表明硬件限制（如寄存器压力和跨 SM 通信延迟）会影响算法的实际效益。
+
+在端到端性能评估中，DASH 在 transformer 块级别实现了显著加速。对于因果模型，整体性能提升了 2% 到 10%；对于全掩码模型，提升了约 4%，平均加速约 5%。确定性内核确保了梯度比特级一致，而传统非确定性内核导致约 $O(10^{-4})$ 的梯度偏差。本文强调，尽管确定性会带来额外的性能开销，但对于 LLM 训练的可重现性至关重要。
+
+
 ## MetaAttention
 MetaAttention: A Unified and Performant Attention Framework across Hardware Backends
 
