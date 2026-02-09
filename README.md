@@ -1,6 +1,98 @@
 # AwesomePaper-for-AI
 Awesome or inspiring paper for AI
 
+## DuetServe
+DuetServe: Harmonizing Prefill and Decode for LLM Serving via Adaptive GPU Multiplexing
+
+https://arxiv.org/pdf/2511.04791 USC加州大学 2025.11
+
+1. DuetServe提出了一种统一的LLM服务框架，旨在解决LLM预填充(prefill)和解码(decode)阶段不同资源需求导致的效率问题，通过在预测到TBT(Time-Between-Tokens)延迟恶化时，自适应地在单个GPU内进行SM级别空间复用，按需隔离这两个阶段的执行。
+2. DuetServe集成了注意力感知roofline模型以预测延迟、一个动态GPU分区优化器以平衡SM（libsmctrl），以及一个无中断执行引擎以消除CPU-GPU同步开销并确保并发执行。
+3. H100/CUDA13.0 python实现。与现有最先进的LLM服务框架相比，DuetServe在保持低生成延迟的同时，将总吞吐量提高了1.3倍，有效融合了聚合和分离执行的优势。
+
+DuetServe是一种统一的LLM（大型语言模型）服务框架，旨在在维持高吞吐量的同时，满足计算密集型Prefill阶段和内存受限型Decode阶段严格的延迟SLO（服务等级目标）。现有的LLM服务方法面临挑战：聚合模式下，Prefill和Decode共享GPU资源会导致阶段间干扰，从而降低TBT（Time-Between-Tokens）；而分离模式（Disaggregation）虽然提高了延迟，但却因模型和KV Cache的重复造成资源浪费。DuetServe的核心思想是在单个GPU内实现Disaggregation级别的隔离，它默认以聚合模式运行，并在预测到TBT劣化时动态激活SM（Streaming Multiprocessor）级别的GPU空间多路复用（Spatial Multiplexing）。该系统仅在需要时通过细粒度、自适应的SM分区来解耦Prefill和Decode的执行，从而在拥塞威胁到延迟SLO时提供阶段隔离。
+
+DuetServe由三个紧密耦合的组件构成：
+
+1.  **Attention-Aware Roofline Analytical Modeling（注意力感知型Roofline分析模型）**：
+    该模型用于预测迭代延迟，从而帮助调度器提前检测潜在的TBT违规。它基于操作符、计算和内存特性估算模型前向传播的延迟。模型将操作符分为三类：
+    *   **Token-Level Operators（Token级操作符）**：这类操作符的成本仅取决于批次中处理的Token总数（Prefill和Decode Token之和），例如线性投影（Linear Projections）、层归一化（Layer Normalization）和激活函数（Activation Functions）。对于线性操作符，给定$n$个总Token、嵌入维度$d$、线性输入维度$d_i$、输出维度$d_o$和元素大小$s$，计算量（FLOPs）和内存开销（Bytes）分别为：
+        $F_{lin} = 2nd_i d_o$
+        $B_{lin} = nd_i s + d_i d_o s + nd_o s$
+        Token级操作符的延迟通常估计为：$t_{tok} = \max(F_{tok}/\Pi_{SM}, B_{tok}/B_{HBM})$，其中$\Pi_{SM}$是活跃SM的计算吞吐量，$B_{HBM}$是HBM（高带宽内存）带宽。
+    *   **Sequence-Level Operators (Attention)（序列级操作符，即注意力）**：注意力操作的成本取决于批次中每个请求的查询Token和KV Cache序列长度。对于注意力头数$h_q$、键值头数$h_{kv}$和头维度$d_h = d/h_q$，每个请求的FLOPs和内存字节数分别为：
+        $F_{attn/req}(q, c) = 4h_q q(q + c)d_h + 2h_q q(q + c)$
+        $B_{attn/req}(q, c) = 2h_q qd_h s + 2h_{kv} (q + c)d_h s$
+        其中$q$表示调度的查询Token数量，$c$是缓存的键值Token数量。模型会遍历批次中的每个请求，计算其注意力延迟并进行聚合：$t_{attn} = \sum_{r=1}^{|R|} \max(\frac{F_{attn/req}(q_r, c_r)}{\Pi_{SM}}, \frac{B_{attn/req}(q_r, c_r)}{B_{HBM}})$。
+    *   **Communication Operators（通信操作符）**：当LLM服务跨多个GPU进行时，如Tensor Parallelism，会引入GPU间通信开销。例如，Ring AllReduce的通信成本建模为：
+        $t_{allreduce} = 2(N-1)\alpha + \frac{2(N-1)B_{lin\_o}}{NB_{NVLink}} + \frac{N(N-1)B_{lin\_o}}{\Pi_{SM}}$
+        其中$N$是GPU数量，$\alpha$是启动延迟，$B_{lin\_o}$是线性操作符输出张量的大小，$B_{NVLink}$是所有NVLink连接的聚合单向带宽。
+    总模型延迟估算为：$t_{total} = L \cdot t_{block} + t_{cls}$，其中$L$是层数，$t_{block}$是每个Transformer Block的延迟，$t_{cls}$是最终线性分类器的延迟。
+
+2.  **GPU Partitioning Configuration Optimization（GPU分区配置优化）**：
+    一旦Roofline模型预测到TBT违规，DuetServe会决定如何分配GPU资源以维持延迟保证并最大化整体吞吐量。系统初始化时，会分析每个可能的SM分区大小下可实现的计算吞吐量$\Pi_{SM}(S)$和内存带宽$B_{HBM}(S)$。对于一个候选分割，将$S_d$个SM分配给Decode，$S_p = S - S_d$个SM分配给Prefill，预测延迟为：
+    $t_p(S_p) = f_{roofline}(\text{R}_{prefill}, \Pi_{SM}(S_p), B_{HBM}(S_p))$
+    $t_d(S_d) = f_{roofline}(\text{R}_{decode}, \Pi_{SM}(S_d), B_{HBM}(S_d))$
+    当激活SM分区时，系统目标是找到一个配置$(S_p, S_d, k)$，使得总Token吞吐量最大化，同时满足延迟约束：
+    $\max_{S_p, S_d, k} \frac{k \cdot T_{decode} + T_{prefill}}{\max(k \cdot t_d(S_d), t_p(S_p))}$ s.t. $t_d(S_d) \le \tau_{TBT}$
+    其中$T_{decode}$是每次Decode步长生成的Token数，$T_{prefill}$是Prefill批次中的Token数，$\tau_{TBT}$是预定义的TBT延迟边界。该优化倾向于将更多SM分配给Prefill任务以降低其延迟，同时为Decode分配满足TBT约束的最小SM数量。
+
+3.  **Interruption-Free Kernel Dispatching and Look-Ahead Decode Execution（无中断内核分派和预先Decode执行）**：
+    为了实现Prefill和Decode的并发执行，DuetServe为两者各初始化一个专用的CUDA Stream。确定最佳SM分区配置后，调度器利用`libsmctrl`将每个Stream绑定到其指定的SM区域，确保两个工作负载独立执行且互不干扰。Prefill和Decode的GPU Kernel由CPU在其各自的Stream上下文中并发调度。
+    为最小化CPU端的调度开销，DuetServe利用CUDA Graph捕获Decode执行。在初始化阶段，系统将Decode Kernel序列记录为可重用的CUDA Graph，从而实现高效的图重放（Graph Replay），启动延迟可忽略不计。Prefill执行无法被捕获为CUDA Graph，因为其Attention Kernel通常表现出动态张量形状和可变控制流。因此，Prefill Kernel由CPU单独启动，而Decode Kernel通过缓存的CUDA Graph集体启动。由于启动CUDA Graph的开销小于0.5ms，而Prefill Kernel的调度开销可能达到几十毫秒，调度器总是首先启动Decode执行以防止CPU引发的停顿。
+    为进一步减少连续Decode步长之间的同步开销，DuetServe引入了预先Decode执行（Look-Ahead Decode Execution）机制。通过为每个请求预分配多个KV Cache槽位，并提前准备未来$k$个Decode步长的所有元数据，CPU可以连续启动$k$个预记录的CUDA Graph，无需等待中间同步，从而实现跨多个Decode迭代的连续GPU执行，消除频繁的CPU-GPU同步停顿。
+
+DuetServe在Qwen3-8B和Qwen3-14B模型上，使用Azure Code、Azure Conversation和Mooncake三种真实工作负载进行了评估。实验结果表明，DuetServe在保持低生成延迟（TBT）的同时，总吞吐量比最先进的LLM服务框架提高了高达1.3倍。在多GPU环境下，DuetServe的自适应空间多路复用也能有效扩展，维持低解码延迟，同时避免了完全分离式Prefill-Decode配置固有的低效率和不平衡问题。消融研究（Ablation Study）验证了Roofline模型的准确性，并证明了自适应SM分区相对于静态分区的显著优势。通过在CPU和GPU活动上的分析，DuetServe展示了其在动态工作负载下通过在空间共享和时间共享之间切换，维持平衡利用率和高并发性的能力。
+
+
+## Bullet
+Bullet: Boosting GPU Utilization for LLM Serving via Dynamic Spatial-Temporal Orchestration
+
+https://arxiv.org/abs/2504.19516 中山大学 ASPLOS26
+
+https://github.com/zejia-lin/BulletServe
+
+https://github.com/zejia-lin/Bullet.git
+
+1. 针对LLM服务中计算密集型预填充和内存密集型解码阶段不匹配导致的GPU利用率低下问题，提出了Bullet系统，通过时空GPU资源共享实现阶段并发执行。
+2. Bullet通过结合精准的性能估算器、面向SLO的任务调度器进行细粒度阶段协调，以及轻量级的计算资源管理器动态分配GPU流多处理器（SMs）来实现。
+3. H100/H20/A100 Bullet通过最大限度提高GPU利用率，在吞吐量方面平均提升1.26倍（最高达1.55倍），并持续满足延迟约束，显著优于现有先进方法。
+基于MPS, libsmctrl Hopper, cuda12.6 SGLang
+
+LLM（Large Language Model）服务中，由于计算密集型的Prefill阶段与内存受限的Decode阶段计算特性差异，导致GPU利用率低下。现有方法，如混合批处理（hybrid batching），试图通过将这两个阶段组织在一起以解决此问题，但这往往以牺牲吞吐量或延迟为代价，使得大量GPU资源未能充分利用。
+
+本文识别了导致GPU利用率低下的两个关键根本原因：1) Prefill阶段由于波量化（wave quantization）和注意力（attention）瓶颈，导致计算利用率不佳；2) 混合批处理（hybrid batching）过度优先考虑延迟而非吞吐量，从而浪费了计算资源和内存带宽。
+
+为解决这些问题，本文提出了Bullet，一个新颖的时空编排系统（spatial-temporal orchestration system），旨在通过细粒度的阶段协调来消除这些低效率。Bullet支持Prefill和Decode请求的并发执行，并根据实时性能建模动态配置GPU资源。通过整合SLO（Service Level Objective）感知的调度和自适应资源分配，Bullet在不牺牲延迟目标的情况下最大化了GPU利用率。
+
+Bullet的核心方法围绕其四大关键组件：性能评估器、SLO感知任务调度器、计算资源管理器和并发执行引擎。
+
+1.  **性能评估器 (Performance Estimator)**
+    Bullet使用一个准确且低开销的性能评估器，它基于SM-scaling Roofline Model (SRM) 来预测Prefill和Decode阶段在不同SM（Streaming Multiprocessor）分配下的延迟。
+    *   **SM-scaling Roofline Model (SRM):** SRM通过分析GPU的计算性能和内存带宽随SM数量变化的关系来估算内核延迟。给定某个核的FLOPs ($f_{lopk}$) 和内存事务量 ($mem_k$)，其在 $N_p$ 个SMs上的理论延迟 $T'_{k,p}$ 可估算为：
+        $$ T'_{k,p} = \left(f_{lopk} \cdot \min\left(\frac{f_{lopk}}{mem_k} \cdot D_p, C_p\right)\right)^{-1} $$
+        其中，$C_p = C_{peak} \cdot N_p / N$ 表示在 $N_p$ 个SMs上的计算性能，$D_p = D_{peak} \cdot \min(1, N_p / N_d)$ 表示在 $N_p$ 个SMs上可达的内存带宽（$N_d$ 是内存带宽饱和的拐点）。
+    *   **争用建模 (Modeling Contention):** Bullet进一步考虑了Prefill和Decode核在不同SMs上并发执行时，内存子系统和网络带宽的争用。即使在并发执行时，内核延迟也保持稳定。通过量化“内存拷贝”和大型GEMM（如LLM中的up-gated layer）并发执行时的性能下降来模拟最坏情况下的内存争用。
+    *   **离线分析与在线校准 (Profiling and Online Calibration):** 在离线阶段，Bullet一次性收集SM-scaling Roofline Model所需数据，并对稀疏的Execution State (ES) 值进行测量，用于初始校准因子 $\alpha_{p,ES} = T^{measured}_{p,ES} / T'_{p,ES}$。在运行时，模型通过连续收集在线数据进行微调，以适应动态负载，预测开销在微秒级别。
+
+2.  **SLO感知任务调度器 (SLO-aware Task Scheduler)**
+    作为系统的核心协调者，SLO感知任务调度器负责Prefill和Decode任务的时空调度。
+    *   **动态调度策略:** 调度器持续监控系统状态（包括执行状态ES、Prefill进度PS和每请求延迟RS），并使用性能评估器预测潜在的SLO违规。Prefill调度器按层（layer-wise）启动内核，而Decode调度器则将内核打包为单个CUDA Graph以减少启动开销。
+    *   **资源动态配置:** 当检测到SLO违规风险时，调度器贪婪地搜索最优的资源配置和调度决策，通过调用计算资源管理器来重新分配SMs。它优先为Prefill分配SMs，以缩短TTFT（Time-To-First-Token），但同时确保Decode的TPOT（Time-Per-Output-Token）满足SLO。在请求高负载期间，Prefill阶段可以暂时获得更多SMs，甚至可能暂时暂停Decode，以快速处理排队请求，避免雪崩效应。
+
+3.  **计算资源管理器 (Computational Resource Manager)**
+    为了实现细粒度且低开销的SM资源配置，Bullet采用了基于SM屏蔽（SM masking）的技术。
+    *   **SM屏蔽 (SM Masking):** 与NVIDIA Multi-Process Service (MPS) 高达700MB的内存开销和静态策略不同，Bullet利用`libsmctrl_set_stream_mask` API来设置CUDA Stream的元数据，从而将该Stream中启动的所有内核限制在指定的SM子集上。这种方法提供了微秒级的运行时开销和零额外的内存占用，支持GPU资源的即时重新配置，以快速适应动态系统状态。
+
+4.  **并发执行引擎 (Concurrent Execution Engine)**
+    Bullet的并发执行引擎由独立的Prefill和Decode进程组成，通过高效的通信和内存共享机制实现无缝协作。
+    *   **共享内存架构:** 引擎通过OS管理的共享内存（如`/dev/shm`）交换全局系统状态和请求元数据，实现低延迟通信。
+    *   **统一GPU内存池:** 模型权重和KV Cache在引擎启动前被分配在一个统一的GPU内存池中。通过`cudaIpcGet/OpenMemHandle` API，不同引擎可以共享访问这些内存区域，无需在Prefill完成后进行KV Cache的数据传输，仅需异步发送元数据。原子锁机制确保了并发内存分配和释放的正确性。
+    *   **异步控制流:** Bullet的控制平面独立于CPU和GPU的执行流程，通过共享缓冲区进行主动通信，从而减少了频繁同步的需求，实现了并发内核提交。
+
+在真实世界工作负载上的实验评估表明，Bullet在吞吐量和延迟方面均显著优于现有SOTA系统。Bullet实现了平均1.26倍（最高1.55倍）的吞吐量提升，同时持续满足延迟约束。相较于SGLang-1024，Bullet的TTFT平均缩短13.5倍，端到端加速1.86倍。Bullet在P90尾延迟方面表现出色，将TTFT尾延迟从SGLang-1024的显著高值降低至0.31s，从而大幅提升了SLO达标率。此外，Bullet将GPU的SM激活周期利用率平均提升至86.2%，Tensor Core利用率提升11.8%，内存带宽利用率提升19.3%。其控制平面（元数据传输、性能预测、资源重配置）的平均开销均在微秒级别，对整体性能影响微乎其微。
+
+
 ## DASH
 DASH: Deterministic Attention Scheduling for High-throughput Reproducible LLM Training
 
