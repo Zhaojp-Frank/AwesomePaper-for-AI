@@ -1,6 +1,15 @@
 # AwesomePaper-for-AI
 Awesome or inspiring paper for AI
 
+## GFS
+GFS: A Preemption-aware Scheduling Framework for GPU Clusters with Predictive Spot Instance Management
+
+https://arxiv.org/pdf/2509.11134 ASPLOS26 阿里巴巴 上海交大等
+
+1.   针对大型语言模型（LLMs）对 GPU 资源需求的激增导致低优先级（LP）任务抢占率高和排队时间长的问题，本文提出了 GFS，一个**抢占感知调度框架**，旨在优化高优先级（HP）任务的 SLO 合规性并最小化 LP 任务的抢占。
+2.  GFS 框架包含三大核心模块：GPU Demand Estimator (GDE) 提供精确的 GPU 需求预测，Spot **Quota Allocator (SQA) 动态调整 spot 实例配额**，以及 **Preemptive Task Scheduler** (PTS) 执行抢占式调度策略以最小化预估成本。
+3.  📈 在实际生产环境和仿真测试中，GFS 将 LP 任务的抢占率降低了 33.0%，排队时间缩短了 44.1%，GPU 分配率提升了高达 22.8%，每月为集群节省了约 459,715 美元。
+
 ## Niyama
 Niyama: Breaking the Silos of LLM Inference Serving
 
