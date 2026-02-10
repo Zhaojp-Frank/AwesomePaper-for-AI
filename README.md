@@ -1,6 +1,17 @@
 # AwesomePaper-for-AI
 Awesome or inspiring paper for AI
 
+## Niyama
+Niyama: Breaking the Silos of LLM Inference Serving
+
+https://arxiv.org/pdf/2503.22562 ASPLOS26 微软印度
+1. Niyama旨在解决LLM推理服务中筒仓式部署的低效问题，通过引入一种新型的QoS驱动系统，实现在共享基础设施上高效协同调度多样化工作负载。
+2. 通过动态分块（Dynamic Chunking）优化吞吐量、混合优先级策略（Hybrid Prioritization）平衡公平性与效率，以及主动降级（Eager Relegation）机制，实现在过载条件下优雅地降低服务质量。
+3. Niyama在Llama3-8B和Qwen-7B模型上，使用ShareGPT、Azure Conv和Azure Code等数据集进行评估，并对比了Sarathi-Silo（SOTA竖井部署）、Sarathi-FCFS、Sarathi-EDF和Sarathi-SRPF等基线。Niyama将服务能力提高了高达32%，并在极端负载下显著减少了SLO违规，优于SOTA筒仓式部署。
+   
+包括三个队列（prefill queue、decode queue、relegated queue），一个prefill selector（实现混合优先级），一个violation checker（实现主动降级），以及一个轻量级预测器（用于动态分块）。Niyama基于Sarathi调度器实现，并兼容vLLM的PagedAttention机制。
+
+
 ## DuetServe
 DuetServe: Harmonizing Prefill and Decode for LLM Serving via Adaptive GPU Multiplexing
 
