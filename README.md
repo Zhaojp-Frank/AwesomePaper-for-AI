@@ -8,7 +8,28 @@ https://www.arxiv.org/pdf/2602.01410 ASPLOS26
 2. 💡 该框架通过引入前向损失散度和后向权重散度这两个新颖指标来量化精度损失，并利用整数线性规划（ILP）问题优化层级精度配置以最小化质量损失。
 3. Hopper/A100等SNIP 在 1B 至 **70B 规模的 Llama dense** 类模型上，能在保持接近全精度模型质量的同时，将浮点运算（FLOPs）降低高达 80%，并持续优于现有基线方法。
 
-<img width="748" height="426" alt="image" src="https://github.com/user-attachments/assets/a3368ea9-5c2a-429c-b782-d6854981da6e" />
+
+## PAT
+PAT: Accelerating LLM Decoding via Prefix-Aware Attention with Resource Efficient Multi-Tile Kernel
+
+https://arxiv.org/pdf/2511.22333 天津大学 ASPLOS26
+
+https://github.com/flashserve/PAT.git
+
+1. PAT提出了一种前缀感知的注意力内核实现，通过打包-转发-合并范式来加速LLM解码，旨在解决现有方法中重复的KV缓存加载和资源利用效率低下问题。
+2. 系统采用启发式打包调度器将共享前缀的查询分组以减少冗余内存访问，并设计了资源高效的多瓦片内核、多流转发和长KV分割策略来提升GPU利用率。
+3. 3K代码 集成到vLLM。8b模型/A100，PAT与现有FlashAttn/FlashInfer相比，平均可将注意力延迟降低**53.5%，并将TPOT降低17.0-93.1%**，显著提升了LLM解码性能。
+<img width="606" height="304" alt="image" src="https://github.com/user-attachments/assets/13acac61-b859-49a8-9355-2154a158e3ae" />
+
+<img width="748" height="426" alt="image" src="https://github.com/user-attachments/assets/a3368ea9-5c2a-429c-b782-d6854981da6e"
+<img width="1087" height="481" alt="image" src="https://github.com/user-attachments/assets/cb2ad33b-e062-46b8-b78d-e79b36802eec" />
+<img width="1155" height="443" alt="image" src="https://github.com/user-attachments/assets/b5afc0ee-c111-4107-9a0a-2a2f8b25ec89" />
+
+**共享前缀与现有实现缺陷**：
+**冗余内存访问**： 现有查询中心 (query-centric) 的注意力内核（如 FlashAttention、FlashInfer）采用“每个查询一个 CTA”的打包策略，导致共享 KV 前缀（例如，多请求共用的系统提示）被重复从慢速全局内存加载，引入 4.3-8.7 倍的冗余 KV cache 流量。
+**资源利用率低下**： 现有内核采用固定 tile size 的“一刀切”设计（例如，m=64, n=32），忽略了 LLM 工作负载的动态性，导致双重资源低效：
+内存浪费 (I_{mem}ImemI_{mem}Imem​): 当共享前缀的查询数量少于 tile size 时，CTA 必须填充输入，浪费共享内存和寄存器。
+执行气泡 (I_{exe}IexeI_{exe}Iexe​): 不同 CTA 的 KV 长度差异导致工作负载不平衡，使 SM 在执行后期阶段利用率不足。
 
 ## ZipServ
 ZipServ: Fast and Memory-Efficient LLM Inference with Hardware-Aware Lossless Compression
