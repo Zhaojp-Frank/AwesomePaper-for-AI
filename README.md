@@ -1,6 +1,70 @@
 # AwesomePaper-for-AI
 Awesome or inspiring paper for AI
 
+## ZipServ
+ZipServ: Fast and Memory-Efficient LLM Inference with Hardware-Aware Lossless Compression
+
+https://cse.hkust.edu.hk/~weiwa/papers/zipserv-asplos26.pdf ASPLOS26 港科广 范瑞波等
+
+https://github.com/HPMLL/ZipServ_ASPLOS26.git
+ 
+1. 提出了一种硬件感知的**无损压缩框架**，通过 Tensor-Core-Aware **Triple Bitmap Encoding** (TCA-TBE：固定长度、基于位图的编码格式而抛弃变长熵编码器如Huffman编码）将BF16权重压缩**～30%（平均11.3b）**，同时**实现恒定时间，高效并行解码**。
+2. 创新的融合式**ZipGEMM内核**，加载压缩（到shm），计算即时解压缩（到寄存器），消除了中间缓冲区和冗余数据传输，4090GPU上实现了高达2.21x内核级加速（相比 cuBLAS）。
+3. 2.5K LoC CUDA/C++; 1K python集成到vLLM。推理中PD阶段感知策略。prefill阶段由高效的解压缩内核将压缩权重解压缩到全局内存，然后执行高吞吐量的GEMM**分摊解压缩开销，而decode切换到融合的ZipGEMM内核降低延迟。
+4. GPU 4090/L40S，ZipGEMM比cuBLAS_TC平均加速1.3x; 比DietGPU、nvCOMP和DFloat11平均加速2.14x～1.10x。8b～70b模型E2E比vLLM、Transformers和DFloat11平均延迟分别降低 17.60%、60.79% 和 82.13%，吞吐量分别提高1.22x、3.18x 和 8.52x。5090上加速更大些。
+
+<img width="614" height="406" alt="image" src="https://github.com/user-attachments/assets/a0956ce1-1ba7-43d1-9fa4-9d4435c5e222" />
+<img width="1025" height="331" alt="image" src="https://github.com/user-attachments/assets/0f5bd5b4-d41f-4334-8265-4efe671d3f7b" />
+<img width="888" height="403" alt="image" src="https://github.com/user-attachments/assets/52928c7a-cf76-4a18-9b56-17d0d64d7cc2" />
+<img width="508" height="298" alt="image" src="https://github.com/user-attachments/assets/99662b13-dd8d-44a0-90bd-f213ffb49475" />
+<img width="1028" height="489" alt="image" src="https://github.com/user-attachments/assets/1cac0954-c33e-4cc9-b67d-a17334022cad" />
+<img width="710" height="470" alt="image" src="https://github.com/user-attachments/assets/842c2305-6d0f-4027-9473-a6e9b411b9d5" />
+<img width="687" height="663" alt="image" src="https://github.com/user-attachments/assets/85f5ecd6-9c2d-4481-b3d5-63d36f395b2d" />
+
+ZipServ 是一种用于实现高效 LLM 推理的无损压缩框架，旨在解决现有无损压缩方法在 GPU 上推理时，由于与 GPU 架构不匹配而导致的显著性能下降问题。传统方法在内核级别产生可变长度位流，这会破坏 SIMT 并行性；在系统级别，解耦的流水线导致冗余的内存流量。ZipServ通过硬件感知设计，提供了存储节省和 LLM 推理加速。
+
+尽管无损模型压缩对于缓解内存和带宽瓶颈具有巨大潜力，但现有方法通常会导致推理速度大幅减慢。这源于传统压缩算法与现代 GPU 架构之间的根本不匹配。
+在GPU SIMT模式下，**可变长度位流的解码效率低下**，导致控制流发散和计算资源利用不足。此外，大多数框架权重在计算前完全解压缩到全局内存中，这引入了**冗余的数据传输**和低算术强度。
+
+ZipServ 致力于通过以下两个核心技术来解决这些问题：
+
+1.  **Tensor-Core-Aware Triple Bitmap Encoding (TCA-TBE)**：
+    *   **核心观察**：BF16 权重中的指数位在当代 LLM 中呈现出高度偏斜、低熵的分布。**前7个最常见的指数值覆盖了超过95%的权重**，且这些指数通常构成数值上连续的序列（例如 $e^*, \dots, e^*+6$）。
+    *   **设计理念**：利用这一统计冗余和连续性，TCA-TBE 采用**固定长度、基于位图的编码格式**，**摒弃了传统可变长度的熵编码器**（如 Huffman 编码），从而实现**恒定时间、并行解码**，避免了控制流发散。
+    *   **编码细节**：
+        *   **3 位码字**：选择 3 位码字，因为它在利用高度偏斜的指数分布方面实现了近乎最优的压缩比。它将前 7 个最频繁的指数值映射到码字 001-111。特殊的码字 000 用于表示指数落在前 7 个范围之外的权重（以全精度存储）。
+        *   **平均比特成本**：每元素的平均存储成本为 $\text{AverageBits}(n) = r_n \cdot (n + 8) + (1 - r_n) \cdot (n + 16)$，其中 $n$ 是码字长度，$r_n$ 是被前 $2^n - 1$ 个指数值覆盖的权重比例。对于 $n=3$，平均每元素 11.3 比特。
+        *   **解耦三位图布局**：为最大化 SIMT 架构上的解码效率，TCA-TBE 将每个 8x8 权重瓦片的 3 位码字分解为三个独立的 64 位位图，每个位图代表 3 位码字中的一个位平面。这确保了合并的内存访问和无分支解码，与 GPU 的 SIMT 模型对齐。
+        *   **分层瓦片设计**：采用三级分层瓦片方案，与现代 GPU 的架构粒度对齐：
+            *   **FragTile (FT)**：基本单元为 8x8 瓦片，与 Tensor Core 指令的最小操作数片段匹配。
+            *   **TensorCoreTile (TT)**：每个 16x16 瓦片由 2x2 的 FragTile 网格组成，与 PTX 级别 Tensor Core `mma.sync.m16n8k16` 指令的操作数维度匹配。
+            *   **BlockTile (BT)**：最粗粒度为 64x64 瓦片，由一个线程块协同处理。
+        *   **数据存储**：每个 8x8 FragTile 使用五个缓冲区进行编码：三个 64 位位图（表示 3 位码字的位平面）、一个 PackedSignMantissa 缓冲区（存储高频权重的符号和尾数）以及一个 FullValue 缓冲区（存储全精度回退值）。
+
+2.  **ZipGEMM (Fused Decompression-GEMM Kernel)**：
+    *   **设计目标**：实现“加载压缩，计算解压缩”（load-compressed, compute-decompressed）的执行模型，将解压缩和矩阵乘法融合到一个内核中，直接将压缩权重从 DRAM 获取并实时解压缩到 Tensor Core 寄存器中，从而消除冗余数据传输，最大化算术强度。
+    *   **内核工作流**：
+        *   **瓦片加载**：线程协同将压缩权重瓦片和对应激活瓦片从全局内存加载到共享内存。
+        *   **Warp 级解码**：每个 warp 独立地从共享内存中解压缩压缩权重，将其重建为兼容 Tensor Core 消耗的 BF16 值。
+        *   **激活寄存器传输**：激活瓦片从共享内存移动到寄存器。
+        *   **Tensor Core 计算**：当解压缩的权重和激活都位于寄存器中时，warp 执行 Tensor Core `mma` 指令。
+    *   **高效解压缩器**：
+        *   **空间位图指示器 (Spatial Bitmap Indicator)**：通过对三个位图进行位或操作生成一个 64 位指示掩码，每个线程根据该掩码中对应比特的值（1 为压缩，0 为回退）来确定其分配元素的存储模式。该过程完全在寄存器中进行，且恒定时间完成。
+        *   **动态寻址 (Dynamic Addressing)**：每个线程通过对其分配元素前的空间指示器进行 warp 局部前缀和（`__popc()` 和 `__shfl_sync()` 指令）来实时计算其在值缓冲区中的读取偏移量，无需显式索引。
+        *   **通过隐式查找的快速指数重组 (Fast Exponent Reassembly via Implicit Lookup)**：利用指数的数值连续性，离线压缩时识别出前 7 个最常见的连续指数值，并将其映射到 3 位码字（001-111），同时记录一个全局基准指数 (`base_exp = min(top_exponents)-1`)。运行时，每个线程通过将 3 位码字与 `base_exp` 相加来算术重构原始指数，避免了共享内存查找表，仅需一次整数 ALU 操作。
+        *   **重打包为 Tensor Core Fragment**：将两个重构的 BF16 元素重新打包到单个 `bfloat162` 寄存器中，以匹配 Tensor Core `mma.sync` 指令所需的操作数布局。
+    *   **细粒度软件流水线**：ZipGEMM 采用两级分层流水线：瓦片级双缓冲（覆盖全局到共享内存传输与计算）和切片级交错（覆盖共享到寄存器移动、解压缩与 Tensor Core 操作），有效隐藏了内存和解压缩延迟，确保了稳定的计算流。
+
+ZipServ 采用**阶段感知推理策略 (Stage-Aware Inference Strategy)**：
+*   在**预填充 (prefill) 阶段**（计算密集型，大 $N$），ZipServ 采用解耦流水线：首先由高效的解压缩内核将压缩权重解压缩到全局内存，然后执行高吞吐量的 GEMM 操作以分摊解压缩开销。
+*   在**解码 (decode) 阶段**（内存密集型，小 $N$），ZipServ 切换到融合的 ZipGEMM 内核，实现实时解压缩以加速 token 生成。
+
+实验评估表明，ZipServ 显著优于现有基线。在 NVIDIA RTX4090 和 L40S GPU 上，ZipGEMM 比 NVIDIA 的 cuBLAS_TC 平均加速 1.31x 和 1.36x，最高加速可达 2.21x，而其他解耦解压缩方法（DietGPU, nvCOMP, DFloat11）均引入了显著的运行时开销。ZipServ 的独立解压缩内核 ZipServ-Decomp 也比 DietGPU、nvCOMP 和 DFloat11 平均加速 2.14x、1.83x 和 1.10x。在端到端推理性能方面，ZipServ 相较于 vLLM、Transformers 和 DFloat11，平均延迟分别降低 17.60%、60.79% 和 82.13%，吞吐量分别提高 1.22x、3.18x 和 8.52x。内存方面，ZipServ 将 LLaMA3.1-8B、Mistral-24B 和 LLaMA3.1-70B 的权重占用空间分别减少到原始的 72.4%、71.3% 和 71.1%，释放的内存可用于 KV Cache，从而支持更大的批次和更长的上下文。ZipServ 的设计也展现出良好的向前兼容性，在最新的 RTX5090 上仍能提供显著加速，并能缩小消费级 GPU 与数据中心级 GPU 的性能差距。
+
+**局限性**：ZipServ 主要针对消费级和推理优化型 GPU，在内存带宽充足的训练型数据中心 GPU（如 A100、H800）上，其性能可能不总是超越高度优化的 cuBLAS 基线，这反映了硬件-软件的某些不匹配。然而，即使在这种情况下，ZipServ 仍能提供最佳的压缩推理支持。
+
+该研究首次证明，当与硬件协同设计时，无损压缩可以为 LLM 推理提供存储节省和实质性的加速。
+
 ## GFS
 GFS: A Preemption-aware Scheduling Framework for GPU Clusters with Predictive Spot Instance Management
 
@@ -8,7 +72,7 @@ https://arxiv.org/pdf/2509.11134 ASPLOS26 阿里巴巴 上海交大等
 
 1.   针对大型语言模型（LLMs）对 GPU 资源需求的激增导致低优先级（LP）任务抢占率高和排队时间长的问题，本文提出了 GFS，一个**抢占感知调度框架**，旨在优化高优先级（HP）任务的 SLO 合规性并最小化 LP 任务的抢占。
 2.  GFS 框架包含三大核心模块：GPU Demand Estimator (GDE) 提供精确的 GPU 需求预测，Spot **Quota Allocator (SQA) 动态调整 spot 实例配额**，以及 **Preemptive Task Scheduler** (PTS) 执行抢占式调度策略以最小化预估成本。
-3.  📈 在实际生产环境和仿真测试中，GFS 将 LP 任务的抢占率降低了 33.0%，排队时间缩短了 44.1%，GPU 分配率提升了高达 22.8%，每月为集群节省了约 459,715 美元。
+3.  实际生产环境和仿真测试中，GFS 将 LP 任务的抢占率降低了 33.0%，排队时间缩短了 44.1%，GPU 分配率提升了高达 22.8%，每月为集群节省了约 459,715 美元。
 
 ## Niyama
 Niyama: Breaking the Silos of LLM Inference Serving
