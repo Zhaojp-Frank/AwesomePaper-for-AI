@@ -1,6 +1,15 @@
 # AwesomePaper-for-AI
 Awesome or inspiring paper for AI
 
+## SNIP
+SNIP: An Adaptive Mixed Precision Framework for Subbyte Large Language Model Training
+https://www.arxiv.org/pdf/2602.01410 ASPLOS26
+1. 🚀 SNIP 是一个针对（LLM）训练的自适应混合多种精度训练框架，旨在通过细粒度层级量化解决模型质量与训练效率之间的挑战。
+2. 💡 该框架通过引入前向损失散度和后向权重散度这两个新颖指标来量化精度损失，并利用整数线性规划（ILP）问题优化层级精度配置以最小化质量损失。
+3. Hopper/A100等SNIP 在 1B 至 **70B 规模的 Llama dense** 类模型上，能在保持接近全精度模型质量的同时，将浮点运算（FLOPs）降低高达 80%，并持续优于现有基线方法。
+
+<img width="748" height="426" alt="image" src="https://github.com/user-attachments/assets/a3368ea9-5c2a-429c-b782-d6854981da6e" />
+
 ## ZipServ
 ZipServ: Fast and Memory-Efficient LLM Inference with Hardware-Aware Lossless Compression
 
