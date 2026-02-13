@@ -1,6 +1,40 @@
 # AwesomePaper-for-AI
 Awesome or inspiring paper for AI
 
+## ODC
+https://arxiv.org/pdf/2601.19362 SeaAI，2026.1.27
+
+https://github.com/sail-sg/odc
+
+1. 针对LLM后训练中因序列**长度差异导致的负载不平衡问题**，本文提出了一种名为On-Demand Communication (ODC)的新范式，旨在**重新引入参数服务器（PS）的容错优势**。
+2. ODC通过**将FSDP中逐层的集体通信替换为点对点通信**，从而将同步barrier从逐层**放松到逐minibatch**，有效缓解了设备空闲和“慢者拖累”效应。
+3. 基于Triton-Distributed实现，最大dense-32b，ODC显著提高了设备利用率和训练吞吐量，在多种LLM后训练任务中**+36%的速度提升**，证明了其在处理不平衡工作负载方面的优越性。
+   
+<img width="677" height="274" alt="image" src="https://github.com/user-attachments/assets/3c544ffa-aef9-4edf-9e9a-798aeb6563a6" />
+<img width="676" height="371" alt="image" src="https://github.com/user-attachments/assets/7dad84c4-8b90-4b6f-bb27-15b82b134cdd" />
+<img width="748" height="637" alt="image" src="https://github.com/user-attachments/assets/7aad10f2-4867-47e6-8702-6c70a55f4507" />
+
+LLM后训练（post-training）中，由于**sequence length高度不一致性**。这种不平衡导致工作负载较小的设备出现空闲（idle），形成所谓的“**拖慢效应**”（straggler effects），进而造成设备利用率低下。FSDP通过在**每一层（per-layer）进行`all-gather`（用于前向传播的参数重建）和`reduce-scatter`（用于后向传播的梯度聚合）操作**，引入了细粒度同步障碍使得设备必须**等待最慢的设备**完成当前层操作，从而在**工作负载不平衡时显著放大了效率低下问题**，导致设备空闲时间可达50%。
+
+本文重新审视了Parameter Server (PS) 范式，并提出了On-Demand Communication (ODC) 方案，将其**适应到现代分片数据并行**（sharded DP）中，以应对LLM后训练中的工作负载不平衡问题。ODC的核心思想是将FSDP中基于集体通信的每层同步操作替换为直接的点对点（point-to-point）通信。具体而言：
+1.  **分散式Parameter Server架构：** ODC将FSDP框架重构为一个分散式（decentralized）的Parameter Server。每个设备**既充当“服务器”（拥有并管理模型参数和优化器状态的某个分片），又充当“工作器”**。这种设计保留了FSDP的内存效率和可扩展性，同时避免了传统集中式PS的网络瓶颈。
+2.  **细粒度通信替代：**
+    *   `all-gather`操作被一系列有针对性的`gather`请求所取代。在计算特定层之前，每个设备只从其对等（peer）设备请求并获取其所需参数的分片（shard）。
+    *   `reduce-scatter`操作被分解为一系列`scatter-accumulate`操作。每个设备在计算完梯度后，直接将其计算出的梯度推送到拥有相应梯度分片的设备上。
+3.  **放松同步粒度：** 通过这种点对点通信，ODC将同步障碍从每一层放松到每个minibatch的末尾。这意味着设备可以在minibatch内独立推进其计算，无需等待其他设备完成当前层的计算，从而显著缓解了拖慢效应。
+4.  **非侵入式通信：** ODC的通信操作是**非侵入式的**（non-intrusive）。当一个设备向另一个设备发起`gather`或`scatter-accumulate`请求时，不会中断目标设备上正在进行的计算。这主要通过利用远程直接内存访问（RDMA）技术实现：节点内（intra-node）通信使用CUDA IPC，节点间（inter-node）通信使用NVSHMEM，通信内核基于Triton-Distributed构建，在Python Triton kernels中直接暴露RDMA功能。
+
+ODC的引入也简化并增强了负载均衡策略。传统的序列打包（sequence packing）方法（如Krell et al., 2021）通常在microbatch层面进行负载均衡，但受限于设备内存和计算（$O(s^2)$）与内存（$O(s)$）扩展不匹配的固有矛盾。ODC消除了每个设备必须处理相同数量microbatch的隐含要求，使得负载均衡可以从细粒度的microbatch层面提升到粗粒度的minibatch层面。新的LB-Mini策略首先在全局样本集合中平衡总计算负载到各个设备，然后每个设备独立地将其本地样本子集打包成microbatch，仅受本地内存约束。这通过Karmarkar-Karp算法实现，并迭代验证分区是否会导致out-of-memory (OOM)。
+
+在实验评估中，ODC在SFT（LongAlign, SWE-Smith）和RL（GRPO on AIME prompts）等多样化的LLM后训练任务上，一致性地提高了设备利用率和端到端吞吐量。与标准的FSDP相比，ODC实现了高达36%的加速。特别是在打包场景下，ODC的收益更为显著。当minibatch大小为1时，ODC与集体通信的性能相似，因为在这种情况下，两者都几乎每个样本后进行同步。参数研究表明，ODC的加速效果随序列长度和设备数量的增加而增强，随打包比率（packing ratio）的增加而减弱，并在中等minibatch大小下达到峰值。
+
+尽管节点间通信基准测试显示ODC的点对点RDMA相比NCCL优化后的集体通信（利用层次化互联拓扑）存在带宽劣势，但论文指出，这种劣势可以通过两种方式缓解：
+1.  **通信与计算重叠（Overlapping Communication with Computation）：** 对于长序列，计算复杂度（$O(s^2)$）远高于通信量（$O(s)$），使得大规模计算能够有效掩盖通信延迟。
+2.  **混合分片（Hybrid Sharding）：** 类似于ZeRO++，在节点内分片参数和梯度，而在节点间分片优化器状态。这消除了跨节点的参数`gather`和梯度`scatter-accumulate`，虽然会增加单节点内存使用，但在许多情况下是可接受的权衡。
+
+未来的工作方向包括：开发ODC特有的通信优化（如拓扑感知取回），探索放松同步保证以支持异步SGD方案，以及集成Parameter Server固有的弹性（elasticity）和容错（fault tolerance）能力，以提升大规模LLM训练的韧性和灵活性。
+
+
 ## SNIP
 SNIP: An Adaptive Mixed Precision Framework for Subbyte Large Language Model Training
 https://www.arxiv.org/pdf/2602.01410 ASPLOS26
