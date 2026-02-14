@@ -1,6 +1,52 @@
 # AwesomePaper-for-AI
 Awesome or inspiring paper for AI
 
+
+## NVFP4预训练
+Dissecting Outlier Dynamics in LLM NVFP4 Pretraining
+
+https://arxiv.org/pdf/2602.02047 港科广，阿里等 2026.2.2
+
+1. 对**LLM NVFP4在预训练**中的异常值动态分析，旨在缩小其与BF16基线之间的性能差距。
+2. 研究发现，Softmax Attn中的softmax和attn.V对精度更敏感；Linear Attention的outprojct敏感。LA比SA表现出更轻的重尾现象，异常值从训练早期的瞬态尖峰演变为后期更持久的“热通道”，且“**post-QK**”**操作对量化高度敏感**。
+3. 引入了Hot-Channel Patch (**HCP**)在线补偿机制和CHON训练配方，将GLA-1.3B模型的NVFP4损失差距从0.94%降低到0.58%，更高的下游任务的准确性。只增加9%～13%的训练效率开销。并对Qwen3-8b进行了SFT和RL训练，和基线基本持平。
+   
+<img width="821" height="238" alt="image" src="https://github.com/user-attachments/assets/8a57c27d-fe58-43d3-bc20-77f81e49f7ff" />
+
+现有研究多集中于训练后的量化（post-training quantization），而本研究首次对NVFP4预训练期间异常值在不同架构中的定位、产生原因及时间演化进行了纵向分析。
+
+1.  **异常值的定位**：与 SoftmaxAttn (SA) 相比，Linear Attention (LA) 在 per-tensor 层面展现出更轻的重尾分布（heavy tails），减少了系统性异常值的数量，如GLA模型较低的激活值 Kurtosis 所示。然而，在 block-level 量化下，LA 仍表现出持续的局部尖峰。
+<img width="480" height="273" alt="image" src="https://github.com/user-attachments/assets/58a391d9-40a6-412b-bd4d-b4c142e1c002" />
+
+3.  **异常值产生原因**：SA中**Softmax是异常值产生的根本原因，这归因于其归一化约束**。具体来说，**求和为一的要求迫使模型采用极端的动态范围来有效抑制信息量不足的 token**。**为了使这些token的贡献接近于零，模型被迫生成幅度较大的 Pre-Softmax** 值。
+图 7 中的三个指标来实证验证这一机制：Post-Softmax Entropy、Pre-Softmax Kurtosis 和 Pre-Softmax Max。
+<img width="527" height="133" alt="image" src="https://github.com/user-attachments/assets/d78953fd-769d-48e9-b012-9f8c03e637c9" />
+<img width="587" height="273" alt="image" src="https://github.com/user-attachments/assets/bd240252-810c-4486-9b72-55d0128a88bc" />
+
+① Post-Softmax Entropy 的下降反映了注意力**权重的集中度不断增加**。
+② Pre-Softmax Kurtosis 的上升**表明logit空间向重尾分布转变，这是异常值形成的标志**。
+③ Pre-Softmax Max（从 4 增长到 10）的增长证实了使 Softmax 函数饱和所需的 logit 差异不断增大
+
+**LA中的门控机制中的逐元素指数函数** \phi(x) = \exp(t \cdot x)(t > 2)ϕ(x)=exp⁡(t⋅x)(t>2)\phi(x) = \exp(t \cdot x)(t > 2)ϕ(x)=exp(t⋅x)(t>2)，特别是 gk proj 层，是 GLA 中极端异常值的主要来源。衰减因子 \lambda_tλt\lambda_tλt​ 通过 log-sigmoid 函数从 gk proj 导出。为了实现状态重置 (\lambda_t \approx 0λt≈0\lambda_t \approx 0λt​≈0)，预激活输入必须是极负值 (例如，\approx -120≈−120\approx -120≈−120)，而长期保持 (\lambda_t \approx 1λt≈1\lambda_t \approx 1λt​≈1) 需要正向饱和。这需要巨大的动态范围 (例如，[-120, 80][−120,80][-120, 80][−120,80])，对均匀 FP4 量化构成了严峻挑战。如图 6b 所示，gk proj 的平均 Top-1 幅度显著超过其他组件
+
+5.  **异常值的演化**：异常值在训练早期（例如，步骤400-5,400）表现为瞬态的、漂移的尖峰，但在训练后期（例如，步骤15k）则演变为一小部分持续存在的“热通道”（hot channels），即具有持续高幅度的通道。这种从随机漂移到结构性固定的转变，为在线选择性缓解策略提供了依据。此外，激活值的 Flush-to-Zero (FTZ) 率始终高于权重，且 CHON 方法能有效降低激活值的 FTZ。异常值也倾向于在网络的更深层（特别是最后四层）累积。
+
+本文提出了 Hot-Channel Patch (HCP) 机制。HCP 是一种轻量级的在线补偿机制，它周期性地识别并跟踪这些持续存在的“热通道”，并使用硬件高效的核（kernel）对量化残差进行补偿。
+<img width="488" height="435" alt="image" src="https://github.com/user-attachments/assets/7f4746d0-b478-42d6-a455-3ca852544531" />
+
+HCP 的核心思想是利用量化后的乘积分解：对于线性变换 $Y = W^T X$，其量化近似为 $ \tilde{W}^T \tilde{X} = W^T X + W^T \Delta X + \Delta W^T X + \Delta W^T \Delta X $，其中 $ \Delta X $ 和 $ \Delta W $ 分别是激活值和权重的量化误差。HCP 旨在通过补偿误差项来使 $ \tilde{W}^T \tilde{X} $ 更接近 $W^T X$。
+HCP 通过定义一个复合误差得分 $s_j = \frac{1}{k} \| \Delta X_{j,:} \|_1 + \frac{1}{m} \| \Delta W_{:,j} \|_1$ 来识别前 $k$ 个热通道 $I$。在多种补偿配置中，HCP 选择了 Single-Kernel, Second-Order, Both (S-O2-B) 方案，它通过构造增强矩阵 $ \tilde{X} = [ \tilde{X}^T, \Delta X_I^T ]^T $ 和 $ \tilde{W} = [ \tilde{W}^T, \Delta W_I^T ]^T $，将补偿融入到单次 GEMM 操作中，使得近似后的乘积 $Y_{HCP}^I$ 的误差仅限于二阶项 $ - \Delta W_I^T \Delta X_I $。这在理论上（如引理 A.9 和定理 A.12 所示）显著减小了量化误差，且由于补偿通道数 $k$ 远小于总通道数 $D$，额外计算开销与 $O(k)$ 成线性关系，并通过融合 Triton kernels 保持了高效性。
+
+HCP 被集成到 NVFP4 预训练流程中，并结合了对 `post-QK` 操作的额外保护（例如，将LA的 `Wo` 和 GLA的 `gk proj` 保持在 BF16 精度），形成了新的训练配方：CHON (Compensated Hot-channel Optimization for NVFP4)。
+<img width="973" height="539" alt="image" src="https://github.com/user-attachments/assets/61fdd09f-7f74-4166-acf8-812dd05725b6" />
+
+**SFT**：Qwen3-8b, FSDP2. 所有线形层包括Q/K/V/Out,MLP都用NVFP4，attn/LM_head/emd不做量化。
+<img width="773" height="311" alt="image" src="https://github.com/user-attachments/assets/817d1812-e139-4885-82e6-39ecfb64aa78" />
+
+**RL**: Qwen3-8b,veRL/FSDP/vLLM, GRPO. E2E的NVFP4目前还有问题。
+
+<img width="829" height="449" alt="image" src="https://github.com/user-attachments/assets/687b62ae-9659-4eac-ac0e-f421aaaa2565" />
+
 ## MX量化评估
 
 https://arxiv.org/pdf/2601.09555 华为 2026.1.14
