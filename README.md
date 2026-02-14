@@ -1,6 +1,79 @@
 # AwesomePaper-for-AI
 Awesome or inspiring paper for AI
 
+## MX量化评估
+
+https://arxiv.org/pdf/2601.09555 华为 2026.1.14
+
+1. 系统评估了MXFP格式下大型语言模型（LLMs）的Post-Training Quantization（PTQ）方法，7b/8b模型 vLLM。
+2. 推理(AIME24/25)/非推理任务下，**MXFP8能持续实现近乎无损**，**MXFP4引入了显著的精度下降且仍具挑战性**，其中误差补偿和仿射变换方法与MXFP量化更兼容，而**旋转变换方法则会损害MXFP4的性能**。
+3. PTQ性能趋势在不同模型家族和模态间高度一致，且MXFP4中**量化缩放因子是关键误差源**，可通过简单的**预缩放优化策略**显著缓解其影响。
+基于 https://github.com/microsoft/microxcaling
+
+<img width="500" height="260" alt="image" src="https://github.com/user-attachments/assets/153ffdd1-72c4-4e8f-b6a5-886da890dd83" />
+<img width="945" height="626" alt="image" src="https://github.com/user-attachments/assets/8280e49a-86cb-4625-9645-522f81a80c87" />
+
+**2. 预备知识**
+**2.1 低位整数（INT）与浮点（FP）量化**
+整数量化通常通过裁剪和缩放操作将高精度张量$W$映射到低位整数范围。其定义为：
+$W_q := \text{clip} (\lfloor W/s \rceil , Q_{\text{min}}, Q_{\text{max}}) \cdot s$
+其中，$\text{clip}(\cdot)$用于截断值，而$s$是缩放因子。
+浮点量化则更复杂，涉及符号位（S）、指数（E）和尾数（M）。一个FP格式通常表示为$\text{E}a\text{M}b$。FP量化定义为：
+$W_q := \text{nearest} (\lfloor W/s \rceil , C_{\text{FP}}) \cdot s$
+其中，$C_{\text{FP}}$是可表示的低位浮点值集合，$\text{nearest}(\cdot)$将归一化值映射到$C_{\text{FP}}$中最近的元素。
+
+**2.2 微缩浮点（MXFP）量化**
+MXFP是OCP提出的一系列量化浮点格式，采用块量化（block quantization）机制，块大小为32，并为每个块使用共享的UE8M0数据类型。本文主要关注MXFP8和MXFP4，其中MXFP8采用E4M3变体（因其更大的尾数宽度对细粒度量化性能更关键），MXFP4采用E2M1。
+
+**2.3 后训练量化（PTQ）方法分类**
+本文将现有PTQ方法分为四类：
+*   **通道级变换（Channel-Wise Transformation）**：通过自适应调整激活和权重的数值范围来减少量化误差。代表算法包括SmoothQuant（通过每通道缩放将量化难度从激活迁移到权重）和AWQ（通过识别关键权重来高效量化LLMs）。
+*   **误差补偿（Error Compensation）**：显式建模和补偿量化引起的差异。代表算法包括GPTQ（逐层量化并利用逆Hessian信息更新权重）和MR-GPTQ（GPTQ的扩展，针对FP4特性融入块级Hadamard变换和格式特定优化）。
+*   **旋转变换（Rotational Transformation）**：利用预量化正交变换来重构数据分布，以减轻极端离群值的影响。代表算法包括QuaRot（随机正交旋转）和SpinQuant（校准过程中学习可训练的旋转）。
+*   **仿射变换（Affine Transformation）**：通过应用可学习的重缩放变换来改善低位模型压缩，从而重新分配跨维度数值大小。代表算法FlatQuant（通过轻量级、块级训练策略在校准阶段识别逐层最优仿射变换）。
+
+**3. 实验设置**
+*   **量化配置**：
+    *   **仅权重量化（Weight-Only Quantization）**：仅量化线性层权重，激活保持全精度。
+    *   **权重-激活量化（Weight-Activation Quantization）**：权重和输入激活均量化，实现全量化矩阵乘法。
+    *   **KV缓存量化（KV Cache Quantization）**：量化attention块中的Key和Value张量。
+    *   表示方式：W{bits}A{bits}[KV{bits}]，如W4A8表示权重4位，激活8位。
+*   **评估基准**：
+    *   语言模型质量：WikiText2上的困惑度（PPL）。
+    *   非推理任务（零样本）：PIQA、Winogrande、HellaSwag、ARC-Easy、ARC-Challenge。
+    *   推理基准：MATH-500、AIME24、AIME25。
+    *   多模态基准：OCRBench、MMBench、MMBenchCN、TextVQA、ChartQA、MME、MMMU。
+*   **模型**：Llama-3.1-8B-Instruct、openPangu-Embedded-7B-V1.1、Qwen2.5-VL-7B、openPangu-VL-7B。
+*   **工具**：所有实验均使用**microxcaling库模拟MXFP格式，评估后端使用vLLM**。
+
+**4. 核心发现与实验分析**
+**4.1 不同MXFP量化设置的性能（RQ1）**
+本文将后量化性能下降分为三个区域（相对于BF16恢复率）：无损（≤1%）、良好（1%-3%）和高风险（≥3%）。
+*   **W8A8**：**在所有任务和模态上基本实现无损性能**，表明8位权重和激活量化对于当前LLMs和MLLMs是安全的，可直接部署。
+*   **W4A8**：在RTN设置下出现显著精度下降，**但通过PTQ算法可有效缓解**。对于非推理任务，性能损失可控，**但推理任务仍处于高风险区域**。
+*   **W4A4**：是最具挑战性的设置，精度下降严重且普遍（恢复率降至86.37%–97.36%），几乎所有方法都进入高风险区域。量化噪声超过临界阈值时，不同方法处理离群值、动态范围对齐或激活敏感度的差异变得至关重要。
+**结论1**：W8A8在不同模型和基准上均能保持无损性能。但对于4位权重或激活量化（如W4A8和W4A4），仍是MXFP下的开放挑战。
+<img width="717" height="726" alt="image" src="https://github.com/user-attachments/assets/0a18e1e2-2f39-4a7c-a21f-ff335496659e" />
+
+**4.2 PTQ方法对比（RQ2）**
+*   **误差补偿方法**（如GPTQ和MR-GPTQ）在大多数情况下**优于通道级变换方法**（如SmoothQuant和AWQ）。通道级缩放的粒度较粗，难以完全捕获MXFP分组量化下的组内幅度变化。误差补偿方法则在校准过程中显式最小化量化误差，提供更强的性能保证。
+*   **旋转变换**（如QuaRot、SpinQuant）反而**损害MXFP4量化精度**，表现差于RTN基线。MXFP4依赖于局部统计特性（如各组内的分布形状）来保留信息。全局旋转会混合所有维度的信息，使离群值结构扁平化，减少峰度，从而使分布不适合有效的组级缩放。
+*   **仿射变换**（FlatQuant）**在4位量化下表现出最强的鲁棒性**。它通过可学习的仿射变换调制绝对数值大小，而非像正交旋转那样保留L2范数，因此更适合低位MXFP量化。
+*   **RTN**（Round-to-Nearest）在所有位宽下仍是强劲的基线。现有PTQ方法大多为INT格式设计，直接应用于MXFP时，往往只带来微弱增益甚至退化，这表明MXFP格式需要为其特定量化方案量身定制的量化方法。
+**结论2**：误差补偿和仿射变换方法与MXFP量化兼容性更强，尤其是在低位宽下。RTN作为强基线表明MXFP需要为其特定方案设计的量化方法。
+
+**4.3 模型家族和模态的影响（RQ3）**
+*   **PTQ在MXFP下的有效性在模型和模态间高度一致**。不同模型在MXFP量化设置下的性能恢复率曲线表现出高度一致性，平均皮尔逊相关系数为0.917。这表明**PTQ方法的有效性不强烈依赖于模型架构或模态**。
+*   在**多模态中，量化敏感性主要由LLM组件主导**，而非视觉Transformer（ViT）。将LLM从W8A8量化到W4A4会导致显著的精度下降（Qwen2.5-VL-7B下降3%），而对ViT进行相同的W4A4量化仅导致约1%的下降。这建议了一种实用有效的量化策略：**LLM保持较高精度（如W8A8），而ViT**可进行激进量化（如W4A4）。
+*   **视觉tokens在MXFP量化下比INT格式更鲁棒**。先前研究表明，量化MLLMs到INT格式面临挑战，因为视觉tokens通常具有更大的离群值和更宽的激活范围。然而，在**MXFP量化下，降低视觉tokens的位宽并未导致显著的精度损失**。这可能与MXFP的指数-尾数解耦特性有关，使其能够更灵活地处理宽激活范围，同时保持足够的精度。
+**结论3**：MXFP下的PTQ方法在不同模型和模态间表现出一致的有效性。在MLLMs中，量化敏感性由LLM而非ViT主导，这有利于采用LLM保持更高精度的混合精度设计。视觉tokens在MXFP下比INT更鲁棒，降低位宽未导致显著精度损失。
+
+**4.4 MXFP4量化组件分析（RQ4）**
+*   **缩放因子引入的量化误差不可忽略**。MXFP格式中**FP8块级缩放因子$s$必须满足E8M0**数据类型约束，这意味着**缩放因子必须是2的幂**。这种粗糙的量化常导致最优缩放与允许缩放之间存在较大不匹配，从而影响块内所有值。实验表明，**恢复高精度缩放因子可显著降低困惑度**。
+*   **预缩放（Pre-Scale）优化策略**被推荐。本文采用了**无偏MXFP4量化策略，通过在量化前将输入按3/4缩放**，有效**防止了截断，同时保留了相对幅度**。实验结果显示，启用预缩放操作显著提升了性能并降低了PPL。
+**结论4**：缩放因子导致的量化误差不可忽略。推荐使用预缩放优化策略。
+
+   
 ## NVFP4 Four Over Six
 https://arxiv.org/pdf/2512.02010 MIT 韩松团队 2025.12.22
 
