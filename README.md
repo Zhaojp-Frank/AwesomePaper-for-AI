@@ -1,6 +1,15 @@
 # AwesomePaper-for-AI
 Awesome or inspiring paper for AI
 
+## Nightjar动态投机
+Nightjar: Dynamic Adaptive Speculative Decoding for Large Language Models Serving
+
+https://arxiv.org/pdf/2512.22420 国防科大 2025.12.27
+
+1. 推测解码在动态请求负载下因**固定推测长度而导致的性能瓶颈**，本文提出了Nightjar，一种基于学习的自适应推测解码算法。
+2. Nightjar利用上下文多臂老虎机（contextual bandit）方法，能够根据实时批次大小**动态选择最优的推测长度**，并首次纳入了从禁用状态重新启用推测解码时的KV缓存重建成本。
+3. 最大7b/4090/vLLM0.8.2，Nightjar相比传统推测解码，吞吐量最高提升14.8%，延迟降低20.2%，并在不同模型和数据集上均持续优于现有SOTA方法，显著提升了LLM服务的效率和鲁棒性。
+   
 ## entquant ANS
 Float8@2bits: Entropy Coding Enables Data-Free Model Compression
 
