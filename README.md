@@ -1,6 +1,17 @@
 # AwesomePaper-for-AI
 Awesome or inspiring paper for AI
 
+## TPLA
+https://arxiv.org/pdf/2508.15881 北大 腾讯
+https://github.com/fxmeng/TransMLA
+
+1.  为解决 MLA 在 TP 下 KV 缓存全量复制导致的内存效率低下问题，提出了 TPLA (Tensor-Parallel Latent Attention)，一种结合 MLA (Multi-Head Latent Attention) 高效 KV 缓存压缩与 Tensor Parallelism (TP) 的方法，
+2.  TPLA核心方法是在多个设备之间对latent representation和每个attention head的输入维度进行分区，每个分片独立执行attention计算，然后**通过一个AllReduce操作合并结果**；应用基于 Hadamard 或** PCA 的重参数化技术来减轻跨分片干扰**，使其能直接加载 MLA 预训练模型，并通过PD感知策略（主要是decode）。
+3.  TPLA比MLA精度有2-5点**下降**！在DeepSeek-V3 和 Kimi-K2（1T）模型上 故意转换成BF16凸显显存压力，故意去掉MoE部分凸显速度，最终说实现了一个纯attn的decode吞吐加速（1.79x 和 1.93x）。
+
+<img width="690" height="306" alt="image" src="https://github.com/user-attachments/assets/3140206d-c7f6-4810-b017-10fe2728b37a" />
+
+
 ## M2XFP 软硬协同设计
 M2XFP: A Metadata-Augmented Microscaling Data Format for Efficient Low-bit Quantization
 
