@@ -1,6 +1,24 @@
 # AwesomePaper-for-AI
 Awesome or inspiring paper for AI
 
+## entquant ANS
+Float8@2bits: Entropy Coding Enables Data-Free Model Compression
+
+https://arxiv.org/pdf/2601.22787 德国 2026.2.2
+
+https://github.com/merantix-momentum/entquant
+
+1. EntQuant 提出了一种创新的后训练**量化+压缩**，通过ANS熵编码将数值**精度维持Float8 或 Int8，但存储为2～4bit**，首次实现了data-free、模型无关的极端模型压缩。
+2. 70B参数压缩时间不到30分钟; 使用nvComp.ANS即时解压缩(**计算密集**)，在标准基准测试和指令微调模型上均展现出领先的性能。
+3. HF,H100. llama2/3/Qwen3, Oloma等模型，比 BFloat16 慢1.5-2倍, 显著降低了内存占用。
+精度总体和GPTQ,QuIP差不多，不需要校准，速度上欠缺优化。～=NVFP4 （推广到A/H？）
+
+<img width="500" height="269" alt="image" src="https://github.com/user-attachments/assets/f1a8cb51-20a2-4084-8d4c-87a3b329dbe8" />
+<img width="497" height="381" alt="image" src="https://github.com/user-attachments/assets/af208325-7467-4f5e-8ca9-f347434601b5" />
+<img width="876" height="493" alt="image" src="https://github.com/user-attachments/assets/d49ed9ad-99cc-4e3b-9de7-3ac8d0b628ad" />
+<img width="1015" height="568" alt="image" src="https://github.com/user-attachments/assets/2c20aaa8-8bec-4687-9d4d-dbc2d820f120" />
+
+
 ## ZipMoE
 https://arxiv.org/pdf/2601.21198 南京大学 周志华团队 2026.1.30
 
