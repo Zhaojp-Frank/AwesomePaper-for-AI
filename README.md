@@ -1,6 +1,17 @@
 # AwesomePaper-for-AI
 Awesome or inspiring paper for AI
 
+## MatGPTQ
+MatGPTQ: Accurate and Efficient Post-Training Matryoshka Quantization
+
+https://arxiv.org/pdf/2602.03537 2026.2.3 Dan Alistarh
+
+https://github.com/IST-DASLab/MatGPTQ
+1. 后训练Matryoshka量化（PTQ INT）方法，可生成一个**多精度 最高有效位 推理时动态切换**”模型，旨在解决先前Matryoshka量化（MatQuant）方法在效率和开源支持方面的局限性。
+2. ⚙️ 该方法通过适应GPTQ算法并引入多精度优化目标和跨比特错误补偿，同时结合进化搜索（EvoPress）实现异构层级量化，从而有效提升了量化精度。
+3. llama3.1-8b，Qwen3-8b/14b等模型，A6000 GPU等评测：**高比特精度上与基线相当**，在3比特设置下平均提升1.34%；单卡vLLM 小batch下相比BF16加速1.5x～3x。
+
+<img width="820" height="286" alt="image" src="https://github.com/user-attachments/assets/d19f69fc-0a8d-4f09-9cbd-3dad87c32c4a" />
 
 ## NVFP4预训练
 Dissecting Outlier Dynamics in LLM NVFP4 Pretraining
