@@ -1,6 +1,17 @@
 # AwesomePaper-for-AI
 Awesome or inspiring paper for AI
 
+## NVFP4 Four Over Six
+https://arxiv.org/pdf/2512.02010 MIT 韩松团队 2025.12.22
+
+https://github.com/mit-han-lab/fouroversix
+
+1. 提出了Four Over Six (4/6)，一种改进NVFP4 QAT量化算法的方法，通过自适应地将数据块缩放到4或6，显著减少了浮点格式中对接近最大值的量化误差。
+2. 方法解决了NVFP4非均匀步长在接近最大值（尤其约5附近）处引入的性能下降问题，使得模型在预训练时能将训练损失带到更接近BF16的水平，并提升了后训练量化（PTQ）的准确性。
+3. 在NVIDIA Blackwell GPU实现，具有~15%的计算开销，并能与现有的PTQ方法（如GPTQ、AWQ和SmoothQuant）结合，在多种LLM模型和下游任务上展示出广泛的性能提升。
+<img width="756" height="438" alt="image" src="https://github.com/user-attachments/assets/aedd46f0-d4ac-4589-a8e3-e572dfe7623d" />
+
+
 ## Nightjar动态投机
 Nightjar: Dynamic Adaptive Speculative Decoding for Large Language Models Serving
 
