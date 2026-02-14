@@ -1,6 +1,15 @@
 # AwesomePaper-for-AI
 Awesome or inspiring paper for AI
 
+## ZipMoE
+https://arxiv.org/pdf/2601.21198 南京大学 周志华团队 2026.1.30
+
+1. 💡 ZipMoE 提出了一种高效且语义**无损的**片上 MoE 服务系统，旨在解决大型 MoE 模型在资源受限边缘设备上部署时面临的内存和 I/O 瓶颈。
+2. 对BF16参数中指数位的统计冗余进行无损压缩(lz4HC, zstd, -30%)，并结合 CPU 并行解压与 GPU 内存合并的张量恢复，将推理重心从 I/O 转移至计算。
+3. 基于HF，Orin（64GB），DeepSeek-Lite, Qwen-1.5b引入了针对共享内存 SoC 架构优化的缓存亲和调度与分层缓存管理机制， 72.77% 的推理延迟降低和6x吞吐。
+   
+<img width="543" height="499" alt="image" src="https://github.com/user-attachments/assets/bcd2a435-ec76-4d1d-9717-1760919d79ce" />
+
 ## ODC
 https://arxiv.org/pdf/2601.19362 SeaAI，2026.1.27
 
