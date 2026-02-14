@@ -1,6 +1,48 @@
 # AwesomePaper-for-AI
 Awesome or inspiring paper for AI
 
+## NVFP4 QAD 量化感知蒸馏
+Quantization-Aware Distillation for NVFP4 Inference Accuracy Recovery
+
+https://arxiv.org/pdf/2601.20088 2026.1.27 NVIDIA
+
+https://github.com/NVIDIA/Model-Optimizer/tree/main/examples/llm_qad
+
+<img width="749" height="343" alt="image" src="https://github.com/user-attachments/assets/58040798-2b3b-4ae3-8e63-9b93f6526145" />
+
+1.  提出了量化感知蒸馏（QAD），这是一种有效恢复NVFP4量化大型语言模型（LLMs）和视觉语言模型（VLMs）推理准确性的方法。
+2.  QAD通过使用**KL divergence损失**将全精度教师模型蒸馏到量化学生模型中，解决了传统量化感知训练（QAT）在复杂多阶段后训练（如SFT和RL）管线中遇到的挑战。
+3.  QAD**对数据质量和覆盖范围**具有鲁棒性，能够使用部分或合成数据将模型精度恢复到接近BF16水平，特别适用于RL-heavy模型。
+本技术报告详细阐述了量化感知蒸馏 (Quantization-Aware Distillation, QAD) 及其在恢复NVFP4量化大语言模型 (LLM) 和视觉-语言模型 (VLM) 推理精度方面的最佳实践。
+
+**1. 引言与背景**
+传统的量化感知训练 (Quantization-Aware Training, QAT) 虽然有效，但对现代LLM面临挑战：一是LLM训练流程复杂，通常包含多阶段后训练（如监督微调 SFT、强化学习 RL、模型合并），难以复制原始训练过程；二是数据可用性和质量问题。
+为此，本报告提出QAD方法。QAD通过知识蒸馏将全精度教师模型的能力转移到量化学生模型。与QAT不同，QAD利用KL散度作为损失函数，而非任务特定的目标。其核心优势在于：1) 对通过SFT、RL和模型合并等多阶段后训练的模型展现出卓越的有效性和稳定性，而QAT在此类场景下常遇到工程复杂性和训练不稳定性；2) 对数据质量和覆盖范围具有鲁棒性，无需完整的训练数据即可实现精度恢复。
+
+**2. NVFP4格式与量化方法**
+QAT通过微调量化模型来恢复推理精度，量化权重和激活但保留高精度梯度以确保收敛稳定性。知识蒸馏 (Knowledge Distillation, KD) 从教师模型向学生模型传递知识，通常使用KL散度衡量软标签（概率分布）之间的差异。KD能够提供隐式正则化并加速收敛。
+
+**3. 量化感知蒸馏 (QAD) 核心方法论**
+QAD的核心在于其损失函数与QAT的根本区别。对于给定输入 $x$ 和词汇表 $V$，设 $p_{\text{teacher}}(y|x)$ 为全精度教师模型的输出概率分布， $p_{\text{student}}(y|x)$ 为量化学生模型的输出概率分布。QAD的损失函数定义为教师和学生分布之间的KL散度：
+$$ \mathcal{L}_{\text{QAD}} = D_{\text{KL}}(p_{\text{teacher}} \| p_{\text{student}}) = \sum_{y \in V} p_{\text{teacher}}(y|x) \log \frac{p_{\text{teacher}}(y|x)}{p_{\text{student}}(y|x)} $$
+而QAT则使用与原始模型训练相同的任务特定损失，例如语言建模的下一词交叉熵损失。实验表明，QAD能够实现与BF16教师模型近乎零的KL散度，忠实地保留了原始模型的输出分布。相比之下，QAT虽然能匹配验证损失，但会显著改变模型的输出分布，这表明QAT实际上充当了一个额外的后训练阶段。
+
+**4. QAD在后训练模型上的有效性**
+*   **SFT-Heavy模型：** 在Llama Nemotron Super V1和Nemotron Nano V2等SFT-Heavy模型上，QAD在挑战性推理基准测试（如AIME25和GPQA-D）上始终优于QAT，恢复至接近BF16的精度。
+*   **RL-Heavy模型：** 在Nemotron 3 Nano和AceReason Nemotron等RL-Heavy模型上，QAT显著降低了性能，因为它可能破坏RL训练阶段学习到的能力。而QAD通过匹配教师的输出分布，成功恢复了接近BF16的性能，避免了从头重新学习数据分布的风险，证明了蒸馏对于RL训练模型的关键作用。
+*   **对不完整领域数据的鲁棒性：** AceReason Nemotron的实验表明，即使只使用部分领域数据（如仅数学或仅代码数据）进行训练，QAD也能达到接近使用完整数据时的性能。通过蒸馏，教师模型的输出分布编码了所有领域的隐式知识，使得学生模型能实现跨领域知识迁移。
+<img width="755" height="703" alt="image" src="https://github.com/user-attachments/assets/3483b51b-13bc-440d-9715-705a2d7aa15c" />
+
+<img width="755" height="219" alt="image" src="https://github.com/user-attachments/assets/26e95b5b-25e1-455d-9d7a-daf496e59406" />
+
+**5. 消融研究**
+*   **训练数据质量：** QAD对训练数据的来源和质量表现出显著的鲁棒性。在AceReason Nemotron上的实验显示，无论是原始SFT数据、由RL提示生成的BF16数据、甚至完全随机的token序列，QAD都能保持可比的性能，且不会破坏模型，这表明合成数据对于QAD非常有效。
+*   **学习率敏感性：** QAD的学习率选择因原始训练类型而异。对于SFT-trained模型，最佳学习率通常低于或等于原始后训练学习率（如1e-6或2e-6）。对于RL-trained模型，由于RL阶段将模型从初始SFT数据分布转移，QAD可能受益于更高的学习率（如1e-5）。
+*   **其他选择：** KL散度作为蒸馏损失函数优于MSE，因为它更适合衡量概率分布差异并提供更好的概率匹配梯度。使用原始BF16模型作为教师模型的效果优于使用更大的同系列教师模型，这可能因为适应不同的分布需要更多的训练数据。
+
+**6. 结论**
+本报告提出QAD作为NVFP4量化LLM和VLM推理精度恢复的实用且高效的方法。实验证明，QAD能够可靠地将NVFP4模型的精度恢复到接近BF16水平，即使对于包含SFT、RL和模型合并等复杂多阶段训练流程的模型，其表现也优于QAT。QAD对数据覆盖和质量的鲁棒性，以及相对较低的数据和计算需求，使其成为当PTQ不足时NVFP4精度恢复的默认推荐方案。相关QAD检查点和代码已提供，便于实际部署。
+
 ## MatGPTQ
 MatGPTQ: Accurate and Efficient Post-Training Matryoshka Quantization
 
