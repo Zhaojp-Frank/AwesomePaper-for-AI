@@ -1,6 +1,34 @@
 # AwesomePaper-for-AI
 Awesome or inspiring paper for AI
 
+## DeepContext
+DeepContext: A Context-aware, Cross-platform, Cross-framework Tool for Performance Profiling and Analysis of Deep Learning Workloads
+
+https://dl.acm.org/doi/pdf/10.1145/3676642.3736127 北卡 AWS等 ASPLOS26
+
+https://zenodo.org/doi/10.5281/zenodo.15589616
+
+1. DeepContext 是一款新型的性能分析工具，旨在解决现有深度学习剖析工具在异构计算环境中缺乏跨栈和跨框架上下文的痛点。
+2. 该工具通过其独特的 DLMonitor “shim” 层统一了 Python、深度学习框架、C/C++ 库和 GPU 执行的调用路径，并提供了一个自动性能分析器来给出可操作的优化建议。
+3. A100 PyTorch, DeepContext 能有效识别真实世界应用中的性能瓶颈，指导优化实现了 1.06 倍至 1.66 倍的加速，且具有较低的内存开销，展现了其在复杂深度学习工作负载分析中的实用性。
+
+<img width="780" height="274" alt="image" src="https://github.com/user-attachments/assets/01767c94-0847-492b-80de-c827d7ebb769" />
+<img width="345" height="328" alt="image" src="https://github.com/user-attachments/assets/03687b85-7dba-43dd-8e50-27a094730390" />
+
+**时间开销**：
+
+- 轻量级模式下（仅 Python 和框架调用路径），DeepContext 在 Nvidia 和 AMD GPU 上的 PyTorch 工作负载中位数开销分别为 1.12\times1.12×1.12\times1.12× 和 1.50\times1.50×1.50\times1.50×；在 JAX 工作负载中位数开销分别为 1.33\times1.33×1.33\times1.33× 和 1.28\times1.28×1.28\times1.28×。
+
+- 综合模式下（包含原生 C/C++ 调用路径），PyTorch 中位数开销分别为 1.50\times1.50×1.50\times1.50× 和 1.90\times1.90×1.90\times1.90×；JAX 中位数开销分别为 1.60\times1.60×1.60\times1.60× 和 1.46\times1.46×1.46\times1.46×。
+
+- 相比之下，PyTorch Profiler 在 Nvidia 和 AMD GPU 上的中位数开销分别为 1.06\times1.06×1.06\times1.06× 和 1.01\times1.01×1.01\times1.01×；JAX Profiler 分别为 1.17\times1.17×1.17\times1.17× 和 1.10\times1.10×1.10\times1.10×。DeepContext 在轻量级模式下的开销与框架原生剖析器相当。对 Llama3 和 Gemma-7B 等工作负载，由于帧统一系统和指标聚合传播机制，DeepContext 的时间开销较高，尤其是在启动大量小内核时。
+
+
+**内存开销**：DeepContext 的中位数内存开销为 1.00\times \text{-} 2.44\times1.00×-2.44×1.00\times \text{-} 2.44\times1.00×-2.44×，远低于 PyTorch Profiler (1.29\times \text{-} 27.28\times1.29×-27.28×1.29\times \text{-} 27.28\times1.29×-27.28×) 和 JAX Profiler (1.27\times \text{-} 6.98\times1.27×-6.98×1.27\times \text{-} 6.98\times1.27×-6.98×)。DeepContext 通过运行时聚合指标，显著降低了内存开销，使其更适用于长时间运行的工作负载。
+
+
+
+
 ## PAT
 PAT: Accelerating LLM Decoding via Prefix-Aware Attention with Resource Efficient Multi-Tile Kernel
 
