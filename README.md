@@ -1,12 +1,82 @@
 # AwesomePaper-for-AI
 Awesome or inspiring paper for AI
 
+## SpeContext retrieval稀疏加速decode
+SpeContext: Enabling Efficient Long-context Reasoning with Speculative Context Sparsity in LLMs
+
+https://arxiv.org/pdf/2512.00722 清华大学 王钰；上海交大 戴国浩等 ASPLOS26
+
+1. 目标：长序列推理decode阶段的KV cache问题，如耗时layer-wise retrieval、新生成KV的完全保留以及序列长度增加导致的性能下降。
+2. SpeContext提出了一种算法与系统协同设计，利用Distilled Language Model (DLM，基于EAGLE-3)的轻量级retieval head信息筛选Q，并通过async prefetch的弹性加载和adaptive memory magt优化效率。
+3. 最大8b dense模型，A100上比FlashInfer加速1.3x~1.6x (32K->2K) 或 1.6x～2.2x（2K->32K）。没有测试CoT 例如AIME25（完全忽视背景里强调的TTS）；没有测MoE模型。
+
+<img width="948" height="475" alt="image" src="https://github.com/user-attachments/assets/0f612763-76f9-4a06-9feb-99067b0441ee" />
+
+1. **引言与背景问题**
+LLM的测试时缩放（test-time scaling）在通过逐步生成（step-by-step generation）增强模型性能方面被证明是有效的。尽管现有的KV缓存优化在长上下文输入场景中表现良好，但在长上下文decode场景中仍面临以下挑战：
+1. 耗时的layer-wise retrieval: 现有方法在推理阶段的每一层都需要进行KV对的检索和加载，由于数据依赖性，这引入了显著的同步开销，且其开销随模型深度线性增长，导致高达60%的延迟开销。
+2. 新生成KV缓存的完整保留: 现有为长上下文输入设计的工作通常在Prefill阶段对KV缓存进行预处理，但在解码阶段完全保留新生成的KV对以避免重复昂贵的处理，这在KV缓存持续增长的长上下文推理场景中效率低下。
+3. 序列长度微小增加导致的性能显著下降: 现有的卸载策略在推理前确定，无法适应自回归解码过程中序列长度的动态增长，导致性能在序列长度轻微增加时下降超过80%。
+  
+2. **核心方法**
+本研究的核心洞察是：检索算法的目标在于高效地与LLM在信息焦点（information focus）上对齐。受LLM知识蒸馏中输出分布对齐目标的启发，作者提出了一种新颖的范式，即利用蒸馏语言模型（Distilled Language Model, DLM）作为检索算法。
+
+从信息论的角度来看，通过互信息（Mutual Information, $$I(X;Y)$$）和数据处理不等式（Data Processing Inequality, DPI）进行分析，可以证明：如果DLM（学生模型）的输出概率分布$$P_S$$能够很好地近似原始LLM（教师模型）的输出概率分布$$P_T$$，即最小化KL散度$$D_{KL}(P_T||P_S)$$，那么DLM的内部表示$$R_S$$也必须捕获与教师模型相似的、对上下文$$C$$重要的信息。这意味着DLM在给定相同输入时，其信息焦点（即对结果贡献最大的Token）与原始LLM高度相似。因此，DLM可以有效识别重要的上下文信息。
+
+3. **SpeContext 的算法与系统协同设计**
+基于上述洞察，SpeContext 在算法、系统和编译三个层面进行了设计：
+
+3.1. 算法层面：**轻量级检索头** (Lightweight Retrieval Head)
+- 挑战: 直接使用完整的DLM进行检索会引入约20%的额外开销。
+- 洞察: DLM的主要作用是识别重要Token，这主要由注意力权重决定。实验发现，DLM与原始LLM在head-level注意力权重上的相似度更高，且存在大量冗余操作。
+- 方法: 设计轻量级retrieval head，通过修剪DLM中的冗余部分（如FFN和LM_Head），仅保留Embedding模块和QK投影权重。该检索头在LLM推理前处理相同的输入，并利用其attn weight的计算结果进行head-level的稀疏Token选择。
+- 实现细节:
+  - 该检索头支持MHA、GQA， MQA和MLA（Multi-Head Latent Attention）等主流注意力机制。
+  - MHA: 直接根据每个注意力头的权重进行选择，并通过torch.gather加载对应KV缓存。
+  - GQA/MQA: 由于KV头数量< Query头，且组内共享KV，因此在组内进行element-wise最大值操作，生成group-level的注意力权重，然后基于此进行选择，从而适配物理KV缓存的结构。
+  - MLA: 与MHA类似，但选择的是低维的潜在表示$$c$$缓存，并在计算时将其映射到高维空间。
+- 优势: 实现超过90%的参数量削减，同时准确捕捉重要信息。
+  
+3.2. **系统层面：**异步预取数据流与弹性加载 (Asynchronous Prefetch Dataflow via Elastic Loading)
+- 挑战: 现有KV检索方法因数据依赖性导致同步开销，且GPU内存带宽有限，KV传输延迟远超LLM推理延迟。
+- 洞察: 检索头在LLM推理前就已识别重要KV对，消除了推理过程中的数据依赖性。同时，研究发现相邻Token生成所选的重要Token存在高度重叠（>80%）。
+- 方法:
+  - 异步预取: 利用多个CUDA Stream，将KV缓存的预取与LLM的计算并行化，消除数据依赖性导致的同步瓶颈。
+  - 弹性加载策略（Elastic Loading）: 利用相邻生成中KV选择的上下文相似性。只加载与上一次生成相比发生变化的KV对（即$$ S_{now} - S_{last}$$），从而大幅减少数据传输量（90%），最大限度地重用已在GPU上的KV缓存。
+    
+3.3. **编译层面**：自适应内存管理 (Adaptive Memory Management)
+- 挑战: 长上下文推理中序列长度动态增长，固定（全上GPU或全下CPU）的KV缓存卸载策略效率低下。
+- 方法:
+  - 理论内存模型: 构建一个综合考虑LLM模型大小、硬件规格和推理工作负载的理论内存开销模型。
+    - 总内存需求公式（当所有KV缓存都在GPU上时）：
+    $$M_{all} = M_{Model} + M_{KV} = 1.3(M_O + M_D) + 4R(L + 1 + \alpha)SHD$$
+    其中，$$M_O$$是原始LLM模型大小，$$M_D$$是DLM模型大小，$$R$$是请求数量，$$L$$是LLM层数，$$\alpha$$是与GQA/MQA相关的额外内存因子（这里代表了Repeat KV操作导致的额外层级内存需求），$$S$$是当前序列长度，$$H$$是KV头维度，$$D$$是每个头的维度。系数1.3代表模型大小的130%用于考虑运行时内存。
+    - 部分KV缓存卸载到CPU时的内存需求公式：
+    $$M_{part} = 1.3(M_O + M_D) + 4R [(L_{GPU} + 1 + \alpha)S + L_{CPU}B]HD$$
+    其中，$$L_{GPU}$$和$$L_{CPU}$$分别是保留在GPU和卸载到CPU的层数，$$B$$是加载到GPU进行计算的KV缓存预算。
+  - 自适应内存管理系统: 在编译阶段预先计算一系列序列长度阈值（Algorithm 1）。在推理阶段，系统根据当前序列长度动态调整KV缓存的存储位置（Algorithm 2）。当序列长度增加并超过预设阈值时，系统会逐步将LLM层中的KV缓存卸载到CPU，从而释放GPU内存，以确保GPU HBM的最大化利用，实现最佳性能。
+    
+4. **系统架构 (Architecture)**
+SpeContext的架构设计如下：接收推理请求后，在编译阶段，自适应内存管理系统依据理论模型计算序列长度阈值并初始化KV缓存内存。在自回归推理过程中，retrieval head识别关键KV对并获取其index。这些索引立即传递给异步prefetch，进行差异计算和KV预取，并通过弹性加载机制与LLM的原始推理并行执行，从而实现GPU计算和CPU-GPU数据传输的重叠。
+
+6. 实验评估
+- 硬件平台: 云端NVIDIA A100-80GB，边缘RTX 4060 Laptop (8GB)。
+- 模型: Llama3.1-8B, DeepSeek-R1-Distill-Llama-8B, Qwen3-8B (云端)，Reasoning-Llama-3.2-1B (边缘)。
+- 基准: LongBench（长上下文输入场景），LongWriter（长上下文推理场景）。
+- 基线: Huggingface (Eager), FlashInfer (Full Attention), Quest, ClusterKV, ShadowKV (Sparse Attention)。
+- 准确性: 在KV预算达到1K时，SpeContext在LongBench上的准确性与Full Attention相当，甚至超越部分基线。在LongWriter基准测试中，SpeContext在多个维度上的平均得分与Full Attention接近，而其他稀疏KV方法由于其预处理机制的限制，在长上下文推理中表现不佳。
+- 性能:
+  - 云端环境（多请求）: 相比HF (Eager)，吞吐量提升24x；相比FlashInfer，吞吐量提升2.2x。
+  - 边缘环境（单请求）: 相比Huggingface (Eager)，速度提升10x；相比ShadowKV，速度提升1.17倍。
+- 开销: 检索头的内存占用极小（Llama3-8B或Qwen3-8B仅约60MB），DLM的训练时间可控（EAGLE-3提供的DLM仅需RTX 3090 GPU训练24小时）。
+- 消融研究: 证实了轻量级检索头、异步预取数据流和自适应内存管理三大贡献的独立加速效果。
+   
 ## QuoKA
 QUOKA: Query-Oriented KV Selection For Efficient LLM Prefill
 
 https://arxiv.org/pdf/2602.08722 2026.2.9 高通 
 
-1. 无需训练且与硬件无关的稀疏注意力算法，旨在加速chunked prefill（附带加速decode）。
+1. 无需训练且与硬件无关的稀疏注意力算法，特别是**结合chunked prefill**（同时附带加速decode）。
 2. 通过优先选择与平均查询（mean query）余弦相似度较低的查询来近似全注意力行为，并通过查询子选择（Query Subselection）、余弦相似度评分（Cosine-Similarity Scoring）和组感知聚合（Group-Aware Aggregation）来高效地子选择键值对（KV pairs）。兼容GQA attn kernel。
 3. 在Needle-In-A-Haystack、LongBench等多个基准测试中实现了接近基线的准确性，A100上60k长度attn kernel加速最高5x、TTFT减少3x（decode加速2.2x：缩小了Q/Key），实际参与attn的KV cache减少88%。
   1. 但KV cache物理所需显存容量没有减少，仍保留全量
