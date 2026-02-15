@@ -3,10 +3,12 @@ Awesome or inspiring paper for AI
 
 ## CoMeT
 CoMeT: Collaborative Memory Transformer for Efficient Long Context Modeling
+
 https://arxiv.org/pdf/2602.01766 2026.2.3 阿里未来生活
+
 https://anonymous.4open.science/r/comet-B00B/
 
-1. CoMeT (Collaborative Memory Transformer) 提出了一种创新的**即插即用架构**，旨在克服标准Transformer的**二次复杂性和不断增长的KV cache问题**，使LLMs能够处理任意长上下文。
+1. CoMeT (Collaborative Memory Transformer) 提出了一种创新的**即插即用架构和微调方法**，旨在克服标准Transformer的**二次复杂性和不断增长的KV cache问题**，使LLMs能够处理任意长上下文。
 2. 采用双内存系统：基于**FIFO队列的temporary memory用于近期事件**，以及带有**门控更新规则的global memory用于长期依赖**，并通过layer-level pipeline parallelism实现高效**长上下文训练**。
 3. Qwen4b/8b模型微调？32k上下文**训练后**，能从1M token序列中准确检索passkey，相比full-attention基线实现**21倍推理加速和10倍内存优化**，并在SCROLLS基准测试及真实世界任务中表现出色。
 <img width="759" height="291" alt="image" src="https://github.com/user-attachments/assets/acd7bf3d-b985-41e2-83df-7e2a6ff19f49" />
