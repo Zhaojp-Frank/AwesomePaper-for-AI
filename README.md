@@ -1,6 +1,73 @@
 # AwesomePaper-for-AI
 Awesome or inspiring paper for AI
 
+
+## TSA
+Token Sparse Attention: Efficient Long-Context Inference with Interleaved Token Selection
+
+https://arxiv.org/pdf/2602.03216 2026.2.3 韩国
+
+https://github.com/dongwonjo/Token-Sparse-Attention
+
+1. 针对**prefill 动态、可逆的token级别稀疏化**机制，通过在压缩空间内执行注意力操作并在之后恢复原始序列维度，有效解决了长上下文LLM中attention的二次复杂性问题。
+2. prefill阶段 每层：先选少量token（例如最后5%）作快速attn计算和打分，从而压缩token + 原始残差输入合并。实现每head独立和层级的token选择，并基于Inter-Layer Representation Drift智能地选择进行稀疏化的层，从而适应token重要性的动态变化：。
+3. TSA与FlashAttention、FlexPrefill兼容（叠加使用），llama3-8b/mixtral-12b，A100, 128K下最多3.23x提升（在FlexAttn）, 精度通常<1个点，显著改善了精度-延迟权衡。
+
+![Uploading image.png…]()
+
+现有加速方法通常采用结构化注意力图稀疏化或在特定层永久驱逐token，但这些方法可能保留不相关的token，或因未能考虑token重要性在层间/头间的动态变化而做出不可逆的早期决策。
+
+该论文提出的Token Sparse Attention通过在注意力计算期间将每个头的查询、键和值 (Q, K, V) 压缩到一组减少的token集合 ($L' \ll L$)，然后将输出解压回原始序列维度 ($L$)，从而实现高效的长上下文推理。这种“压缩再解压” (Compress and then Decompress) 的设计允许token信息在后续层中被重新考虑，弥补了永久性token驱逐方法的不足。TSA还在token选择和稀疏注意力之间引入了一个新的设计点。
+
+Token Sparse Attention主要包含两个阶段：压缩QKV和解压注意力输出，并辅以动态token覆盖和稀疏层选择策略。
+
+1.  **动机 (Motivation)**
+    *   **层间Token重要性动态变化：** 研究发现，token的重要性在不同层之间显著漂移。图2(a)显示，即使相邻层共享一定比例的重要token，但随着层距离的增加，重叠部分迅速减少。这表明，基于早期层token重要性进行永久性移除，可能会过早地排除在后续层中变得相关的token。
+    *   **头内Token重要性异质性：** 图2(b)展示了在同一层内，不同注意力头对token重要性的排名存在差异。多头注意力固有的特性是每个头专注于捕捉不同的上下文关系。因此，统一的、层级的驱逐策略会强制所有头共享相同的token集合，可能丢弃对某些头至关重要的token。
+    受这些观察启发，TSA旨在实现跨层和跨头的灵活性，而不是永久性地依赖早期层的决策。
+
+2.  **Token Sparse Attention机制 (Token Sparse Attention Mechanism)**
+    TSA旨在选择性地跳过不相关的token计算，同时不永久地将其从序列中移除。
+    *   **阶段1：QKV压缩 (Compression for QKV)**
+        每个注意力头 $h$ 独立地选择一个token索引子集 $S_H=h$，从而得到一个缩减的序列长度 $L' \ll L$。利用这些索引，从原始的 Q、K 和 V 张量中收集相应的行，以构建压缩后的张量 $\hat{Q}$、$\hat{K}$ 和 $\hat{V}$。这种每个头独立选择的设计直接解决了头间的异质性问题。$\hat{Q}$、$\hat{K}$、$\hat{V}$ 在内存中保持密集和连续，这使得它们能兼容 FlashAttention 等高度优化的硬件感知核或其它专用稀疏注意力实现而无需修改。注意力操作在这些压缩张量上执行，产生一个缩减的输出张量 $\hat{O}$，其中包含所选token的上下文感知表示。这一步将二次注意力成本从 $O(L^2d)$ 降低到 $O(L'^2d)$。
+    *   **阶段2：注意力输出解压 (Decompression for Attention Output)**
+        在注意力计算之后，压缩后的输出 $\hat{O}$ 使用特定于头的索引集 $S_H=h$ 被散射回一个形状为 $R^{L \times d}$ 的零初始化张量中。这确保了输出维度与原始输入匹配，避免了后续层中的维度不匹配问题。输出张量中未选择的位置保持为零，这在功能上等同于对这些token在注意力图上应用了一个硬掩码 (hard mask)。最后，恢复的注意力输出被添加到残差连接中。**这一步至关重要，因为残差连接保留了来自前一层未选择token的信息**。
+    这种可逆设计（“压缩再解压”）在实现计算稀疏化益处的同时，保持了原始序列的结构完整性，允许模型选择性地忽略不相关的上下文以减少计算，同时不断重新评估跨层和跨头的token重要性。
+
+3.  **动态Token覆盖 (Dynamic Token Coverage)**
+    TSA自适应地选择推理时的稀疏预算，涉及两个关键决策：(1) 保留多少token；(2) 为每个注意力头保留哪些token。
+    *   **计算Token重要性分数：** 首先，为每个注意力头独立估计token重要性。对于给定头 $h$，通过将少量最新查询 (recent queries) 与所有键 (all keys) 进行注意力计算，得到注意力图 $\hat{A}$ 的轻量级代理：
+        $$ \hat{A} \leftarrow \text{softmax}(Q[-\text{last q}:]K^T/\sqrt{d}) $$
+        token $t$ 的重要性分数 $s_h[t]$ 通过沿垂直轴（即查询的序列长度维度）对注意力权重求和得到，这一步使用 Triton 定制核实现。
+    *   **确定保留token数量：** 将头级token分数聚合为层级重要性分布，通过跨头求和并在序列维度上归一化得到。这捕捉了当前层每个token的整体贡献，作为确定稀疏预算的基础。
+        我们不是按重要性降序选择token，而是按估计重要性升序对token进行排序，并识别最不重要token的最小集合 $k_{sparse}$，其累积质量超过预定义的覆盖阈值 $\tau$。
+        $$ k_{sparse} \leftarrow \text{arg min}_{k \in \{0,...,L\}} \left\{ \sum_{j=1}^k s_l[I[j]] \ge \tau \right\} $$
+        其中 $s_l = (\sum_H s_h) / (\sum_L \sum_H s_h[t])$，I是按 $s_l$ 升序排序后的索引。然后计算要保留的token数量 $k_{keep} = L - k_{sparse}$。
+    *   **选择保留哪些token：** 一旦确定了层级预算，再根据 $s_h$ 为每个注意力头独立地执行最终的token选择，即选择Top-$k_{keep}$ 的token作为 $S_h$。
+
+4.  **稀疏层选择 (Sparse Layer Selection)**
+    并非所有层都适合稀疏化。为了识别那些token表示足够稳定以进行稀疏化的层，引入了一个名为“层间表示漂移” (Inter-Layer Representation Drift) 的指标 $R_\ell$，它通过比较token输入和输出隐藏状态的 $L_2$ 范数来衡量其表示的相对变化：
+    $$ R_\ell = E_t \left[ \frac{\lVert h_{\ell+1,t} - h_{\ell,t} \rVert_2}{\lVert h_{\ell,t} \rVert_2 + \epsilon} \right] $$
+    其中 $h_{\ell,t}$ 表示层 $\ell$ 中token $t$ 的隐藏状态（即层输入）。较低的漂移值表示层间表示变化较小，暗示token表示更稳定。根据这一观察，我们使用表示漂移作为选择进行token级稀疏化层的标准。定义每个层的归一化漂移排名 $\hat{R}_\ell = \frac{1}{L} \sum_{k=1}^L \mathbf{1}[R_k \le R_\ell]$，并选择 $L_{sparse} = \{\ell \mid \hat{R}_\ell \le \delta\}$ 的层进行TSA。在所有实验中，$\delta=0.5$，即仅对表示最稳定的层应用该方法。此层选择作为每个模型的预处理步骤执行一次。
+
+**实验结果 (Experimental Results)**
+
+LLaMA-3.1-8B-Instruct 和 Mistral-Nemo-12B-Instruct，使用 RULER 和 InfiniteBench 作为主要基准，并在附录中提供 LongBench 和 Needle-in-a-Haystack 的结果。基线包括 FlashAttention、Minference、FlexPrefill 以及token驱逐方法 FastKV 和 GemFilter。
+
+1.  **精度结果 (Accuracy Results)**
+    *   在 RULER 基准上，与 FlashAttention、Minference 和 FlexPrefill 结合时，Token Sparse Attention在所有上下文长度下基本保持了底层注意力核的精度，同时提高了注意力效率。例如，在LLaMA-3.1-8B-Instruct上应用于 FlexPrefill 时，平均精度保持不变，而128K上下文的注意力加速从 ×2.44 提高到 ×2.76。
+    *   在 InfiniteBench 上也观察到类似趋势，TSA 与所有基线方法的结合只导致微小的精度差异，表明其作为通用加速机制的兼容性。
+
+2.  **效率结果 (Efficiency Results)**
+    *   **精度-速度权衡 (Accuracy-Speedup Trade-offs)：** 通过调整 FlexPrefill 的超参数 $\gamma$ 得到的帕累托前沿 (Pareto frontier) 显示，TSA（在 $\tau=0.005$ 时）始终将帕累托前沿向外推，在可比精度水平下实现更高的加速。即使在更高的稀疏度下，精度下降也保持在1%以内，表明TSA能有效识别和移除不相关的token。
+    *   **跨序列长度的稀疏度和速度 (Sparsity and Speedup across Sequence Lengths)：** 随着上下文长度的增加，TSA实现的注意力加速持续增加。在128K和256K等注意力计算占据主导地位的长上下文下，速度提升尤为显著。这是因为在长上下文下，平均注意力稀疏度会随之增加。
+    *   **延迟和开销分解 (Latency and Overhead Breakdown)：** 额外的开销（包括token评分、索引、QKV压缩和注意力输出解压）在128K上下文长度下，即使在最高稀疏度下，也仅占总注意力延迟的不到11%。
+    *   **动态稀疏度与固定稀疏度 (Dynamic Sparsity vs. Fixed Sparsity)：** 在相似的速度下，动态稀疏度（TSA）始终比固定稀疏度实现更高的 RULER 平均精度。在更高的稀疏度下，动态稀疏度在保持精度的同时表现出显著优势。
+
+3.  **与Token驱逐方法的比较 (Comparison with Token Eviction)**
+    在相近的效率预算下（FastKV、GemFilter和TSA在128K上下文下达到相似的加速），Token Sparse Attention实现了最高的平均 RULER 精度。这归因于TSA的层级动态预算分配、可逆的交错处理（通过残差路径保留被跳过的token），以及细粒度的、头特定的token集合选择，避免了驱逐方法中严格的统一token约束
+
+
 ## RRAttention
 RRAttention: Dynamic Block Sparse Attention via Per-Head Round-Robin Shifts for Long-Context Inference 
 
@@ -9,8 +76,8 @@ https://arxiv.org/pdf/2602.05853 2026.2.5 北大 百度
 中文解读： https://mp.weixin.qq.com/s/iXhEwrbgsecmOw88Bs2qUg
 
 1. 现有动态稀疏注意力方法在预处理、全局评估和查询独立性等方面存在固有限制。
-2. 提出RRAttention，一种新型动态稀疏注意力方法，通过**head round-robin采样策略**，在**不同的注意力头**（Attention Heads）之间旋转查询（Query）的采样位置(stride S=8/16)同时实现高效**全局模式发现和查询独立性**。
-3. llama/qwen 7b/8b模型最大30b-A3b，一半左右稀疏，RRAttention在HELMET和Video-MME, **绝对掉点通常>1**，**128K长度下实现2.4倍加速**。
+2. 提出RRAttention，一种新型prefill动态稀疏attn，通过**head round-robin采样策略**，在**不同的注意力头**（Attention Heads）之间旋转查询（Query）的采样位置(stride S=8/16)同时实现高效**全局模式发现和查询独立性**。
+3. llama/qwen 7b/8b模型最大30b-A3b，~50%稀疏，HELMET LLM和Video-MME, **绝对掉点通常>1，128K prefill 加速2.4x**。
 
 <img width="639" height="192" alt="image" src="https://github.com/user-attachments/assets/60f0502e-fafb-4185-ad23-b253e78c5f34" />
 
