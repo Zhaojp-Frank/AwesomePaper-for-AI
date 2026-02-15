@@ -1,8 +1,85 @@
 # AwesomePaper-for-AI
 Awesome or inspiring paper for AI
 
+## PAT
+PAT: Accelerating LLM Decoding via Prefix-Aware Attention with Resource Efficient Multi-Tile Kernel
+
+https://arxiv.org/abs/2511.22333 天津大学 ASPLOS26
+
+https://github.com/flashserve/PAT
+
+1. 为优化decode阶段重复KV缓存加载和GPU效率问题，PAT提出了一种前缀感知的attn kernel，通过pack-forward-merge范式来加速LLM decodeing。
+2. 采用启发式pack共享前缀的查询分组以减少冗余内存访问，并设计了资源高效的Multi-Tile kernel、多流转发和长KV分割策略来提升GPU利用率。
+3. Cutlass/CuTe实现，vLLM集成，在一些长序列+tool calling场景，PAT vs.SOTA注意力内核，平均可将注意力延迟降低53.5%，并将TPOT降低17.0-93.1%，显著提升了LLM解码性能。
+
+decode阶段通常是内存密集型操作，瓶颈在于从全局内存加载大规模的 KV cache。真实世界的 LLM 工作负载展现出大量分层的共享前缀 (shared prefixes)，例如系统提示、工具/模板和 RAG 文档。现有注意力实现未能充分利用前缀共享：基于 (one-query-per-CTA)”模式会重复加载共享前缀的 KV cache；而“一刀切 (one-size-fits-all)”的 tiling 设计则导致片上资源闲置并因 KV 长度不均而加剧execution bubble。这些问题共同放大了内存带宽压力，并导致解码注意力操作停滞。
+
+PAT 提出了一种前缀感知的注意力内核实现，其核心范式是“pack-forward-merge”。该方法旨在**减少重复的内存访问，并提高资源效率**。
+
+**一、背景与动机**
+
+1.  **LLM 推理与注意力瓶颈：** LLM 推理分为预填充 (prefill) 和解码 (decode) 两个阶段。解码阶段迭代生成 token，每次解码都需要查询 (query) 当前 token 的信息并关注所有先前的键 (key) 和值 (value)。KV cache 的引入减少了重复计算，但随着上下文和输出长度的增加，每次解码步骤都必须从全局内存中获取不断增长的 KV cache 数据到片上内存，使得解码注意力成为内存瓶颈，占总延迟高达68%。
+2.  **GPU 执行模型：** GPU 内存层级结构显示，全局内存访问速度远慢于片上内存 (shared memory / L1 Cache 和 Registers)。现有的注意力内核，如 FlashAttention，通过将 KV cache 分割成小 tile 并以流水线方式处理 (一边计算一边异步预取)，试图利用内存层级结构。然而，受限于全局到片上内存带宽不足以及 KV cache 加载导致的低算术强度，优化仍需遵循两项原则：(1) 减少 KV cache 从全局内存的传输量；(2) 充分利用可用内存带宽。
+3.  **共享前缀与现有实现缺陷：**
+    *   **冗余内存访问：** query-centric attn如FlashAttention、FlashInfer采用“每个查询一个block”策略，导致共享 KV 前缀例如，**多请求共用的系统提示被重复从慢速全局内存加载**，引入 4.3-8.7 倍的冗余 KV cache 流量。
+    *   **资源利用率低下：** 现有内核采用固定 tile size 的“一刀切”设计（例如，**m=64, n=32**），忽略了 LLM 工作负载的动态性，导致双重资源低效：
+        *   内存浪费 ($I_{mem}$): 当共享前缀的查询数量少于 tile size 时，**CTA 必须填充输入**，浪费共享内存和寄存器。
+        *   执行气泡 ($I_{exe}$): 不同 CTA 的 KV 长度差异导致工作负载不平衡，**使SM在执行后期阶段利用率不足**。
+
+**二、PAT 的核心方法：Pack-Forward-Merge 范式**
+
+(1) CTA 内部KV ache 共享：将具有共享 KV prefix的Q打包到同一个CTA 中，以避免冗余全局内存访问。(2) 资源高效内核设计：根据 GPU 架构和 CTA **配置定制内核实现**，以维持高内存带宽利用率并最小化资源浪费。
+
+**1. Pack 阶段 (Pack Scheduler)**
+目标是最小化给定解码批次的总全局内存访问。
+
+*   **树状结构块表 (Tree Structure Block Table)：** 将解码批次的 block table 转换为树状结构，每个内部节点代表一个共享 KV 块的前缀，包含属性 $l$ (共享前缀的 KV cache 长度) 和 $s$ (共享该前缀的查询数量)。叶节点对应一个查询。
+*   **利润模型 (Profit Model)：**
+    *   **节点内利润 (Intra-node profit)：** 将一个非叶节点 $u$ 内的 $s_u$ 个查询打包到一个 CTA 中，相比“每个查询一个 CTA”范式，可减少 $(s_u - 1) l_u d$ 的全局内存访问量（$d$ 为头维度）。开销为 $8 s_u d$（两次 FP32 中间结果读写）。打包一个节点的利润与开销比率 $r = \frac{(s_u - 1) l_u d}{8 s_u d} \ge \frac{l_u}{16}$，通常为正。
+    *   **节点间利润 (Inter-node profit)：** 比较两种方案：
+        *   **方案 1 (Split)：** 将父节点和子节点拆分到不同的 CTA，利润为 $(s_u - 1) l_u d - 4 s_u d + \sum_i (s_i - 1) l_i d$。
+        *   **方案 2 (Merge)：** 将特定子节点 $v_i$ 与父节点 $u$ 合并到一个 CTA，消除其间中间结果。利润为 $(s_u - s_i - 1) l_u d - 4(s_u - s_i)d + \sum_{k \neq i} (s_k - 1) l_k d + (s_i - 1) (l_u + l_i) d$。
+        当 $4s_j > l_u$ 时，方案 2 更优，即短共享前缀和足够大的特定子节点查询数量时，合并可获得更高利润。
+*   **启发式打包调度器 (TreeHeuristic)：** PAT 使用线性复杂度的启发式算法 (Algorithm 1)，根据利润分析将解码批次打包成 CTAs。它将每个叶节点作为一个独立的 CTA，扫描内部节点的子节点，应用节点间利润模型选择方案，并递归打包子节点。
+*   **懒更新 (Lazy Update)：** 为降低调度开销，PAT 采用懒更新策略：(1) 在 block table 不变时重用调度结果；(2) 将调度器移至服务系统并异步运行，与预注意力任务 (如 LayerNorm, QKV projection) 重叠。
+
+**2. Multi-tile Kernel**
+针对打包后的 CTAs 选择最优的 Q-tile ($m$) 和 KV-tile ($n$)。
+
+*   **多 tile 内核套件 (Multi-tile kernel suite)：** 通过离线硬件分析和 CTA 约束，预先计算可行的 $(m, n)$ 配置。选择 $(m, n)$ 需满足以下约束：
+    *   **寄存器和共享内存约束：** CTA 的共享内存使用量 ($m h b + n h b + m h b'$) 不得超过单 SM 共享内存 ($S_{smem}$)。每个线程的寄存器使用量 ($R_{thr}(m,n)$) 不得超过 $S_{reg\_thr}$，同时并发 CTA 的总寄存器量 ($C \cdot R_{CTA}(m,n)$) 不得超过 $S_{register}$。
+    *   **高带宽利用率约束：** 为使全局内存带宽饱和，在途数据量 ($D_{flight} = S C n h b$) 必须大于固有内存延迟 ($L$) 乘以可持续带宽 ($B$)，即 $n \ge \lceil \frac{L B}{S C h b} \rceil$。
+    *   **CUTLASS 约束：** 为高效使用 CUTLASS/CuTe MMA，tile size 必须是 2 的幂且至少为 16（或 32 for int8），即 $m, n \in \{2^k | k \in N, 2^n \ge 16\}$。
+*   **Tile 选择器 (Tile Selector)：** 在运行时为每个 CTA 分配 $(m, n)$。
+    *   **Q-tile ($m$) 选择：** 采用向上取整规则 (round-up rule)，选择满足 $m \ge q$ 的最小 $m$（$q$ 为 CTA 的查询大小），以避免因拆分查询而导致共享 KV cache 的冗余访问。
+    *   **KV-tile ($n$) 选择：** 对于长 KV，倾向选择较大的 $n$ 来减少每个 SM 的并发 CTA 数量 ($C$)，从而增加每个 CTA 可用的带宽，并减小执行气泡。对于短 KV，选择较小的 $n$ 可以缩短最后一个 tile 的计算时间，避免计算气泡。
+
+**3. Forward 阶段 (Multi Kernel Forward)**
+缓解内核执行气泡 ($I_{exe}$)。
+*   **多流转发 (Multi-Stream Forward)：** 为每种独特的 $(m, n)$ 配置创建独立的 CUDA 流。调度器将相同配置的 CTAs 分组并放入对应流，使得不同流并行运行，从而重叠内核启动开销，并通过内核并行化减轻执行气泡。
+*   **长 KV 分割 (Long KV Split)：** 将 KV 长度超过批次平均 KV 长度的 CTA 分割成等份，以缩短最晚完成 CTA 的时间，提高整体 SM 利用率。
+
+**4. Merge 阶段 (Output Merge)**
+轻量级内核使用 “online softmax” 结合每个查询的中间结果，生成最终输出。它从全局内存加载中间结果（最大分数、log-sum-exp 累加器、部分值加权和），通过 online softmax 进行归约和归一化，然后将所有头连接起来，将最终查询输出写回全局内存。
+
+**三、实现与评估**
+
+PAT 作为 vLLM 的后端插件实现，利用 Cutlass/CuTe 编写内核。KV cache 管理依赖 vLLM 的 PagedAttention。
+基线：FlashAttention, FlashInfer；FastTree, RelayAttention, RelayAttention++ (扩展 RelayAttention 以利用 vLLM 风格的 KV cache 重用)
+
+**工作负载：**
+    *   **内核性能：** 合成解码批次，模拟不同共享前缀结构和批量设置。
+    *   **端到端：** 真实世界痕迹 (toolagent, conversation)，使用 Qwen3-8B 和 Llama3-8B 模型。
+**主要结果：**
+    *   **内核性能：** 在有共享前缀的配置下，PAT 比 FlashAttention、FlashInfer、FastTree、RelayAttention 和 RelayAttention++ 分别提速高达 21.5 倍、11.7 倍、3.2 倍、11.9 倍和 5.7 倍。平均而言，PAT 比查询中心内核的注意力延迟减少 67.8% 和 52.1%。即使没有共享前缀，PAT 仍能获得 1.6% 的延迟降低。
+    *   **端到端性能：** 在相同请求速率下，PAT 的平均 TPOT (Time Per Output Token) 比 RelayAttention++ 降低 17.2–68.1%，比 FlashAttention 降低 17.0–89.5%，比 FlashInfer 降低 32.2–93.1%。TTFT (Time To First Token) 也有显著降低。
+    *   **消融研究 (Ablation Study)：** 验证了 PAT 各组成部分的有效性：内存导向的打包调度器优于计算导向或简单打包；多 tile 内核相比固定 tile size 显著提升性能；多流转发有效缓解了执行气泡。
+    *   **开销分析：** 由于懒更新机制和异步执行，打包调度器的开销相对于预处理延迟可忽略不计。
+
+
 ## TPLA
 https://arxiv.org/pdf/2508.15881 北大 腾讯
+
 https://github.com/fxmeng/TransMLA
 
 1.  为解决 MLA 在 TP 下 KV 缓存全量复制导致的内存效率低下问题，提出了 TPLA (Tensor-Parallel Latent Attention)，一种结合 MLA (Multi-Head Latent Attention) 高效 KV 缓存压缩与 Tensor Parallelism (TP) 的方法，
