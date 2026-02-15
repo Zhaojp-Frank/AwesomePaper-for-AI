@@ -1,13 +1,80 @@
 # AwesomePaper-for-AI
 Awesome or inspiring paper for AI
 
+## QuoKA
+QUOKA: Query-Oriented KV Selection For Efficient LLM Prefill
+
+https://arxiv.org/pdf/2602.08722 2026.2.9 高通 
+
+1. 无需训练且与硬件无关的稀疏注意力算法，旨在加速chunked prefill（附带加速decode）。
+2. 通过优先选择与平均查询（mean query）余弦相似度较低的查询来近似全注意力行为，并通过查询子选择（Query Subselection）、余弦相似度评分（Cosine-Similarity Scoring）和组感知聚合（Group-Aware Aggregation）来高效地子选择键值对（KV pairs）。兼容GQA attn kernel。
+3. 在Needle-In-A-Haystack、LongBench等多个基准测试中实现了接近基线的准确性，A100上60k长度attn kernel加速最高5x、TTFT减少3x（decode加速2.2x：缩小了Q/Key），实际参与attn的KV cache减少88%。
+  1. 但KV cache物理所需显存容量没有减少，仍保留全量
+
+<img width="888" height="378" alt="image" src="https://github.com/user-attachments/assets/d956f565-e47f-422e-8fb5-d621bb6c2e31" />
+
+**1. 问题背景与挑战**
+近期部署越来越多地采用 **chunked prefill**，将输入划分为块以改善调度和利用率。然而，由于底层注意力机制的二次复杂度，chunked prefill 仍然计算成本高昂。稀疏注意力算法通过识别和利用注意力中的稀疏性来降低复杂度。现有的稀疏注意力方法主要分为两类：
+*   **Pattern-based approaches (基于模式的方法)**：对 $QK^\top$ 施加固定的稀疏模式。这些方法通常通过 kernel-level 优化实现加速，但由于动态计算图和 chunked prefill 下 KV cache 内存带宽开销，其益处有限，且依赖自定义 kernel 限制了跨异构硬件的可移植性。
+*   **Query-dependent approaches (依赖查询的方法)**：直接在 KV cache 上操作，自适应地为给定查询子选择最相关的 KV 对。这些方法与优化过的 kernel 兼容并提供强大的可移植性。然而，它们主要为decode阶段单query设计。在 prefill 阶段，需要为许多Q同时选择相关的 KV 对(chunk prefill)，这会导致显著的性能下降。
+
+**2. QUOKA 核心思想与方法**
+其核心观察是：**“与平均查询 (mean query) 的余弦相似度较低的查询会与更多的键 (keys) 进行更强的交互，并且对最终注意力 logits 的贡献最大。”** QUOKA 利用这一观察，保留一小部分有代表性的查询，并子选择它们强烈交互的 KV 对。
+<img width="902" height="486" alt="image" src="https://github.com/user-attachments/assets/b9830446-8583-4a90-bcd4-45ced4e93506" />
+
+QUOKA 的实现分为三个阶段（如 Algorithm 1 所示），并集成到 chunked prefill 过程中（如 Algorithm 2 所示）：
+
+**2.1. Query Subselection (查询子选择)**
+*   **目的**：减少冗余，只保留信息量最大的查询。
+*   **原理**：观察到与平均查询 $M_Q$ 余弦相似度较低的查询倾向于与大多数键广泛对齐，而接近平均查询的查询则集中在少量共享的键组上。
+*   **方法**： QUOKA 通过计算每个查询 $q$ 与平均查询向量 $M_Q$ 之间的角度距离来识别这些查询。具体而言，对每个查询 $q$，根据 $-CosSim(M_Q, q)$ 进行排名，并保留排名前 $N_Q$ 的查询。较高的 $-CosSim(M_Q, q)$ 值（即较低或更负的 $CosSim(M_Q, q)$ 值）表示查询与 $M_Q$ 的角度距离越大。
+*   **理论支撑**：Theorem 1 形式化了这一直觉：
+    $$CosSim(M_Q, q^*) \leq 1 + \alpha_q \beta_q - 0.5\alpha_q^2 - 0.5\beta_q^2$$
+    其中 $\beta_q = CosSim(k, q^*)$ 且 $\alpha_q = CosSim(M_Q, k)$。该定理表明，如果一个查询 $q^*$ 对键 $k$ 有很强的注意力 ($\beta_q$ 大)，同时 $M_Q$ 与 $k$ 的相似度较低 ($\alpha_q$ 负值大)，那么 $q^*$ 与 $M_Q$ 的余弦相似度将很低，从而 $S_q = -CosSim(M_Q, q^*)$ 较高。这表明选择与平均查询“相距较远”的查询，能够捕获那些对注意力分布贡献最大的查询。
+*   **效果**：通过子选择，QUOKA 保留了在几何上与键对齐且在注意力中占主导地位的查询。
+
+**2.2. Cosine-Similarity Scoring (余弦相似度评分)**
+*   **目的**：评估保留查询与键之间的相关性。
+*   **原理**：现有方法常使用点积 $QK^\top$ 来评分，但其依赖于尺度且在聚合下不稳定。
+*   **方法**：QUOKA 计算 $S = CosSim(Q, K)$。余弦相似度将向量归一化为单位长度，提供了一个有界、几何感知且近似 Softmax 注意力权重的代理。
+*   **效果**：消融实验表明，余弦相似度比点积显著提高了子选择质量。
+
+**2.3. Score Aggregation (分数聚合)**
+*   **目的**：将分数聚合以选择最终的 KV 对。
+*   **跨查询聚合**：对查询轴，QUOKA 采用最大值 (maximum) 聚合，而非平均值。这是因为平均值可能掩盖稀有但重要的查询-键交互，而最大值能保留这些异常值。图 3 的重尾分布支持了这一选择。
+*   **跨 KV 组聚合**：对于 GQA (grouped-query attention) 轴，由于头级别的重要性通常是相关的，QUOKA 简单地取平均值。此外，在计算分数之前对 K 和 Q 进行归一化，可以通过预聚合 (pre-aggregation) 来降低计算和内存成本，从而提高了与现代架构的兼容性和效率。
+
+**2.4. 集成到 Chunked Prefill 中**
+*   **过程**：对于每个传入的块 $X_i$，QUOKA 使用 Algorithm 1 中的步骤子选择活动 KV token。得到的键和值子集随后被传递给该块的注意力计算。
+*   **公式**：
+    $$Attn(X_i) = Softmax\left(Q_i\left[ K_i | K_{<i} \right]^\top/\sqrt{d} + M_i\right)\left[ V_i | V_{<i} \right]$$
+    其中 $K_{<i}$ 和 $V_{<i}$ 是来自所有前序块的键和值。QUOKA 通过减少每个块的 KV 预算来降低计算和内存传输成本。
+*   **稀疏化选择**：
+    $$I = \text{topk}(f(Q, K), BSA), \hat{K} = \text{gather}(K, I), \hat{V} = \text{gather}(V, I)$$
+    这里 $f(Q, K)$ 是 QUOKA 的打分和聚合过程。
+
+**3. 实验结果**
+QUOKA 在多项长上下文基准测试和模型上进行了广泛验证，包括 Needle-In-A-Haystack (NIAH)、LongBench、RULER 和 Math500，以及 Llama3、Qwen3、SmolLM、GPT-OSS 等模型。
+*   **准确性**：在所有基准测试中，QUOKA 都实现了接近基线 (dense attention) 的准确性，并且显著优于现有的稀疏注意力方法。在 LongBench 上，即便在小预算下，QUOKA 也能保持最小的准确性下降，平均性能优于其他方法 10-20%。在 RULER 上，分数比基线高 10-20%。
+*   **延迟减少**：
+    *   attention 模块级别：在 Nvidia GPU 上实现 5 倍加速，在 Intel Xeon CPU 上实现近 7 倍加速。
+    *   端到端 time-to-first-token (TTFT)：实现 3 倍的降低。
+    *   KV 对数量：每个注意力评估使用的 KV 对减少 88%。
+*   **泛化能力**： QUOKA 成功泛化到多种解码器-only LLM (Llama3, Qwen3, SmolLM, GPT-OSS) 和 RoPE/NoPE、MoE-based LLMs。
+*   **超参数鲁棒性**：在 $BSA$ (selective attention budget)、$BCP$ (prefill chunk size) 和 $N_Q$ (number of queries) 等关键超参数变化时，准确性缓慢下降，表明其在不同硬件约束下仍能保持高效性。
+
+**4. 与相关工作的比较**
+*   **动态查询依赖稀疏注意力**：现有方法如 SampleAttention、LOKI 等主要为生成阶段设计，在 prefill 阶段对多查询进行朴素聚合会导致性能下降。QUOKA 则通过查询子选择和几何感知机制，更有效地处理多查询 prefill。
+*   **KV cache 淘汰**：KV cache 淘汰通过移除低显著性 KV 对来减少内存占用，但多数为单查询生成设计。KV cache 淘汰与 QUOKA 互补，未来可考虑结合。
+*   **Kernel-level 稀疏注意力**：这类方法依赖于 CUDA 等专用实现，缺乏可移植性，且在 chunked prefill 下可能因重复的 kernel 调用和内存传输而效率降低。QUOKA 则兼容标准密集 kernel，避免了硬件和运行时依赖。
+
 ## HySparse
 HySparse: A Hybrid Sparse Attention Architecture with Oracle Token Selection and KV Cache Sharing
 
-https://arxiv.org/pdf/2602.03560 2026.2.3 小米 罗福莉团队
+https://arxiv.org/pdf/2602.03560 2026.2.3 小米 罗福莉团队
 
-1. HySparse提出一种**混合稀疏Atte**ntion架构，通过将全Attn层与多个稀疏Attention**层交错**（1:11），并从前一个全Attention层中**选择重要Token并跨层共享KV cache**，解决稀疏Attention的**代理选择和内存限制**问题。
-2. 💡 该架构利用修改后的FlashAttention来精确识别重要Token，并允许稀疏Attention分支重用全Attention的KV cache，同时为滑动窗口Attention（SWA）分支维护一个独立的本地KV cache，以平衡全局和局部信息处理。
+1. HySparse提出一种**混合稀疏Atte**架构，通过将全Attn层与多个稀疏Attention**层交错**（1:11），并从前一个全Attention层中**选择重要Token并跨层共享KV cache**，解决稀疏Attention的**代理选择和内存限制**问题。
+2. 💡 该架构利用修改后的**FlashAttention来精确识别重要Token**，并允许稀疏Attention分支重用全Attention的KV cache，同时为滑动窗口Attention（SWA）分支维护一个独立的本地KV cache，以平衡全局和局部信息处理。
 3. 7bdense/80B-A3b实验GQA，表现优异，显著超越Full Attention和混合SWA基线，并在**80B MoE模型中实现了近10倍的KV cache存储减少**，同时保持甚至增强了长上下文建模能力。
 
 该研究提出了一种名为 HySparse 的混合稀疏注意力架构，旨在解决当前大型语言模型 (LLM) 中自注意力机制随序列长度二次方增长所导致的**计算和 KV cache 成本**高昂问题。
@@ -29,11 +96,11 @@ HySparse通过在每**个full attention 层后交错多个 sparse attention**层
 2.  **Full Attention 层 (Full Attention Layers)**
     *   Full attention 层计算标准的 scaled dot product self-attention。
     *   为了识别后续 sparse attention 层的重要 token，模型需要获取注意力分数。由于完全实例化注意力矩阵成本过高，HySparse 修改了 FlashAttention 算法。
-    *   具体而言，FlashAttention 已经在其在线 softmax 过程中计算了注意力 logits 的行最大值。HySparse 利用这一中间结果，通过存储和适当重新缩放，导出**块级最大注意力分数** $S \in \mathbb{R}^{t \times \lceil t/B \rceil}$。
+    *   具体而言，FlashAttention 已经在其在线 softmax 过程中计算了注意力 logits **的行最大值。HySparse 利用这一中间结果**，通过存储和适当重新缩放，导出**块级最大注意力分数** $S \in \mathbb{R}^{t \times \lceil t/B \rceil}$。
     *   块级最大注意力分数 $S_i^t$ 定义为：
         $$S_i^t = \max_{i' \in \text{B}_i}\left(\frac{\exp(\mathbf{q}^{\top}_t \mathbf{k}_{i'}/\sqrt{d})}{\sum_{j=1}^t \exp(\mathbf{q}^{\top}_t \mathbf{k}_j/\sqrt{d})}\right)$$
         其中 $B$ 是注意力分数输出的块大小，$B_i = \{(i-1)B+1, \dots, \min(iB, N)\}$ 是块索引 $i$ 处的列 token 索引集合。
-    *   通过对 $S$ 应用 TopK 操作，选择 key-block 索引 $I$，这些索引将被后续 sparse attention 层重用。
+    *   通过对 $S$ **应用TopK 操作**，选择 key-block 索引 $I$，这些索引将被后续 sparse attention 层重用。
     *   在 Grouped-Query Attention (GQA) 下，模型会在每个 query 组内聚合 $S$ (通过组级最大值)，使得同一组内的所有头共享相同的稀疏索引，从而提高稀疏注意力 kernel 的效率并减少索引开销。
 
 3.  **Sparse Attention 层 (Sparse Attention Layers)**
