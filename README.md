@@ -1,14 +1,78 @@
 # AwesomePaper-for-AI
 Awesome or inspiring paper for AI
 
-## CoMeT
+## HySparse
+HySparse: A Hybrid Sparse Attention Architecture with Oracle Token Selection and KV Cache Sharing
+
+https://arxiv.org/pdf/2602.03560 2026.2.3 小米 罗福莉团队
+
+1. HySparse提出一种**混合稀疏Atte**ntion架构，通过将全Attn层与多个稀疏Attention**层交错**（1:11），并从前一个全Attention层中**选择重要Token并跨层共享KV cache**，解决稀疏Attention的**代理选择和内存限制**问题。
+2. 💡 该架构利用修改后的FlashAttention来精确识别重要Token，并允许稀疏Attention分支重用全Attention的KV cache，同时为滑动窗口Attention（SWA）分支维护一个独立的本地KV cache，以平衡全局和局部信息处理。
+3. 7bdense/80B-A3b实验GQA，表现优异，显著超越Full Attention和混合SWA基线，并在**80B MoE模型中实现了近10倍的KV cache存储减少**，同时保持甚至增强了长上下文建模能力。
+
+该研究提出了一种名为 HySparse 的混合稀疏注意力架构，旨在解决当前大型语言模型 (LLM) 中自注意力机制随序列长度二次方增长所导致的**计算和 KV cache 成本**高昂问题。
+<img width="757" height="489" alt="image" src="https://github.com/user-attachments/assets/d150823b-b35d-4824-b429-72faa9559b9a" />
+<img width="695" height="490" alt="image" src="https://github.com/user-attachments/assets/e25e9a7d-0632-4f72-b1d0-6f32795475ae" />
+
+现有稀疏注意力方法面临两大挑战：一是**依赖代理进行 token 选择**，引入额外复杂性且精度次优；二是虽然能**减少计算量，但通常无法节省 KV cache 内存**。
+
+HySparse通过在每**个full attention 层后交错多个 sparse attention**层来克服这些限制。其核心思想是，**sparse attention 层的 token 选择和 KV caches 直接来源于前一个 full attention 层。**
+
+**核心方法 (Methodology)：**
+
+1.  **HySparse 架构总览 (HySparse Overview)**
+    *   HySparse 架构用重复的混合块替代了标准的 Transformer 主干，每个混合块包含一个 full attention 层和 N 个连续的 sparse attention 层。
+    *   在这些 sparse attention 层中，重要的 token 索引和 KV caches 直接从同一混合块中前一个 full attention 层派生。
+    *   每个 sparse attention 层还带有一个额外的 Sliding Window Attention (SWA) 分支，该分支维护一个小的局部 KV cache，以增强短程建模能力。
+    *   **两个分支（稀疏全局和 SWA 局部）的输出通过 sigmoid 门控进行融合**。
+
+2.  **Full Attention 层 (Full Attention Layers)**
+    *   Full attention 层计算标准的 scaled dot product self-attention。
+    *   为了识别后续 sparse attention 层的重要 token，模型需要获取注意力分数。由于完全实例化注意力矩阵成本过高，HySparse 修改了 FlashAttention 算法。
+    *   具体而言，FlashAttention 已经在其在线 softmax 过程中计算了注意力 logits 的行最大值。HySparse 利用这一中间结果，通过存储和适当重新缩放，导出**块级最大注意力分数** $S \in \mathbb{R}^{t \times \lceil t/B \rceil}$。
+    *   块级最大注意力分数 $S_i^t$ 定义为：
+        $$S_i^t = \max_{i' \in \text{B}_i}\left(\frac{\exp(\mathbf{q}^{\top}_t \mathbf{k}_{i'}/\sqrt{d})}{\sum_{j=1}^t \exp(\mathbf{q}^{\top}_t \mathbf{k}_j/\sqrt{d})}\right)$$
+        其中 $B$ 是注意力分数输出的块大小，$B_i = \{(i-1)B+1, \dots, \min(iB, N)\}$ 是块索引 $i$ 处的列 token 索引集合。
+    *   通过对 $S$ 应用 TopK 操作，选择 key-block 索引 $I$，这些索引将被后续 sparse attention 层重用。
+    *   在 Grouped-Query Attention (GQA) 下，模型会在每个 query 组内聚合 $S$ (通过组级最大值)，使得同一组内的所有头共享相同的稀疏索引，从而提高稀疏注意力 kernel 的效率并减少索引开销。
+
+3.  **Sparse Attention 层 (Sparse Attention Layers)**
+    *   每个 sparse attention 层包含两个注意力分支，它们作用于相同的 query，但使用不同的 KV 源。
+    *   **Block Sparse Attention 分支**：
+        *   使用由输入 $\mathbf{x}_t$ 经过线性投影 $W_{q'}$ 得到的 query $\mathbf{q}'_t$。
+        *   通过连接从前一个 full attention 层共享的 KV cache 中根据索引 $I$ 选择的 key 和 value 块来形成 $\tilde{K}, \tilde{V}$：
+            $$\tilde{K}, \tilde{V} = \text{concat}(\{\text{K/V}[ (j-1)B+1: jB] \}_{j \in I})$$
+        *   计算注意力输出 $\tilde{\mathbf{o}}_t$：
+            $$\tilde{\mathbf{o}}_t = \sum_{i=1}^k \frac{\exp(\mathbf{q}'^{\top}_t \tilde{\mathbf{k}}_i/\sqrt{d})}{\sum_{j=1}^k \exp(\mathbf{q}'^{\top}_t \tilde{\mathbf{k}}_j/\sqrt{d})} \tilde{\mathbf{v}}_i$$
+    *   **SWA 分支**：
+        *   同样使用 query $\mathbf{q}'_t$ (与 Block Sparse Attention 分支共享相同的 query 投影 $W_{q'}$，但有独立的 $W_{k'}$ 和 $W_{v'}$ 投影)。
+        *   维护其自身的轻量级 KV cache，用于处理大小为 $w$ 的局部滑动窗口。
+        *   计算注意力输出 $\mathbf{o}'_t$：
+            $$\mathbf{o}'_t = \sum_{i=t-w+1}^t \frac{\exp(\mathbf{q}'^{\top}_t \mathbf{k}'_i/\sqrt{d})}{\sum_{j=t-w+1}^t \exp(\mathbf{q}'^{\top}_t \mathbf{k}'_j/\sqrt{d})} \mathbf{v}'_i$$
+    *   **分支融合**：最后，两个分支的输出通过 sigmoid 门控融合：
+        $$\tilde{g}_t, g'_t = \sigma(W_{\tilde{g}/g'} \mathbf{x}_t)$$
+        $$\mathbf{o}_t = \tilde{g}_t \odot \tilde{\mathbf{o}}_t + g'_t \odot \mathbf{o}'_t$$
+        其中 $\sigma$ 是 sigmoid 函数，$W_{\tilde{g}/g'}$ 是门控权重。
+    *   研究发现，SWA 分支拥有独立的 KV cache 对于保持模型表达能力至关重要，它可能作为局部信息路径，捕获短程一致性，而 full attention 共享的 KV cache 则更优化于全局检索。
+
+**实验结果与贡献 (Experimental Results and Contributions)：**
+
+*   **性能提升**：HySparse 在 7B dense 和 80B Mixture-of-Experts (MoE) 模型上进行了评估，在所有设置下均持续优于 full attention 和 hybrid SWA 基线模型。
+*   **KV Cache 效率**：在 80B MoE 模型中，尽管 49 层中只有 5 层使用了 full attention（即 KV cache 减少了近 10 倍），HySparse 仍实现了显著的性能提升。HySparse 在 KV cache 成本方面并未比 hybrid SWA 基线增加额外开销。
+*   **长文本能力**：HySparse 在 RULER 基准测试中展现出与 full attention 相当甚至超越的长文本能力，尤其是在多 key/value 和推理密集型子集上表现出色。
+*   **消融研究 (Ablation Study)**：
+    *   **Intra-layer Hybridization with SWA**：移除 sparse attention 层内的 SWA 分支会导致准确率显著下降，表明即使有高质量的稀疏选择，专用的滑动窗口路径对于建模短程一致性仍很重要。
+    *   **Cross-layer KV Cache Sharing Configuration**：对 SA 和 SWA 两个分支都共享 KV cache 会严重降低准确率。只有 SA 分支共享来自 full attention 的 KV cache，而 SWA 分支维护自己的独立 KV cache 时，性能才得以恢复和提升。这证实了 SA 可以安全地重用跨层 KV cache 以节省 GPU 内存，而 SWA 需要自己的 KV cache 以保留强大的局部信息。
+
+
+## CoMeT 长段记忆周期压缩转换
 CoMeT: Collaborative Memory Transformer for Efficient Long Context Modeling
 
 https://arxiv.org/pdf/2602.01766 2026.2.3 阿里未来生活
 
 https://anonymous.4open.science/r/comet-B00B/
 
-1. CoMeT (Collaborative Memory Transformer) 提出了一种创新的**即插即用架构和微调方法**，旨在克服标准Transformer的**二次复杂性和不断增长的KV cache问题**，使LLMs能够处理任意长上下文。
+1. CoMeT (Collaborative Memory Transformer) 提出了一种创新的**即插即用架构和微调方法**，优化prefill和decode计算（可常数），以KV cache显存。
 2. 采用双内存系统：基于**FIFO队列的temporary memory用于近期事件**，以及带有**门控更新规则的global memory用于长期依赖**，并通过layer-level pipeline parallelism实现高效**长上下文训练**。
 3. Qwen4b/8b模型微调？32k上下文**训练后**，能从1M token序列中准确检索passkey，相比full-attention基线实现**21倍推理加速和10倍内存优化**，并在SCROLLS基准测试及真实世界任务中表现出色。
 <img width="759" height="291" alt="image" src="https://github.com/user-attachments/assets/acd7bf3d-b985-41e2-83df-7e2a6ff19f49" />
