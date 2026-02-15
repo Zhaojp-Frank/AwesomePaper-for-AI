@@ -1,6 +1,23 @@
 # AwesomePaper-for-AI
 Awesome or inspiring paper for AI
 
+## RRAttention
+RRAttention: Dynamic Block Sparse Attention via Per-Head Round-Robin Shifts for Long-Context Inference 
+
+https://arxiv.org/pdf/2602.05853 2026.2.5 北大 百度
+
+中文解读： https://mp.weixin.qq.com/s/iXhEwrbgsecmOw88Bs2qUg
+
+1. 现有动态稀疏注意力方法在预处理、全局评估和查询独立性等方面存在固有限制。
+2. 提出RRAttention，一种新型动态稀疏注意力方法，通过**head round-robin采样策略**，在**不同的注意力头**（Attention Heads）之间旋转查询（Query）的采样位置(stride S=8/16)同时实现高效**全局模式发现和查询独立性**。
+3. llama/qwen 7b/8b模型最大30b-A3b，一半左右稀疏，RRAttention在HELMET和Video-MME, **绝对掉点通常>1**，**128K长度下实现2.4倍加速**。
+
+<img width="639" height="192" alt="image" src="https://github.com/user-attachments/assets/60f0502e-fafb-4185-ad23-b253e78c5f34" />
+
+<img width="745" height="690" alt="image" src="https://github.com/user-attachments/assets/fbf3e802-9f41-4712-940d-9e856d5ef579" />
+<img width="658" height="367" alt="image" src="https://github.com/user-attachments/assets/262bd0b0-c8a9-472a-9eeb-a5c3e24dd871" />
+
+
 ## DeepContext
 DeepContext: A Context-aware, Cross-platform, Cross-framework Tool for Performance Profiling and Analysis of Deep Learning Workloads
 
