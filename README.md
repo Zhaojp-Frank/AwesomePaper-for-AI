@@ -1,19 +1,48 @@
 # AwesomePaper-for-AI
 Awesome or inspiring paper for AI
 
+## CoMeT
+CoMeT: Collaborative Memory Transformer for Efficient Long Context Modeling
+https://arxiv.org/pdf/2602.01766 2026.2.3 阿里未来生活
+https://anonymous.4open.science/r/comet-B00B/
+
+1. CoMeT (Collaborative Memory Transformer) 提出了一种创新的**即插即用架构**，旨在克服标准Transformer的**二次复杂性和不断增长的KV cache问题**，使LLMs能够处理任意长上下文。
+2. 采用双内存系统：基于**FIFO队列的temporary memory用于近期事件**，以及带有**门控更新规则的global memory用于长期依赖**，并通过layer-level pipeline parallelism实现高效**长上下文训练**。
+3. Qwen4b/8b模型微调？32k上下文**训练后**，能从1M token序列中准确检索passkey，相比full-attention基线实现**21倍推理加速和10倍内存优化**，并在SCROLLS基准测试及真实世界任务中表现出色。
+<img width="759" height="291" alt="image" src="https://github.com/user-attachments/assets/acd7bf3d-b985-41e2-83df-7e2a6ff19f49" />
+
+
+CoMeT的核心创新在于其协同记忆系统，该系统基于对序列数据块的处理。它采用双记忆系统来管理上下文：
+1.  **全局记忆（Global Memory）**：用于管理长程依赖。全局记忆 $G^i_\tau$ 由持久的全局状态 $S^i_\tau$ 派生。为确保参数效率和训练稳定性，状态到记忆的转换通过Residual Low-Rank Adapter（**RLA）模块实现**，定义为 $\text{RLA}(X) = X + W_{\text{up}}(W_{\text{down}}X)$，其中 $W_{\text{up}} \in \mathbb{R}^{d_{\text{model}} \times r}$，$W_{\text{down}} \in \mathbb{R}^{r \times d_{\text{model}}}$，通常 $r=8$。
+
+因此，$G^i_\tau = \text{RLA}(S^i_\tau)$。全局状态 $S^i_\tau$ 的更新机制**引入了一个门控单元，以选择性地整合来自输出读出标记**（readout tokens）$R^{i+1}_\tau$ 的信息，同时**保护关键历史信息不被覆盖**。$R^{i+1}_\tau$ 首先被 RMSNorm 归一化为候选状态 $\tilde{S}^{i+1}_\tau = \text{RMSNorm}(R^{i+1}_\tau)$。然后，全局状态通过以下门控规则更新：$S^{i+1}_\tau = g \odot S^i_\tau + (1 - g) \odot \tilde{S}^{i+1}_\tau$，其中门控值 $g = \sigma(W_g([S^i_\tau; \tilde{S}^{i+1}_\tau]))$。这里 $[;]$ 表示沿特征维度进行拼接，$W_g \in \mathbb{R}^{2d_{\text{model}} \times 1}$ 是一个可学习的权重矩阵，$\sigma$ 是 sigmoid 函数。这种加性更新结构为跨数据块的梯度流提供了更直接的路径。
+   
+4.  **临时记忆（Temporary Memory）**：用于捕捉近期事件的细粒度信息。临时记忆 $T^i_\tau$ 由固定容量的First-In-First-Out（FIFO）队列管理。新的记忆条目源自输出压缩标记（compression tokens）$C^{i+1}_\tau$。
+这些标记在入队前，会先**经过 RMSNorm 归一化，然后使用与全局记忆相同的 RLA 模块**进行转换。FIFO 队列的特性保留了近期数据块信息的时间连续性，当新条目添加时，最旧的条目被丢弃。
+
+在每一层 $i$ 处理第 $\tau$ 个输入数据块时，CoMeT 将全局记忆 $G^i_\tau$ 和临时记忆 $T^i_\tau$ 前置于数据块的隐藏状态 $H^i_\tau$。通过因果自注意力机制，$H^i_\tau$ 可以从两种记忆中检索相关信息以辅助下一个标记的预测。同时，一系列压缩标记 $C^i_\tau$ 被交错在 $H^i_\tau$ 之中，用于捕获细粒度的局部信息。最后，$m$ 个读出标记 $R^i_\tau$ 被附加到序列末尾，以总结数据块最显著的内容。单个Transformer层的整体计算公式为：$H^{i+1}_\tau, C^{i+1}_\tau, R^{i+1}_\tau = TL(G^i_\tau, T^i_\tau, H^i_\tau, C^i_\tau, R^i_\tau)$，其中 $TL$ 表示Transformer层计算。
+
+为了实现高效的超长上下文微调，CoMeT引入了一种新颖的**层级管道并行（layer-level pipeline parallelism）**策略。与传统的上下文并行不同，该策略在层级交错计算和通信。工作节点 $j+1$ 在收到工作节点 $j$ 必要的中间状态后，即可立即开始处理层 $i$，而工作节点 $j$ 同时推进到层 $i+1$，从而显著减少管道气泡并最大化硬件利用率。
+
+实验结果表明，CoMeT在多个方面表现出色：
+-   **长上下文外推能力**：在一个32k上下文上进行微调的CoMeT模型，能够从1M标记序列的任意位置准确检索出passkey。
+-   **效率**：在1M标记上下文长度下，CoMeT相比全注意力（Full Attention）基线实现了2**1倍的推理加速和10倍**的内存占用减少。其推理内存消耗保持恒定（约10GB），预填充（prefill）延迟与上下文长度呈线性关系，而解码（decode）阶段的每标记延迟稳定在约22ms。
+-   **基准测试表现**：在SCROLLS基准测试中，CoMeT超越了其他高效方法，并在总结任务上表现与经过微调的全注意力基线相当。在较短上下文的QA任务（2WikiMQA和HotpotQA）上，CoMeT也匹配了全注意力性能。
+-   **实际应用**：在用户行为QA（UQA）任务中，CoMeT超越了xRAG基线2.7个百分点，并显著优于4k截断的全注意力基线。在长上下文Agent任务（Terminal-Bench）中，CoMeT的训练速度比朴素上下文并行快2.7倍，并取得了与全注意力模型相当的性能。
+-   **记忆作用分析**：临时记忆对训练域内序列长度的表现至关重要，而带门控的全局记忆是处理超出训练数据长度序列的关键，门控机制对于保护关键信息免受覆盖至关重要。
 
 ## TSA
 Token Sparse Attention: Efficient Long-Context Inference with Interleaved Token Selection
 
 https://arxiv.org/pdf/2602.03216 2026.2.3 韩国
 
-https://github.com/dongwonjo/Token-Sparse-Attention
+https://github.com/dongwonjo/Token-Sparse-Attention  待开源
 
 1. 针对**prefill 动态、可逆的token级别稀疏化**机制，通过在压缩空间内执行注意力操作并在之后恢复原始序列维度，有效解决了长上下文LLM中attention的二次复杂性问题。
 2. prefill阶段 每层：先选少量token（例如最后5%）作快速attn计算和打分，从而压缩token + 原始残差输入合并。实现每head独立和层级的token选择，并基于Inter-Layer Representation Drift智能地选择进行稀疏化的层，从而适应token重要性的动态变化：。
 3. TSA与FlashAttention、FlexPrefill兼容（叠加使用），llama3-8b/mixtral-12b，A100, 128K下最多3.23x提升（在FlexAttn）, 精度通常<1个点，显著改善了精度-延迟权衡。
 
-![Uploading image.png…]()
+<img width="759" height="291" alt="image" src="https://github.com/user-attachments/assets/23dd7d2a-abc3-463f-bcca-2a50359c1241" />
 
 现有加速方法通常采用结构化注意力图稀疏化或在特定层永久驱逐token，但这些方法可能保留不相关的token，或因未能考虑token重要性在层间/头间的动态变化而做出不可逆的早期决策。
 
