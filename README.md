@@ -1,6 +1,20 @@
 # AwesomePaper-for-AI
 Awesome or inspiring paper for AI
 
+## SWE-World
+SWE-World: Building Software Engineering Agents in Docker-Free Environments
+
+https://arxiv.org/pdf/2602.03419 人大 2026.2.3
+
+https://github.com/RUCAIBox/SWE-World
+
+1. 为解决软件工程 (SWE) agents 训练中**基于 Docker 环境的可伸缩性限制**， 提出 SWE-World，一个无 Docker 的框架，旨在**通过用学习到的替代模型**取代物理执行环境，。
+2. SWE-World 由一个**轻量级 Sandbox**、预测执行结果的 SWE-World **Transition Model** (SWT) 和模拟测试报告与奖励的 SWE-World **Reward Model**(SWR) 组成，实现了**完全无 Docker 的 SFT 和 RL 优化**。
+3. SWE-World 显著提升了 agents 在 SWE-bench Verified 上的性能，例如将 Qwen2.5-Coder-32B 的**解析率从 6.2% 提高到 55.0%** (RL)，并在结合测试时扩展 (TTS) 后达到 68.2%，从而大大降低了 SWE 研究的资源和基础设施成本。
+传统上，SWE 智能体严重依赖于基于 Docker 的物理执行环境来获取反馈，例如程序执行结果和测试报告。然而，这种**范式资源密集、维护困难**，并极大地限制了智能体训练的可扩展性。
+
+<img width="737" height="408" alt="image" src="https://github.com/user-attachments/assets/983829f3-5592-4c13-a216-3c2519a79b1e" />
+
 ## SWE-Master
 SWE-Master: Unleashing the Potential of Software Engineering Agents via Post-Training
 
