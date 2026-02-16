@@ -1,6 +1,19 @@
 # AwesomePaper-for-AI
 Awesome or inspiring paper for AI
 
+## SkyRL-Agent
+SkyRL-Agent: Efficient RL Training for Multi-turn LLM Agent
+
+https://arxiv.org/pdf/2511.16108 伯克利 AnyScale等 2025.11.20
+
+GitHub: https://github.com/NovaSky-AI/SkyRL
+
+HuggingFace: https://huggingface.co/NovaSky-AI/SA-SWE-32B
+
+1. SKYRL-AGENT 是一个高效的框架，旨在用于多轮LLM代理的强化学习训练与评估，提供高效的异步调度、轻量级工具集成和灵活的后端互操作性。
+2. 框架引入了优化的异步管道调度器，实现1.55倍加速，并结合增强工具的训练方案（如基于AST的搜索工具），使SA-SWE-32B在SWE-Bench Verified上达到39.4% Pass@1，同时将成本降低两倍以上。
+3. SA-SWE-32B 在Terminal-Bench、WebArena等通用Agent任务中表现出良好的泛化能力，且SKYRL-AGENT通过支持深度研究、内存和计算机使用等不同类型的Agent，展示了其出色的可扩展性。
+   
 ## SpeContext retrieval稀疏加速decode
 SpeContext: Enabling Efficient Long-context Reasoning with Speculative Context Sparsity in LLMs
 
