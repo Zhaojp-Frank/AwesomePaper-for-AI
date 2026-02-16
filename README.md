@@ -1,6 +1,21 @@
 # AwesomePaper-for-AI
 Awesome or inspiring paper for AI
 
+## SWE-Master
+SWE-Master: Unleashing the Potential of Software Engineering Agents via Post-Training
+
+https://arxiv.org/pdf/2602.03411 人大 2026.2.3 
+
+https://github.com/RUCAIBox/SWE-Master
+
+1. 🌟 SWE-Master是一个**开源且完全可复现的软件工程Agent后训练框架**，旨在通过系统化的优化方法，从初始能力有限的基座模型中挖掘并释放强大的**长周期SWE任**务解决能力。
+2. 🚀 该框架系统性地探索了Agent开发的完整流程，包括教师轨迹合成、数据精炼、长序列SFT、基于真实执行反馈的RL，并创新性地引入了**基于语言服务器协议（LSP）的IDE级代码导航工具**，显著提升了Agent的效率和代码理解能力。
+3. 🎯 在SWE-bench Verified基准测试中，SWE-Master使用Qwen2.5-Coder-32B**实现了61.4%的解决率，通过Test-Time Scaling（TTS@8）进一步提升至70.8%** 优于现有开源基线。
+   
+<img width="716" height="305" alt="image" src="https://github.com/user-attachments/assets/90360f05-9991-4139-b383-61a2a40aec0b" />
+<img width="737" height="231" alt="image" src="https://github.com/user-attachments/assets/1a72cc7b-067d-476e-8add-0e1d62318fd6" />
+
+
 ## SkyRL-Agent
 SkyRL-Agent: Efficient RL Training for Multi-turn LLM Agent
 
