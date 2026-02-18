@@ -1,6 +1,18 @@
 # AwesomePaper-for-AI
 Awesome or inspiring paper for AI
 
+## 优化器scaling law
+Towards Robust Scaling Laws for Optimizers 
+
+https://arxiv.org/pdf/2602.07712 奥地利 Redhat等 2026.2.7
+
+1. 对不同优化器（AdamW，Muon，Scion， Shampoo, SOAP）分别拟合Chinchilla式扩展定律存在不稳定性问题，并提出了一种**更稳健的统**一定律，该定律共享幂律指数，并引入了优化器特定的**重缩放因子（ρN, ρD）**。
+2. 方法显著提升了参数的稳定性并大幅降低了外推误差，揭示了**新型优化器主要通过提高数据效率**（ρD）来改善LLM预训练表现。
+3. 此外，理论分析通过凸二次目标函数的梯度下降，解释了Chinchilla式扩展定律的自然产生，将其损失分解为不可约误差、近似误差和优化误差，并建立了缩放指数与问题谱特性之间的联系。
+
+<img width="815" height="458" alt="image" src="https://github.com/user-attachments/assets/693eca9b-c988-4016-a055-0e803b79359f" />
+
+
 ## CBS rollout动态筛选
 Contextual Rollout Bandits for Reinforcement Learning with Verifiable Rewards
 
@@ -4764,7 +4776,6 @@ kernel集成到flashInfer 但未见开源；e2e评测基于 https://github.com/N
 <img width="1090" height="264" alt="image" src="https://github.com/user-attachments/assets/4cf89e71-b30a-47ca-8586-206f91d263ba" />
 <img width="1092" height="498" alt="image" src="https://github.com/user-attachments/assets/b7d03cb8-f46a-4e06-918c-89dfe9535971" />
 <img width="526" height="416" alt="image" src="https://github.com/user-attachments/assets/4e7066fa-f943-441e-8816-0cd1d316dc3d" />
-![Uploading image.png…]()
 
 **核心方法学：动态 Attention 稀疏性与 Softmax 阈值**
 
@@ -7407,7 +7418,7 @@ $r_i = \begin{cases} 1, & \text{if } \sum_{k=1}^{|C_{fact_i}|} s_k(q,o_i) = |C_{
     *   **在线GRPO方法**：Outcome-GRPO（基于最终答案二元验证奖励）、Likert-GRPO（通过与参考答案比较提供密集奖励）、Rubric-GRPO（基于聚合评分标准验证结果的奖励）。
     *   **离线指导方法**：LUFFY（直接混合离线监督响应）、Critique-GRPO（利用基于真值的critique指导策略细化）。
 *   **RL实现**：使用Verl框架，训练400步，批大小96，学习率$1 \times 10^{-6}$，采样温度1.0，每次提示采样8个轨迹。引入长度惩罚。移除GRPO中的裁剪函数和KL散度约束（设置$\beta=0$），以允许更灵活的策略更新。
-![Uploading image.png…]()
+<img width="815" height="458" alt="image" src="https://github.com/user-attachments/assets/c6c983aa-eec9-4b9a-be38-8cbbd3c8c28a" />
 
 **实验结果**
 
@@ -7416,7 +7427,7 @@ $r_i = \begin{cases} 1, & \text{if } \sum_{k=1}^{|C_{fact_i}|} s_k(q,o_i) = |C_{
 *   **Pass@k曲线分析**：在SciBench的物理、化学和数学子集上，RGR-GRPO在不同$k$值下持续表现出优越的Pass@k性能，并随着$k$的增加，其性能提升更稳定，表明其在促进有效策略探索和推理多样性方面的强大能力。
 *   **策略探索分析**：RGR-GRPO在训练过程中保持了更平滑、更渐进的熵下降，表明持续的探索和持续学习。零奖励响应的比例稳步下降，离策略数据混合比例逐渐下降，同时重要性采样概率保持稳定，表明策略混合策略平衡且稳定。
 *   **消融研究**：消融实验证实了不同评分标准类别（Factual, Process）以及离策略塑形和探索评估（EA）配置对整体性能的关键贡献。
-![Uploading image.png…]()
+<img width="815" height="458" alt="image" src="https://github.com/user-attachments/assets/c6c983aa-eec9-4b9a-be38-8cbbd3c8c28a" />
 
 **评分标准在奖励丰富和自细化中的作用**
 
