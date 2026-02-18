@@ -1,6 +1,70 @@
 # AwesomePaper-for-AI
 Awesome or inspiring paper for AI
 
+## CBS rollout动态筛选
+Contextual Rollout Bandits for Reinforcement Learning with Verifiable Rewards
+
+https://arxiv.org/pdf/2602.08499 2026.2.9 北邮等
+
+1. 针对现有RLVR方法在处理rollout时**存在的噪声监督和样本效率**低下问题，本文提出了一种名为CBS的**上下文bandit调度器（管理 动态选择rollout样本）**。
+2. CBS将rollout调度建模为上下文bandit问题，并通过一个神经调度器 **自适应地选择高价值的rollout**，支持组内（noise-aware intra-group）选择和**历史rollout的全局重用**。
+3. 理论分析证明了所提方法的次线性遗憾界和增大缓冲区对性能上限的提升，最大Qwen3-8b模型 对照实验结果验证了其在多个RLVR优化方法上的性能和训练效率增益。
+
+<img width="530" height="429" alt="image" src="https://github.com/user-attachments/assets/1ca65bd0-b606-4d0f-8e10-8dbbdb36c051" />
+
+<img width="960" height="324" alt="image" src="https://github.com/user-attachments/assets/41626307-ee09-4980-8ccc-ad84fddc89f0" />
+<img width="966" height="286" alt="image" src="https://github.com/user-attachments/assets/377c3836-8648-43ad-9865-0789fe3384a2" />
+
+
+本论文提出了一种名为Contextual Rollout Bandits for Reinforcement Learning with Verifiable Rewards (CBS) 的方法，旨在解决大型语言模型 (LLMs) 可验证奖励强化学习 (RLVR) 中的两个关键问题：训练响应的异质质量导致的噪声监督以及历史rollout利用不足导致的样本效率低下。
+
+**问题背景与挑战：**
+现有的RLVR方法在提高LLM推理能力方面显示出巨大潜力，但它们通常不加区分地利用rollout，即将每个prompt生成的一组响应（rollout）同等对待，而忽略了其中可能存在的低价值、嘈杂甚至误导性的样本（例如猜测正确的解决方案或冗余推理）。这导致了低效的计算和次优的策略更新。此外，大多数方法只使用最新批次的rollout进行优化，并丢弃历史轨迹，造成样本效率低下且限制了可达到的策略性能。
+
+**核心思想与贡献：**
+为解决上述挑战，本文将RLVR中的rollout调度问题建模为一个上下文Bandit问题。每个rollout被视为一个“arm”，其奖励定义为选择该rollout后两个连续优化步骤之间引起的策略性能增益。在此基础上，作者提出了一个统一的神经网络调度插件CBS，它能够自适应地选择高价值的rollout。CBS支持两种调度模式：
+1.  **噪声感知组内选择 (Noise-aware Intra-group Selection)**：在每个rollout**组内进行细粒度选择**，**识别并抑制噪声或误导性响应**。
+2.  **自适应全局重用 (Adaptive Global Reuse)**：在一个replay buffer中**统一在线和离线rollout选择**，自适应地**重用高价值的历史轨迹**，从而显著提高样本效率并实现长期策略改进。
+
+**方法论：**
+
+CBS作为一个通用数据选择插件，无缝集成到现有RLVR方法中。其工作流程如下：
+
+1.  **Rollout构造 (Rollout Construction)**：在每个训练回合$t$，从训练数据集中随机采样一个批次$B_t$，然后使用当前策略$\pi_{\theta_{t-1}}$为每个问题生成一组响应$R_t$，并为每个rollout实例$x_{t,j}^i$构造其对应的10维训练动态特征表示$h_{t,j}^i$。
+
+2.  **调度器训练 (Scheduler Training)**：根据上一回合选择的rollout集合$\bar{C}_{t-1}$，计算样本级奖励$R(\bar{x}_{t-1}^i, \theta_{t-2}, \theta_{t-1})$。调度器$s_\phi$的参数$\phi$通过最小化预测奖励与真实奖励之间的均方误差 (MSE) 进行在线更新：
+    $\phi_t = \phi_{t-1} - \eta_2 \nabla_{\phi_{t-1}} \frac{1}{K} \sum_{j=1}^K (s_{\phi_{t-1}}(\bar{h}_t^i) - R(\bar{x}_t^i, \theta_{t-1}, \theta_t))^2$。
+
+3.  **数据调度 (Data Scheduling)**：调度器$s_{\phi_t}$根据rollout的特征表示$h_{t,j}^i$对其进行评分$s_{\phi_t}(h_{t,j}^i)$。通过混合探索和利用策略选择$\bar{C}_t$。具体来说，采用ε-greedy策略，以$1-\epsilon_t$的概率选择得分最高的rollout，以$\epsilon_t$的概率选择最新生成的rollout（通过样本年龄判断）。$\epsilon_t$随时间衰减：
+    $\epsilon_t = \begin{cases} 1.0 & t \le T_w \\ \max(\epsilon_0 - (t-1)\Delta\epsilon, \epsilon_{min}) & t > T_w \end{cases}$。
+
+4.  **Arm表示更新 (Arm Representation Update)**：更新rollout的特征，特别是那些随训练轮次变化的特征（如样本年龄和使用次数）。
+
+**核心技术细节：**
+
+*   **Arm表示 (Arm Representation)**：每个rollout被编码为一个紧凑的10维训练动态向量$h_t^i$（见Table 1），包含四类特征：
+    *   **奖励相关信号 (Reward-related signals)**：奖励值、优势值、组平均奖励、组奖励标准差，反映rollout的即时价值和组内相对优劣。
+    *   **长度相关信号 (Length-related signals)**：归一化长度、截断标志，反映响应的体积和完整性。
+    *   **策略感知指标 (Policy perception metrics)**：熵、剪辑比率，反映模型对该rollout的置信度和策略更新时的行为。
+    *   **数据交互历史 (Data interaction history)**：使用次数、样本年龄，反映rollout的新鲜度和历史利用情况。这些特征在计算上开销很小。
+
+*   **调度器架构与决策 (Scheduler Architecture and Decision)**：调度器被设计为一个多层感知器 (MLP)。它根据rollout的评分选择Top-K个rollout。
+
+*   **奖励增强 (Reward Augmentation)**：为了提高调度器训练的稳定性，引入了奖励增强机制。性能增益奖励$R(C_t, \theta_{t-1}, \theta_t)$（定义为$V_{t+1} - V_t - w_e I[E_t > e_{min}] * (E_{t+1} - E_t)$，其中$V$为平均奖励，$E$为平均熵）首先通过指数移动平均 (EMA) 进行标准化和平滑，并Sigmoid函数挤压到$[0, 1]$范围内，得到$\hat{R}(C_t, \theta_{t-1}, \theta_t)$。样本级奖励则定义为：
+    $\hat{R}(\bar{x}_t^i, \theta_{t-1}, \theta_t) = |\bar{A}_t^i| * \hat{R}(\bar{C}_t, \theta_{t-1}, \theta_t)$，其中$|\bar{A}_t^i|$是优势值的绝对值。
+
+**理论支撑：**
+在简化设置下（单样本选择，无ε-greedy探索），本文将RLVR数据调度问题形式化为上下文Bandit问题，并基于神经网络切线核 (NTK) 框架提供了理论保证。
+*   **定理5.3 (Theorem 5.3)**：证明了扩大重放缓冲区能够提高策略性能的可实现上限，为全局rollout重用提供了理论依据。
+*   **定理5.4 (Theorem 5.4)**：为提出的神经调度器推导出了次线性regret bound $\tilde{O}(\sqrt{T}(\tilde{d} + S\sqrt{\tilde{d}}) + \sqrt{T})$，其中$T$是时间步数，$\tilde{d}$是NTK的有效维度，$S$是奖励的几何结构相关项。这表明了调度器的学习效率。
+
+**实验结果：**
+在六个数学推理基准（AIME24、AIME25、AMC23、MATH500、Minerva、Olympiad）上使用Qwen3模型进行了广泛实验。
+*   **性能与效率提升**：CBS显著提高了GRPO、DAPO和GSPO等代表性RLVR方法的性能和训练效率。CBS*（组内调度器）平均相对性能提升分别为GRPO 5.0%、DAPO 5.8%、GSPO 2.0%，同时将策略优化时间平均减少了50.4%。CBS（全局调度器）进一步提升了性能，并展现出更高的训练奖励。
+*   **计算开销可忽略**：调度器带来的额外计算开销极小，不到总训练时间的4%。
+*   **消融研究**：验证了各模块的有效性。随机选择rollout会导致性能下降，表明数据选择的重要性。移除EMA奖励平滑或熵惩罚会降低性能和训练稳定性，尤其熵惩罚对于防止策略退化至关重要。
+*   **调度模式分析**：CBS能够根据不同的策略优化方法自适应调整调度模式，例如GRPO+CBS更多依赖数据交互历史，而GSPO+CBS则更多依赖奖励相关信号，这解释了其在不同方法上都能取得一致性能提升的原因。
+
 ## WebAgent CATTS
 Agentic Test-Time Scaling for WebAgents
 
@@ -11,8 +75,6 @@ https://arxiv.org/pdf/2602.12276 2026.2.13 伯克利等
 3. 提出了 CATTS (Confidence-Aware Test-Time Scaling)，一种动态计算分配技术，**仅在决策存在真正争议时才启用 arbiter**，从而在 WebArena-Lite 和 GoBrowse 上实现了9分数提升，并减少了最多2.3x token消耗。
 
 <img width="813" height="407" alt="image" src="https://github.com/user-attachments/assets/a2b2d23e-8e45-45cc-ba08-8f86544ae23d" />
-
-
 
 ## CMU MaxRL 
 Maximum Likelihood Reinforcement Learning 
@@ -2239,7 +2301,6 @@ LongCat-Flash-Thinking-2601的预训练沿袭了LongCat-Flash-Chat的方案，�
     *   **全流式异步Pipeline：** 移除RolloutManager内的批处理障碍，实现LLM生成、环境执行和奖励评估的样本粒度执行，并支持多版本异步训练以处理长尾生成问题。
     *   **大规模Agentic训练扩展：** 将RolloutManager分解为Lightweight-RolloutManager和多个RolloutController，利用PyTorch RPC扩展实现CPU空闲感知的远程函数调用和对象实例化。
     *   **PD Disaggregation with CPU Swapping：** 对于MoE模型，将Prefill和Decode部署在独立设备组上，通过KV-cache交换（chunked异步传输）和CPU-resident KV-cache解决设备内存限制和重计算开销，提高生成效率和吞吐量。
-![Uploading image.png…]()
 
 
 **3. Test-Time Scaling (测试时扩展) 通过Heavy Thinking：**
@@ -2403,7 +2464,7 @@ https://github.com/zhiyuanhubj/Uniqueness-Aware-RL 代码待开源，目前空�
 引入了策略层面的唯一性（Strategy-level Uniqueness）
 模型：Qwen2.5-7b，Qwen3-8b，OLmo3-7b
 <img width="761" height="392" alt="image" src="https://github.com/user-attachments/assets/965443d7-6dca-4750-b860-94568b66f9ed" />
-![Uploading image.png…]()
+<img width="528" height="433" alt="image" src="https://github.com/user-attachments/assets/50a2068f-64ca-495b-8ed2-b0ee6f368df7" />
 
 ## TTT-Discover
 Learning to Discover at Test Time 
@@ -3578,7 +3639,7 @@ https://arxiv.org/pdf/2503.20191 佐治亚理工 (与Revati一个团队) NVIDIA�
 <img width="1253" height="378" alt="image" src="https://github.com/user-attachments/assets/ca15a731-93af-463b-9e5f-85f9be3208f3" />
 <img width="608" height="487" alt="image" src="https://github.com/user-attachments/assets/55398ae2-e69c-41b9-997f-23436faf893a" />
 <img width="1247" height="384" alt="image" src="https://github.com/user-attachments/assets/c2d0a34a-3460-470c-b890-49b5bccace4c" />
-![Uploading image.png…]()
+<img width="528" height="433" alt="image" src="https://github.com/user-attachments/assets/50a2068f-64ca-495b-8ed2-b0ee6f368df7" />
 
 
 ## GDPO
@@ -4160,8 +4221,7 @@ https://github.com/SakanaAI/ShinkaEvolve
 <img width="918" height="417" alt="image" src="https://github.com/user-attachments/assets/aa11616d-5ab2-4899-a096-91bc799f22f0" />
 <img width="921" height="330" alt="image" src="https://github.com/user-attachments/assets/88d17153-f5ed-4b8b-ab16-2ec43ee36ee1" />
 <img width="935" height="415" alt="image" src="https://github.com/user-attachments/assets/4cbe6dc8-3c68-4610-99b1-7d891a6f519e" />
-![Uploading image.png…]()
-![Uploading image.png…]()
+<img width="960" height="324" alt="image" src="https://github.com/user-attachments/assets/41626307-ee09-4980-8ccc-ad84fddc89f0" />
 
 论文提出了一种名为 ShinkaEvolve 的新型开源框架，旨在通过利用大语言模型（LLMs）显著**提升程序演化过程的样本效率和解决方案质量**，以加速科学发现。该框架旨在克服现有 LLM 驱动的代码演化方法在样本效率低下（通常需要数千次评估）和闭源限制方面的缺点。
 
@@ -4477,7 +4537,6 @@ code: https://github.com/Trae1ounG/BuPO
     *   **训练动态分析：** BuPO训练初期能增强熵探索。适度的底层优化能够促进整体模型学习能力，但过度优化会导致模型崩溃。这表明选择合适的 $s_{\text{inter}}$ 至关重要。
 
 <img width="884" height="429" alt="image" src="https://github.com/user-attachments/assets/d6093ca7-9f24-4154-beed-43703769eb44" />
-![Uploading image.png…]()
 
 
 ## SpecFormer 
