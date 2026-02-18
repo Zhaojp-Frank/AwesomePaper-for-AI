@@ -1,6 +1,50 @@
 # AwesomePaper-for-AI
 Awesome or inspiring paper for AI
 
+## AREAL-DTA
+AREAL-DTA: Dynamic Tree Attention for Efficient Reinforcement Learning
+
+https://arxiv.org/pdf/2602.00482 2026.1.31 港科 清华大学  蚂蚁等
+
+1. 为优化LLM RL的**训练环节中**，因大量**rollout 序列共享长令牌前缀**而导致的计算效率低下问题。
+2. 通过采用深度优先搜索 (DFS) 策略动态遍历 rollout 前缀树，一次只具现化一个根到叶的路径来高效复用计算并大幅减少内存占用，同时结合负载均衡的分布式批处理机制实现多 GPU 扩展。
+3. Qwen3-8b模型RL训练任务（Taubench）8.3x训练吞吐提升（RL E2E 2.3x），峰值显存用量-50%以上，同时保持了训练稳定性。
+
+<img width="739" height="328" alt="image" src="https://github.com/user-attachments/assets/1dd07ded-ada5-4754-a116-edf0800c6233" />
+
+REAL-DTA通过引入一种深度优先搜索（DFS）的动态计算策略，有效利用了prefix共享，并克服了扩展性挑战。它还包含一个load-balanced的分布式batching机制，以在多GPU环境中高效扩展。
+
+**核心方法论——动态DFS遍历：**
+
+AREAL-DTA将rollout序列集合视为一个prefix tree $$T$$。其核心在于一个DFS遍历算法，它在Transformer-based policy model训练的forward和backward passes中动态执行：
+1. 栈维护： AREAL-DTA维护一个栈，代表从prefix tree根节点到当前访问节点的路径（即当前prefix）。栈中包含：(i) 当前prefix的token序列；(ii) 由当前policy model为该prefix生成的相应中间状态（即Transformer的Key/Value Cache，KV cache）。
+2. Push中间节点： 沿着DFS路径下行时，当访问到prefix tree的中间节点，将其push到栈中。这意味着扩展当前prefix并为新token执行forward computation，从前一个prefix的model state继续。具体来说，它利用前缀的cached KV state，将新token输入policy model，计算其log-probabilities，并更新扩展prefix的KV cache。新的KV cache被append到栈中。这一过程有效重用了prefix token的计算。
+3. 访问叶子节点： 当DFS遍历到达对应于完整序列$$s_i$$的叶子节点时，栈中包含完整的token序列$s_i$及其forward pass结果。此时，立即计算损失$$L(s_i)$$（例如，通过对正确token的负对数似然求和或应用RL reward），并将损失梯度注入到该序列的输出端，从而启动针对branch $$s_i$$的backward pass。这种“即时回传”策略确保一旦序列的forward pass完成，其计算图就不需要保留在内存中。
+4. Pop中间节点： 处理完叶子节点后，DFS遍历沿着该branch进行backward propagation，然后从prefix tree中pop出节点。通过pop操作，梯度从先前的$$L(s_i)$$传播到当前branch的policy model计算中。关键在于，当backpropagate通过一个在prefix tree中是分支节点（对应多个序列共享的token segments）时，来自所有这些序列的损失梯度将累积在该prefix节点和模型的参数中。AREAL-DTA通过按DFS遍历顺序依次执行每个branch的backward pass来正确处理这一点：共享prefix节点将接收多次梯度贡献（每个对应原始序列$s_i$的后代叶子节点一次），并在DFS遍历时对这些贡献进行求和。一旦完成当前prefix tree叶子节点计算的梯度回传，其对应的token和相关activations会从栈中pop出，回退到父级prefix state。此时，对应于已pop token的节点在计算图中变得不必要，其activations和任何临时梯度可以安全删除。然后继续DFS到下一个同级branch，使用仍然保留的prefix state。
+空间复杂度分析： 这种DFS遍历机制使得AREAL-DTA仅存储从根节点到叶子节点的当前路径的KV cache和少量栈状态。这意味着峰值内存使用量与最长序列的长度（即prefix tree中最长路径的长度）成比例，而非所有序列的总token数量。这显著优于现有方法的二次方内存增长。
+
+**系统优化：**
+为了进一步减少内存使用和提高计算效率，AREAL-DTA实施了一系列系统优化：
+1. 内存高效梯度计算： 通过交错进行forward和backward steps，动态构建和增量释放部分计算图。一旦中间节点被pop，表示其所有子孙叶子节点都已遍历，该节点可立即回传并释放。
+2. 长rollout序列的Chunked Backpropagation： 对于非常长的序列（数万个token），AREAL-DTA将backpropagation沿序列分成多个chunks（例如2048个token）。在每个chunk之后进行部分backpropagation以释放activations。实现方式是使用存储的prefix KV cache和outputs，重新计算该chunk的forward activations以重建计算图，然后立即backpropagate并释放该chunk的图。这引入了额外的forward计算成本，但通过合理选择chunk长度，可以摊销开销。
+3. 避免叶子节点KV cache计算： 在DFS遍历中，AREAL-DTA不对prefix tree的叶子节点存储KV cache。由于只有prefix节点才能作为chunked backpropagation执行期间的计算图重建锚点，叶子节点的KV cache永远不会被其他计算重用。
+4. 确定最优DFS遍历顺序： 采用贪婪算法优化DFS序列，目标是：(i) 最大化共享prefix的重用以最小化forward passes次数；(ii) 平衡backward pass segment长度以避免频繁的短步。这提高了内存效率和运行时稳定性。
+  
+**负载均衡并行化：**
+为实现大规模RL训练，AREAL-DTA引入了负载均衡的分布式batching策略。在异步RL框架中，rollouts不断生成并分发到多个trainer GPU。
+1. 问题定义： 将N个rollout序列分发给K个trainer GPU，每个GPU处理其group内的prefix tree $T_j$。目标是最小化各group最大成本$$C = \min \max_{j=1}^K C(T_j)$$，其中$$C(T_j)$$定义为$$T_j$$中所有节点token长度之和。
+2. 算法： AREAL-DTA采用词典顺序（实际上是DFS顺序）对N个序列进行排序，形成一个单prefix tree。然后将这个有序列表划分为K个连续的segments。这种划分方式最大程度地保留了prefix共享，因为连续的DFS segments会将具有共同prefix的序列聚类在一起。分割只会引入少量额外的token复制。通过对最大允许成本进行二分查找（binary search），结合贪婪检查，AREAL-DTA可以在$$O(N \log C(T))$$时间内找到近似最优的连续划分。
+  
+**实验评估：**
+AREAL-DTA在τ^2-bench工作负载和PPO算法上进行了评估，使用QWEN-3模型（1.7B、8B）作为RL training workflows，并与AREAL基线系统进行比较。
+1. 端到端RL训练性能（RQ1）：
+  - 奖励曲线： 在训练步数维度上，AREAL-DTA和AREAL展现出相似的奖励曲线，表明AREAL-DTA的设计不会影响异步RL训练的稳定性。
+  - 训练吞吐量： 在累计实际RL训练时间维度上，AREAL-DTA显著提高了RL训练效率。对于1.7B模型，AREAL-DTA实现1.28倍的端到端吞吐量提升；对于8B模型，提升高达2.28x。这主要归因于AREAL-DTA卓越的policy model训练性能，使其能将更多GPU资源分配给rollout生成阶段，从而实现更好的整体加速。
+2. 组件消融研究（RQ2）：
+  - Backward pass优化： 对比标准训练（带activation checkpointing的“Dense+CKPT”），AREAL-DTA的“Tree”方法实现了6.59x的平均加速。进一步应用避免叶子节点KV cache计算（“Cut Tail”或“CT”）和最优DFS遍历顺序（“DFS”）两项优化，加速分别提升至7.53倍和7.74倍。在充足显存预算下，增加backward chunk size（“LB”）可将加速提升至8.31x。AREAL-DTA展现出显著的内存效率（峰值GPU内存减少超过50%），避免了Activation Recomputation等辅助内存优化技术的需求，从而避免了其引入的计算开销，也解决了更大模型（4B/8B/14B）中的OOM问题。
+  - 数据并行均衡算法： 相较于传统的贪婪数据并行均衡算法，AREAL-DTA精心设计的负载均衡算法（基于DFS顺序和$$C(T)$$的连续划分）将系统性能退化降低了11.93%。
+
+
 ## SWE-World
 SWE-World: Building Software Engineering Agents in Docker-Free Environments
 
