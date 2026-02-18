@@ -1,6 +1,77 @@
 # AwesomePaper-for-AI
 Awesome or inspiring paper for AI
 
+## ThunderAgent
+ThunderAgent: A Simple, Fast and Program-Aware Agentic Inference System
+
+https://arxiv.org/pdf/2602.13692
+
+https://github.com/HaoKang-Timmy/ThunderAgent
+
+1. 现有LLM推理系统在处理multi-turn agentic工作流时，由于独立调度LLM和工具请求，**导致KV cache抖动**、跨节点**内存不平衡**和工具资源管理效率低下，从而**限制了吞吐量**并增加了延迟。
+2. 通过引入“LLM Programs”的程序抽象，实现**程序感知调度器和工具资源管理器**，优化KV cache命中率、缓解内存不平衡，并启用异步环境准备，从而统一管理异构资源。
+3. GLM4.6/Qwen235b(均FP8) + vLLM H100多机 （5090部署toolOrca Qwen3-8b）SWE等评测，对比vLLM和Continuum等，ThunderAgent在serving方面将吞吐量提高了1.5-3.6x；RL rollout吞吐提高了1.8-3.9x，并节省了4.2x内存 。
+
+<img width="761" height="383" alt="image" src="https://github.com/user-attachments/assets/88f5ed5c-eebc-419f-b4f7-cb02c0338a45" />
+
+大型语言模型（LLMs）现已广泛应用于复杂的、多轮的Agentic工作流中，例如coding、compute-use和科学发现。然而，现有系统通常将LLM推理引擎（如vLLM）和工具编排器（如Kubernetes）松散地组合起来，以“按请求”（per-request）的方式调度和分配资源。
+这种**缺乏对整个工作流端到端认知的设计**，导致了KV cache管理和工具执行环境的次优使用。具体而言，该论文指出当前Agentic推理系统面临三大挑战：
+
+1.  **KV cache thrashing（KV缓存颠簸）**：在tool-caling期间，系统会过早地驱逐KV cache，而**没有预见其在Agent工作流中未来的重用**, 重复的re-prefill成本显著增加了Agent工作流的端到端延迟（最高达7.14倍），并降低了吞吐量。
+2.  **Cross-node memory imbalance（跨节点内存不均衡）**：在多节点推理设置中，现有引擎为了最大化KV cache命中率，会将同一Agentic工作流的**所有请求固定到同一个节点**。然而，Agent工作流中的上下文长度（context length）**变化迅速且难以预测**，导致某些节点达到容量限制，而其他节点则利用率不足（峰值不均衡可达51%）。
+3.  **Tool lifecycle obliviousness（工具生命周期不感知）**：编排器**难以决定何时释放和准备工具执行所需的环境和资源**。这导致**未使用的沙盒和API服务器持续占用关键的磁盘空间和网络端口**，造成累积的资源泄漏（磁盘使用量线性增长）和系统故障。同时，Agentic工作流在推理前需要等待漫长的环境设置时间。
+<img width="752" height="338" alt="image" src="https://github.com/user-attachments/assets/100605b1-d2be-46e3-a629-e1034dc76d45" />
+
+本文提出了一种名为ThunderAgent的简单、快速且程序感知的Agentic推理系统。ThunderAgent的核心贡献在于其**对Agentic工作流的端到端视角**，并在此基础上构建了程序抽象、程序感知调度器和工具资源管理器。
+
+**核心方法论：**
+
+1.  **Program Abstraction（程序抽象）**：
+    ThunderAgent首先将Agentic工作流抽象为“Agentic Programs”。一个Agentic Program是一个一等调度单元，它跨越多个模型调用和工具执行而持久存在，并向运行时暴露语义状态。每个程序$P$被形式化为一个元组：
+    $P = \langle ID, c, T, L, \tau, s \rangle$
+    其中：
+    *   $ID$ 代表程序的唯一全局标识符。
+    *   $c$ 表示上下文中token的数量，对应于活跃执行期间的KV cache内存占用。
+    *   $T$ 跟踪程序所需工具环境的集合，以便在不再需要时进行垃圾回收。
+    *   $L$ 表示节点放置（GPU node）。
+    *   $\tau$ 表示执行阶段，包括“Reasoning”（推理，R）或“Acting”（行动，A）。
+    *   $s$ 表示调度状态，包括{Active, Paused, Terminated}。
+    这种抽象统一了对异构资源的视图，包括KV cache、系统状态以及外部工具资产（如磁盘内存和网络端口），并使调度与执行后端（如vLLM/SGLang）解耦。
+
+2.  **Program-Aware Scheduler（程序感知调度器）**：
+    基于程序抽象，ThunderAgent将Agentic推理调度建模为一个约束优化问题，旨在最小化重新计算（recomputation）和缓存（caching）开销，并最大化Prefilling和解码吞吐量，同时受限于GPU内存容量。
+    *   **成本模型**：系统采用“Space-Time Product”（STP）作为主要度量，定义为内存占用随处理时间积分。Agentic推理的总成本分解为：
+        $\text{Cost}_{\text{total}} \approx \text{Cost}_{\text{decode}} + \text{Cost}_{\text{prefill}} + \text{Cost}_{\text{recompute}} + \text{Cost}_{\text{unused}} + \text{Cost}_{\text{caching}}$
+        其中，$\text{Cost}_{\text{decode}}$ 和 $\text{Cost}_{\text{prefill}}$ 是有效工作，其余项是浪费的系统开销。优化目标是最小化 $\text{Cost}_{\text{recompute}}$（KV cache thrashing导致）、$\text{Cost}_{\text{unused}}$（内存不均衡导致）和 $\text{Cost}_{\text{caching}}$（工具执行期间空闲缓存导致）。
+    *   **减少Recomputation和Caching成本**：
+        引入程序感知等待队列。通过 `Restore` 操作将程序从等待队列调度到GPU执行，并通过 `Pause` 操作将活跃程序移出GPU并释放其KV cache。
+        系统周期性（每$\Delta t$时间）检测GPU后端是否发生thrashing。thrashing条件为：
+        $\text{C}_{\text{total}} < \sum_{p \in L} c_p$
+        其中 $\text{C}_{\text{total}}$ 是KV cache池的总token容量。当thrashing迫近时，ThunderAgent会暂停Acting状态的程序以释放内存。为了平衡 caching 成本和 recomputation 成本，ThunderAgent引入了一个时间衰减函数 $f(t_q)$，动态降低Acting程序的有效内存优先级：
+        $\text{C}_{\text{total}} < \sum_{p \in L, \tau = R} c_p + \sum_{q \in L, \tau = A} c_q \times f(t_q)$
+        其中 $t_q$ 是程序 $q$ 当前步骤的工具执行时间。理论推导（附录E.1）证明，当工具执行延迟满足无记忆性时，最优衰减函数形式为指数衰减 $f(t) = e^{-\lambda t}$ 或几何衰减 $f(k) = x^{-k}$。
+        为了最小化重新计算成本，系统采用 **Shortest-First Eviction（最短优先驱逐）** 策略。根据引理4.1，重计算成本与上下文长度的平方成正比 ($\text{Cost}_{\text{recompute}} \propto c_i^2$)。因此，优化问题为：
+        $\min_S \sum_{i \in S} c_i^2 \text{ s.t. } \sum_{i \in S} c_i \ge \Delta C$
+        严格选择具有最短上下文长度的程序进行驱逐可以最小化总重计算成本。调度器使用以下分数来决定程序的恢复和暂停：
+        $\text{S}_{\text{restore}}(P) = \frac{1}{c_P} + I(\tau = R)$
+        $\text{S}_{\text{pause}}(P) = \frac{1}{c_P} + I(\tau = A)$
+        其中指示函数 $I(\cdot)$ 确保Reasoning程序优先恢复，Acting程序优先暂停。
+    *   **减少内存不均衡**：
+        ThunderAgent将所有后端副本的等待队列统一为一个 **global program-aware waiting queue（全局程序感知等待队列）**。由于暂停程序的KV cache被假定已驱逐，其重计算成本与节点无关。这使得暂停的程序可以被调度到任何具有可用内存容量的副本，从而实现负载均衡并减少 $\text{Cost}_{\text{unused}}$。
+
+3.  **Program-Aware Tool Resource Management（程序感知工具资源管理）**：
+    *   **Hook-based garbage collection（基于Hook的垃圾回收）**：当程序的调度状态 $s$ 变为 `Terminated` 时，系统会触发即时拆卸序列，系统性地回收沙盒、网络socket和计算槽位，从而防止资源泄漏并保持磁盘内存消耗近乎恒定。
+    *   **Asynchronous environment preparation（异步环境准备）**：ThunderAgent监控全局等待队列。当高优先级程序接近恢复阈值时，系统会异步准备其执行环境，隐藏了初始化开销，显著降低了端到端延迟。
+
+**实验评估：**
+ThunderAgent在多种Agentic工作负载上进行了评估，包括编码Agent（OpenHands和mini-SWEAgent）、路由Agent（ToolOrchestra）和科学发现Agent（OpenHands），以及分布式GPU节点上的RL rollout。
+
+*   **Serving性能**：ThunderAgent在所有测试场景下，在高并发度下表现出卓越的吞吐量，比vLLM和Continuum分别提高了1.48–3.58倍和1.17–3.31倍。对于具有可预测工具调用时间的场景，KV cache命中率接近最优（约100%）。即使在工具执行时间具有高度随机性的场景下，ThunderAgent也能通过动态权衡caching和recomputation来维持最佳吞吐量。
+*   **RL Rollout性能**：在两节点H100集群上的RL rollout测试中，ThunderAgent比vLLM + SGLang Gateway基线提高了1.79–3.92倍的吞吐量，展现了其在内存密集型分布式RL工作负载中的高效性。
+*   **消融研究**：端到端延迟分解显示，吞吐量提升主要来源于Prefill和解码延迟的降低。工具资源管理策略贡献了约10%的延迟改进，并节省了4.2倍的磁盘内存。对 $\Delta t$ 和 $f(t)$ 参数的敏感性分析表明，ThunderAgent在不同参数设置下均能保持高吞吐量，证明了该方法的鲁棒性。
+
+
+
 ## 20% 高墒token
 Beyond the 80/20 Rule: Reinforcement Learning with Verifiable Rewards
 
