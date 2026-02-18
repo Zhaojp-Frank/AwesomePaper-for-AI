@@ -1,6 +1,57 @@
 # AwesomePaper-for-AI
 Awesome or inspiring paper for AI
 
+## 微软On-Policy Context Distillation
+On-Policy Context Distillation for Language Models
+
+https://arxiv.org/pdf/2602.12275 2026.2.12 微软
+1. On-Policy Context Distillation (OPCD) 提出一种新方法，通过在学生模型自身轨迹上训练并最小化其与上下文感知教师模型之间的**token-level 反向KL 散度**，将大语言模型的瞬态上下文知识内化至模型参数。
+2. 🚀 OPCD 在**经验知识和系统提示**蒸馏等应用中表现出色，在**数学推理、文本游戏和领域特定任务上，其性能一致优于**基线方法，并能更好地保持模型的**域外泛化**能力。
+3. Qwen3-8b为教师模型；1.7b～8b模型为学生。OPCD 有效支持跨模型尺寸蒸馏，使得小模型能从大教师模型中内化经验知识，同时强调了**提取的经验知识而非原始轨迹的重要性**，并**发现教师-学生蒸馏比自蒸馏更**稳定。
+
+<img width="771" height="312" alt="image" src="https://github.com/user-attachments/assets/8351d284-4183-4fbf-9a56-9fda41b20f03" />
+<img width="671" height="672" alt="image" src="https://github.com/user-attachments/assets/55dff6f3-d362-43db-839e-6e3cb2ba1198" />
+<img width="765" height="427" alt="image" src="https://github.com/user-attachments/assets/1892bcdb-7d34-4bf7-af34-ae460ffedfcb" />
+<img width="765" height="427" alt="image" src="https://github.com/user-attachments/assets/1892bcdb-7d34-4bf7-af34-ae460ffedfcb" />
+
+本文提出了一种名为On-Policy Context Distillation (OPCD) 的框架，旨在使大型语言模型 (LLMs) 将in-context knowledge 内化到其参数中。传统LLMs的in-context learning 能力虽然强大，但in-context knowledge 具有瞬时性，每次重置上下文后都需要重新“学习”。Context distillation 尝试通过训练一个学生模型来模仿context-conditioned teacher 的行为，从而将上下文压缩到学生模型的权重中。
+然而，现有的context distillation 方法主要依赖于off-policy training 和前向 Kullback-Leibler (KL) divergence 最小化，这带来了两个主要限制：一是“exposure bias”，即学生模型在训练时依赖teacher-generated 或 ground-truth 数据，但在推理时必须生成自己的自回归序列；二是前向KL divergence 倾向于“mode-covering”行为，导致学生模型为所有teacher-generated tokens 分配概率质量，可能导致“hallucinations”或分布过于宽泛。
+
+**核心方法 (OPCD)**
+
+OPCD 旨在通过将on-policy distillation 与 context distillation 结合起来，更有效地内化in-context knowledge。其核心思想是学生模型从其自身生成的 trajectories 中学习，而不是从teacher 的 trajectories 中学习。
+
+1.  **On-Policy Rollout**: 在训练过程中，给定一个输入 $x$，学生模型 $\pi_\theta$ (**不带任何上下文** $c$) 会生成完整的响应轨迹 $y \sim \pi_\theta(\cdot | x)$。**这是 "on-policy" 的关键，因为学生模型是根据其当前的参数**来探索并生成数据。
+
+2.  **Reverse KL Divergence Loss**: 一旦学生模型生成了轨迹 $y$，OPCD 会计算学生模型 token 分布与 context-conditioned teacher 模型 token 分布之间的 reverse KL divergence。损失函数定义为：
+    $$L(\theta) = E_{(x,c) \sim D, y \sim \pi_\theta (\cdot|x)}\left[\frac{1}{|y|}\sum_{t=1}^{|y|} D_{KL} (\pi_\theta (\cdot | x, y_{<t})\|\pi_{\text{teacher}}(\cdot | c, x, y_{<t}))\right]$$
+    其中，$D$ 是训练数据，$y$ 是由学生模型采样的响应序列，$|y|$ 是序列长度，$y_{<t}$ 表示序列 $y$ 在时间步 $t$ 之前的部分。
+   **Token-level reverse KL divergence** 定义为：
+    $$D_{KL} (\pi_\theta (\cdot | x, y_{<t})\|\pi_{\text{teacher}}(\cdot | c, x, y_{<t})) = E_{y'_t \sim \pi_\theta (\cdot|x,y_{<t})}\left[\log \frac{\pi_\theta (y'_t | x, y_{<t})}{\pi_{\text{teacher}}(y'_t | c, x, y_{<t})}\right]$$
+    $$ = \sum_{y'_t \in V} \pi_\theta (y'_t | x, y_{<t})(\log \pi_\theta (y'_t | x, y_{<t}) - \log \pi_{\text{teacher}}(y'_t | c, x, y_{<t}))$$
+    其中 $V$ 是词汇表。在实现中，为了计算效率，求和通常限制在学生模型预测概率最高的top-k tokens ($V_{\text{top-k}}$) 上。
+
+3.  **Mode-Seeking Behavior**: 最小化 reverse KL divergence 会鼓励“mode-seeking”行为。这意味着学生模型 $\pi_\theta$ 会将其概率质量集中在 teacher 模型 $\pi_{\text{teacher}}$ 认为高概率的tokens 上。如果学生模型生成了一个 teacher 模型（在上下文 $c$ 下）认为高概率的 token，这会鼓励学生模型增加该 token 的概率。相反，如果学生模型为一个 teacher 模型认为不太可能的 token 分配高概率，这种行为则会被抑制。这使得学生模型 $\pi_\theta$ 的生成轨迹逐渐与 context-aware teacher $\pi_{\text{teacher}}$ 对齐，从而有效地将上下文 $c$ 内化到其参数中。
+
+4.  **Teacher Model Configurations**:
+    *   **Teacher-Student Distillation**: teacher 模型可以是一个比学生模型更大或更强大的模型。teacher 和学生模型也可以从相同的权重初始化，但 teacher 模型参数可以保持冻结或周期性更新，以增加训练稳定性。这是默认配置。
+    *   **Self-Distillation**: teacher 和学生模型共享相同的底层模型权重并同时更新。差异仅在于输入：teacher 看到 $[c; x]$，而学生只看到 $x$。
+
+**应用场景**
+
+OPCD 在两个重要应用中展示了有效性：
+1.  **Experiential Knowledge Distillation**: 模型从其历史解决方案轨迹中提取可转移的经验知识，并将其内化到参数中。这使得模型能够通过积累已解决问题的经验而逐步改进，并在推理时无需扩展上下文即可巩固这些知识。
+2.  **System Prompt Distillation**: 模型内化编码在外部优化 prompts 中的有益行为，用于医学问答和安全分类等专业任务，从而避免在部署时显式依赖 prompts 带来的计算开销和延迟。
+
+**实验结果**
+
+实验在数学推理、文本游戏和特定领域任务上进行，OPCD 始终优于基线方法。
+*   **性能提升**: OPCD 在测试准确性方面持续超越 off-policy context distillation 基线，并能超越原始模型在上下文中提供经验知识时的性能。
+*   **OOD (Out-of-Distribution) 能力和遗忘缓解**: OPCD 更好地保持了模型在 OOD 任务上的性能，并缓解了灾难性遗忘，这与on-policy training 在缓解遗忘方面的先前研究一致。
+*   **跨尺寸蒸馏**: OPCD 能够有效地进行跨尺寸蒸馏，使较小的学生模型能够从较大的 teacher 模型中内化经验知识。值得注意的是，直接将 teacher 生成的知识注入到较小模型的上下文中反而会降低性能，这强调了 on-policy 对齐的重要性。
+*   **Teacher-Student Distillation vs. Self-Distillation**: 实验发现 teacher-student 配置比 self-distillation 更稳定且性能更优，因为连续进化的模型作为 teacher 会引入高方差，从而破坏学习信号的稳定性。
+*   **经验知识的重要性**: 实验表明，将原始响应轨迹直接用作经验上下文会降低性能，而通过模型提取出的结构化经验知识则能带来显著的性能提升。
+
 ## 优化器scaling law
 Towards Robust Scaling Laws for Optimizers 
 
