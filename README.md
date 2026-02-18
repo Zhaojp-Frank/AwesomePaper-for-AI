@@ -1,6 +1,19 @@
 # AwesomePaper-for-AI
 Awesome or inspiring paper for AI
 
+## WebAgent CATTS
+Agentic Test-Time Scaling for WebAgents
+
+https://arxiv.org/pdf/2602.12276 2026.2.13 伯克利等
+
+1. 研究了多步骤 LLM agent 在推理时缩放的局限性，发现统一增加每步计算资源的方法收益递减，且 LLM arbiter 虽有助益但可能“过度思考”并覆盖正确决策。
+2. 通过对 agent 投票分布的经验分析，发现**不确定性统计量（如熵和 top-1/top-2 margin）与任务成功相关**，能**有效预测何时额外仲裁**有益或有害。
+3. 提出了 CATTS (Confidence-Aware Test-Time Scaling)，一种动态计算分配技术，**仅在决策存在真正争议时才启用 arbiter**，从而在 WebArena-Lite 和 GoBrowse 上实现了9分数提升，并减少了最多2.3x token消耗。
+
+<img width="813" height="407" alt="image" src="https://github.com/user-attachments/assets/a2b2d23e-8e45-45cc-ba08-8f86544ae23d" />
+
+
+
 ## CMU MaxRL 
 Maximum Likelihood Reinforcement Learning 
 https://arxiv.org/pdf/2602.02710 CMU 清华等 2026.2.2
