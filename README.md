@@ -1,6 +1,89 @@
 # AwesomePaper-for-AI
 Awesome or inspiring paper for AI
 
+## CMU MaxRL 
+Maximum Likelihood Reinforcement Learning 
+https://arxiv.org/pdf/2602.02710 CMU 清华等 2026.2.2
+
+[https://zanette-labs.github.io/](https://zanette-labs.github.io/MaxRL/)
+https://github.com/tajwarfahim/maxrl
+
+中文解读：https://mp.weixin.qq.com/s/DgWUEJlG-FpKmFhIxBF8eg
+
+1.  数学/代码等二元奖励任务中，作者认为当前的标准强化学习 (RL) 并未最大化隐式正确性输出的似然，而是仅优化了其**一阶近似（pass@1）**，为此，提出了Maximum Likelihood Reinforcement Learning (MaxRL) 框架。
+2.  MaxRL通过定义一个计算量索引的目标函数族来近似最大似然，该族函数基于对数似然的Maclaurin展开，并通过一个简单、无偏的策略梯度估计器，使其在采样计算量增加时，目标函数能更忠实地逼近最大似然。
+3.  基于veRL，Qwen3-4b模型，展现出更好的数据和计算扩展趋势，更强的抗过拟合能力，并在测试时间效率方面实现了**8x~20x**的提升。
+   
+<img width="974" height="610" alt="image" src="https://github.com/user-attachments/assets/25de4f09-827e-4933-a4d6-9ac1a1c9fbfd" />
+<img width="973" height="653" alt="image" src="https://github.com/user-attachments/assets/bf5d4bd7-897e-4b51-836e-357d363e500d" />
+<img width="970" height="247" alt="image" src="https://github.com/user-attachments/assets/c3da2b0a-f956-4e1d-a006-ed9deaa96130" />
+<img width="918" height="811" alt="image" src="https://github.com/user-attachments/assets/82c75c99-0145-4e66-8d5d-11ef9bae4b9e" />
+
+<img width="760" height="725" alt="image" src="https://github.com/user-attachments/assets/8bcf478f-9136-477a-99cf-7647dc5d49f7" />
+<img width="722" height="287" alt="image" src="https://github.com/user-attachments/assets/f2418aec-7bc6-4d07-8989-c1a8bb3902c1" />
+
+本文提出了一种名为“最大似然强化学习”（Maximum Likelihood Reinforcement Learning, MaxRL）的新框架，旨在解决在存在隐式成功概率的采样基二元反馈任务中，标准强化学习（Reinforcement Learning, RL）未能最大化该似然的问题。RL通常优化的是预期奖励，而这仅是对最大似然目标的一种低阶近似。MaxRL通过将强化学习技术应用于最大似然的近似，弥合了标准RL与精确最大似然之间的鸿沟。
+
+**背景与动机：**
+在导航、代码生成、数学问题求解等任务中，模型的成功取决于外部验证器对生成结果的判断，这产生了一个二元结果（成功或失败）。从端到端视角看，模型为每个输入隐式地诱导了一个成功概率 $p_{\theta}(x)$，这定义了一个关于正确性的似然。原则上，应该最大化这个似然，但在存在非可微中间采样过程时，直接优化最大似然（Maximum Likelihood, ML）是困难的，因为成功概率 $p_{\theta}(x)$ 可能非常小。RL被用作一种规避非可微性的方法，而非其本身是更好的优化目标。
+文章指出，在群体层面，RL的目标梯度 $\nabla_{\theta} J_{RL} = \mathbb{E}_{x}[\nabla_{\theta} p_{\theta}(x)]$ 与ML的目标梯度 $\nabla_{\theta} J_{ML} = \mathbb{E}_{x}[\nabla_{\theta} \log p_{\theta}(x)] = \mathbb{E}_{x}\left[\frac{1}{p_{\theta}(x)} \nabla_{\theta} p_{\theta}(x)\right]$ 存在显著差异。ML的梯度中包含 $1/p_{\theta}(x)$ 的逆概率重加权项，使得模型更加关注那些难以成功、成功率较低的输入，从而带来截然不同的优化动态。
+
+**核心方法：MaxRL**
+MaxRL通过引入一个“计算量索引族”（compute-indexed family）的采样基目标，在标准RL和精确ML之间进行插值。当分配额外的采样计算量时，这些目标会逐渐接近最大似然优化。
+
+1.  **最大似然的Maclaurin展开：**
+    文章首先对最大似然目标进行了Maclaurin展开。对于一个固定输入 $x$，设其成功概率为 $p := p_{\text{pass}}(x)$。则最大似然目标可以表示为：
+    $J_{ML}(x) = \log p = -\sum_{k=1}^{\infty} \frac{(1-p)^k}{k} = -\sum_{k=1}^{\infty} \frac{\text{fail@k}(x)}{k}$
+    其中 $\text{fail@k}(x) = 1 - \text{pass@k}(x)$ 是模型在 $k$ 次独立同分布采样中全部失败的概率。
+    对该目标求导，得到ML梯度的展开形式：
+    $\nabla_{\theta} J_{ML}(x) = \sum_{k=1}^{\infty} \frac{1}{k} \nabla_{\theta} \text{pass@k}(x)$
+    这表明最大似然优化了一个无限调和混合的 $\text{pass@k}$ 梯度，其中高阶项编码了在成功率 $p$ 很小时至关重要的罕见成功事件。相比之下，经典的RL方法（如 REINFORCE）仅优化 $\text{pass@1}$ 目标，即对应于上述展开式的第一项 $\nabla_{\theta} \text{pass@1}(x)$。因此，标准RL是对最大似然目标的一阶近似。
+
+2.  **MaxRL目标函数：**
+    为了在有限采样下近似最大似然，MaxRL定义了一个截断的Maclaurin展开式作为其目标函数。对于截断水平 $T \in \mathbb{N}$：
+    $J^{(T)}_{\text{MaxRL}}(x) = -\sum_{k=1}^{T} \frac{(1-p)^k}{k}$
+    其梯度为：
+    $\nabla_{\theta} J^{(T)}_{\text{MaxRL}}(x) = \sum_{k=1}^{T} \frac{1}{k} \nabla_{\theta} \text{pass@k}(x)$
+    当 $T=1$ 时，MaxRL退化为标准RL；当 $T \to \infty$ 时，MaxRL收敛到精确的最大似然。这表明截断水平 $T$ 直接控制了参与学习的正确性事件的阶数。MaxRL提供了一个在计算量和最大似然近似精度之间进行权衡的框架。
+
+3.  **MaxRL的梯度估计器：**
+    文章的关键贡献之一是推导了一个简单且无偏的梯度估计器。
+    *   **最大似然梯度的条件形式（定理1）：**
+        $\nabla_{\theta} J_{ML}(x) = \mathbb{E}[\nabla_{\theta} \log m_{\theta}(z|x) | f(z) = y^*(x)]$
+        这一定理指出，最大似然梯度是**仅从成功轨迹中获得的梯度平均值**。
+    *   **经验梯度估计器：**
+        MaxRL不采用复杂的成功条件策略采样（在成功率低时计算成本高），而是从非条件策略 $m_{\theta}(\cdot|x)$ 采样 $N$ 条潜在轨迹 $z_1, \ldots, z_N$。
+        定义 $r_i := \mathbb{I}\{f(z_i) = y^*(x)\}$ 为二元成功奖励， $S_i := \nabla_{\theta} \log m_{\theta}(z_i|x)$ 为分数函数。
+        设 $K := \sum_{i=1}^N r_i$ 为成功采样的数量。MaxRL的经验梯度估计器定义为：
+        $\hat{g}_N(x) = \begin{cases} \frac{1}{K} \sum_{i=1}^N r_i S_i, & K \ge 1 \\ 0, & K = 0 \end{cases}$
+    *   **估计器-目标等价性（定理2）：**
+        该估计器的期望值恰好是截断的最大似然目标 $J^{(N)}_{\text{MaxRL}}(x)$ 的梯度：
+        $\mathbb{E}[\hat{g}_N(x)] = \nabla_{\theta} J^{(N)}_{\text{MaxRL}}(x)$
+        这意味着，增加采样次数 $N$ 不仅仅是降低了方差，而是改善了MaxRL所优化的目标本身，使其更接近精确的最大似然。与REINFORCE仅通过总采样数 $N$ 进行归一化不同，MaxRL通过成功采样数 $K$ 进行归一化，使得增加 $N$ 对MaxRL而言是增加了ML近似的阶数。
+    *   **方差削减：**
+        为了降低高方差问题，MaxRL引入了一个零均值控制变量，即无条件平均分数函数 $V_N := \frac{1}{N}\sum_{i=1}^N \nabla_{\theta} \log m_{\theta}(z_i|x)$。
+        方差削减后的估计器为：
+        $\tilde{g}_N(x) = \frac{1}{K} \sum_{i=1}^N r_i S_i - \frac{1}{N} \sum_{i=1}^N S_i = \sum_{i=1}^N \left(\frac{r_i}{K} - \frac{1}{N}\right)S_i$
+        实际实现中，当 $K>0$ 时，使用的优势函数为 $\frac{1}{N \cdot \bar{r}(x)} (r_j - \bar{r}(x)) S_j$，其中 $\bar{r}(x) = K/N$ 是经验通过率。这等价于 $\frac{1}{K} (r_j - K/N) S_j$。
+
+**统一的权重函数视角：**
+RL、MaxRL、RLOO (REINFORCE with leave-one-out baseline) 和 GRPO (Group Relative Policy Optimization) 的群体水平梯度都可以表示为 $\nabla_{\theta} J = \mathbb{E}_{x \sim \rho}[w(p_{\theta}(x))\nabla_{\theta} p_{\theta}(x)]$，其中 $w(p)$ 是一个仅依赖于通过率 $p$ 的标量权重函数。
+*   RL：$w(p) = 1$
+*   GRPO：$w(p) = 1/\sqrt{p(1-p)}$
+*   MaxRL($T$)：$w(p) = (1-(1-p)^T)/p$
+*   ML：$w(p) = 1/p$ (当 $T \to \infty$ 时，MaxRL($T$) 的权重函数收敛于此)
+这种权重函数视角揭示了不同方法如何根据任务难度（通过率 $p$）分配学习信号。MaxRL随着 $T$ 的增加，在低通过率区域（即困难输入）中，其权重函数独特地接近最大似然的权重函数，优先学习困难任务。而GRPO虽然也提高了低通过率输入的权重，但其方式不同，且不会随着计算量的增加而收敛到ML。
+
+**实验结果：**
+MaxRL在所有测试模型和任务中均表现出优越性，实现了高达20倍的测试时间扩展效率增益。
+1.  **与精确最大似然的比较（ImageNet）：** 在图像分类任务中，MaxRL在足够的计算量（采样次数）下，能够紧密匹配交叉熵训练（精确ML）的性能，而REINFORCE即使在大量采样下也无法取得显著进展。
+2.  **无限数据场景（Maze Navigation）：** 在生成式迷宫任务中，MaxRL在更多计算量（rollouts）下表现出比GRPO和RLOO更好的扩展趋势。MaxRL在较低的计算预算下就能超越其他方法在最高预算下的性能。
+3.  **数据稀缺场景（GSM8K）：** 在固定数据集上的长时间训练中，MaxRL虽然初始阶段增益较慢，但最终性能更高，且相比GRPO和REINFORCE，其 $\text{pass@k}$ 退化（过拟合）问题显著减轻，表明MaxRL对过拟合更具抵抗力，并能维持输出多样性。
+4.  **大规模推理模型训练（Qwen3 LLMs）：** 在数学推理任务上，MaxRL在 `pass@1` 和 `pass@k` 方面均Pareto-dominates GRPO，并且 `pass@k` 退化现象极少。这在推理时通过重复采样结合完美验证器，带来了高达20倍的效率提升。
+5.  **MaxRL的优化动态特征：** MaxRL在困难提示（低通过率）上产生更大的梯度范数，在简单提示上产生较小的梯度范数，这与交叉熵在可微设置中的行为一致。此外，MaxRL始终能使模型为更大比例的训练提示生成至少一个正确的rollout。
+
+
+
 ## TreeTraining
 Tree Training: Accelerating Agentic LLMs Training via Shared Prefix Reuse
 
