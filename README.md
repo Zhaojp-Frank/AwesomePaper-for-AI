@@ -1,6 +1,72 @@
 # AwesomePaper-for-AI
 Awesome or inspiring paper for AI
 
+## TreeTraining
+Tree Training: Accelerating Agentic LLMs Training via Shared Prefix Reuse
+
+https://arxiv.org/pdf/2511.00413 快手 首次更新2025.11.1；最后更新2026.2.9
+
+1. 针对Agentic负载（如Terminus，Claude code）LLM训练中多分支、共享前缀的轨迹导致大量冗余计算，提出了Tree Training框架来消除这种冗余。共享的比例大约28%～88%
+2. Tree Training的核心组件是Gradient Restoration，它允许每个共享前缀只计算一次，同时通过Tree Packing和引擎重新设计来高效处理大型轨迹树。
+3. Qwen30B-A3/32B，Tree Training在真实Agentic轨迹上实现了6.2x的训练加速，且不影响模型质量。
+<img width="809" height="525" alt="image" src="https://github.com/user-attachments/assets/68608330-1170-40f3-add0-b808f435c582" />
+
+本文介绍了Tree Training，一个用于加速Agentic LLMs训练的框架。Agentic LLMs的训练通常涉及多轮交互轨迹，这些轨迹因并发工具使用、思考模式（think-mode）、子agent、上下文管理等运行时设计而分支，形成带有共享前缀的树状token轨迹。现有训练方法通常将这些轨迹线性化，并独立处理每个分支，导致前向和后向传播中存在大量冗余计算。
+
+**核心问题与挑战：**
+传统的prefix caching方法在推理和训练的前向传播中非常有效，因为它利用了因果attention mask使得相同前缀产生相同的key/value states。然而，在反向传播中，attention操作的转置特性导致梯度具有反因果性。具体来说，对于attention操作 $O = P \times V$，反向传播中 $dV = P^T \times dO$。这里的 $P^T$ 是上三角矩阵（anti-causal），意味着某个token的梯度 $dV_i$ 不仅依赖于其自身的输出梯度 $dO_i$，还聚合了所有后续token的梯度 $dO_j$ ($j \ge i$)。因此，即使两个序列共享相同的前缀，它们不同的后缀也会导致不同的输出梯度 $dO_{suffix}$，从而使得共享前缀部分的梯度 $dV_{prefix}$ 产生分歧，传统的缓存方法无法直接应用于反向传播，因为需要存储所有后缀的信息，这将导致GPU内存爆炸。
+
+**Tree Training框架：**
+为了解决这一挑战，Tree Training引入了**Gradient Restoration**机制，以消除反向传播中的冗余计算。该框架还包括**Tree Packing**内存优化策略和重新设计的训练引擎，使其能够原生处理树状结构数据。
+
+**核心方法论详细解释：**
+
+1.  **Gradient Restoration（梯度恢复）**
+    *   **基线方法与冗余：** 当前标准做法是将树状轨迹的每个叶节点（即每个完整执行路径）线性化为一个单独的序列。对于具有共享前缀的多个序列，这意味着共享前缀部分会在每个序列的反向传播中被重复计算，造成效率低下。
+        *   基线序列化：$X_{base}(i) = \text{Concat}[\text{token}(i), X_{base}(\text{child}(0, i)), \text{token}(i), X_{base}(\text{child}(1, i)), \dots, \text{token}(i), X_{base}(\text{child}(m, i))]$
+    *   **Tree Training序列化：** 我们的方法仅将共享前缀 $\text{token}(i)$ 连接一次，并在所有子节点中重用。
+        *   我们的序列化：$X_{ours}(i) = \text{Concat}[\text{token}(i), X_{ours}(\text{child}(0, i)), X_{ours}(\text{child}(1, i)), \dots, X_{ours}(\text{child}(m, i))]$
+    *   **梯度等价性：** 目标是确保我们的方法在单次计算共享前缀时，产生的梯度与基线方法（重复计算）所累积的梯度在数学上是等价的。对于任意线性变换 $Y = X \times \text{weight}$，其梯度 $d\text{weight} = X^T \times dY$。为了保持等价性，需要满足以下条件：
+        *   $P^T \times dY_{ours_P} = P^T \times (\sum_{i=1}^n dY_{base_{P_i}})$
+        *   $\sum_{i=1}^n S_i^T \times dY_{ours_{S_i}} = \sum_{i=1}^n S_i^T \times dY_{base_{S_i}}, \forall i \in [1, n]$
+        其中，$P$ 是前缀token，$S_i$ 是第 $i$ 个后缀token，$dY_{ours_P}$ 和 $dY_{ours_{S_i}}$ 分别是我们方法中前缀和后缀的输出梯度，$dY_{base_{P_i}}$ 和 $dY_{base_{S_i}}$ 分别是基线方法中第 $i$ 个序列的前缀和后缀的输出梯度。
+    *   **核心梯度补偿条件：** 通过分析，上述条件可以简化为对输出梯度 $dY$ 的要求：
+        *   $dY_{ours_P} = dY_{base_{p1}} + dY_{base_{p2}} + \dots + dY_{base_{pn}}$
+        *   $dY_{ours_{S_i}} = dY_{base_{S_i}}, \forall i \in [1, n]$
+    *   **跨操作传递性：**
+        *   **线性操作：** 由于线性操作是逐点计算的 ($dX_i = dY_i \times \text{weight}^T$)，如果上述梯度补偿条件成立，那么输入梯度 $dX$ 也能保持等价性。这意味着梯度修正具有传递性。
+        *   **Attention操作：** 类似地，对于Attention操作中的 $dV$ 计算，如果输出梯度 $dO$ 满足补偿条件，那么 $dV$ 也能保持等价性。
+        *   **其他逐点操作（如RoPE）：** 对于 $Y_i = f(X_i)$ 形式的逐点操作，反向传播中的梯度 $dX_i = dY_i \cdot \frac{\partial Y_i}{\partial X_i}$。为了保持传递性，必须确保 $\frac{\partial Y_{ours_i}}{\partial X_{ours_i}} = \frac{\partial Y_{base_i}}{\partial X_{base_i}}$。这意味着在Tree Training中，必须恢复token的原始位置ID，以确保位置编码（如RoPE）的计算与基线方法一致。
+    *   **实现细节：**
+        *   **Shared Prefix Attention Mask：** 在前向传播中，引入修改后的因果掩码，以确保在packed的树状数据中，不同轨迹的token之间不会相互泄露信息，同时允许共享前缀的正确attention计算。这基于FlashAttention V3实现。
+        *   **Position Embedding：** 将packed序列中的token位置ID映射回其在原始轨迹中的位置ID，以保持位置信息的一致性。
+        *   **Gradient Scaler（梯度缩放器）：** 这是梯度恢复的关键。在反向传播中，计算出每个共享节点被多少个下游序列重用（即其“tree-scale”系数）。然后，将该节点的梯度乘以其对应的tree-scale系数。例如，如果一个前缀节点被5个轨迹重用，其梯度将乘以5。这补偿了因跳过冗余计算而“丢失”的梯度贡献，从而确保总梯度累积与独立处理每个序列时在数学上是等价的。
+
+2.  **Tree Packing（树状打包）**
+    *   **必要性：** 单个agentic轨迹树可能过大，无法完全载入GPU内存。
+    *   **目标：** 在内存限制 $C$ 下，将大型计算树分割成多个内存可行的子树，同时最大化共享前缀的重用，从而最小化总训练成本。
+    *   **复杂性：** 理论上的最优分割是一个NP-hard问题（结合了动态规划和bin packing），计算成本过高。
+    *   **启发式DFS算法：** 本文采用了一种贪婪的启发式深度优先搜索（DFS）算法。该算法线性扩展，并遵循三个原则：
+        1.  优先分配最深的叶子节点（它们对总轨迹长度贡献最大）。
+        2.  在每个子树内，将深度相似的叶子节点分组，以提高打包同质性。
+        3.  以深度优先顺序遍历树，当累积长度超过容量 $C$ 时，启动新的遍历以创建新的子树。
+    *   **单路径与多路径打包（附录A）：**
+        *   **单路径：** 每次训练步选择一个内部节点 $u$ 作为共享前缀，其 $L(u)$（从根到 $u$ 的长度）和 $R(u)$（$u$ 下所有叶子的总残余长度）的总和必须小于 $C$。这种方法可能无法达到最大重用。
+        *   **多路径：** 泛化到可以同时激活多个共享路径，共享子轨迹可以分支并重叠。这通过一个动态规划框架实现，其中每个子树生成一组候选状态，父状态通过“Lift”（传播子状态）和“Bin packing”（组合 lifted demands）操作构建。尽管理论最优，但其复杂性高（状态空间指数增长，bin packing是NP-hard）。因此，实践中采用启发式算法。
+
+**性能与正确性：**
+*   **无偏性：** Tree Training不会引入训练偏差，因为每个全局batch都是一个自包含的树，数据混洗仅发生在完整的树样本之间，不破坏树内部结构。树状结构源自单个rollout，并在一个梯度累积步骤内处理。
+*   **指标：**
+    *   **Potential Overlap Ratio (POR)：** 衡量共享前缀固有的冗余度，即 $1 - \frac{N_{tree}}{N_{X_{base}(\text{root})}}$，表示理论上的计算重用上限。
+    *   **Effective Reuse Ratio (ERR)：** 衡量在内存约束下实际实现的计算重用效率，即 $1 - \frac{N_{pack}}{N_{X_{base}(\text{root})}}$。
+*   **实验结果：**
+    *   在包含思维模式（think mode）等真实agentic轨迹数据集上，Tree Training在Qwen3-32B（密集模型）上实现了平均6.3倍的训练加速，在Qwen3-30B（MoE模型）上实现了平均6.2倍的训练加速，捕获了理论潜力（POR约6.5倍）的95%以上。
+    *   训练损失曲线与基线完美重叠，数值偏差小于1%，严格验证了数学等价性。
+    *   合成数据集实验表明，加速效果随POR的增加而单调增强，在理想情况下（完整树能放入GPU内存）可达8.7倍加速。
+    *   额外引入的内存开销（attention masks、original position IDs、gradient scalers）与最小激活内存占用相比可以忽略不计。
+    *   在Terminal Bench 2.0上，使用Tree Training在完整轨迹树上进行训练（开启think-mode）的模型性能显著优于仅在单一最长轨迹上训练的基线模型，得分从20.9提升到28.8。
+
+
 ## AREAL-DTA
 AREAL-DTA: Dynamic Tree Attention for Efficient Reinforcement Learning
 
