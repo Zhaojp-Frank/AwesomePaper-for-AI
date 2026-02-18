@@ -1,6 +1,20 @@
 # AwesomePaper-for-AI
 Awesome or inspiring paper for AI
 
+## 20% 高墒token
+Beyond the 80/20 Rule: Reinforcement Learning with Verifiable Rewards
+
+https://arxiv.org/abs/2506.01939 qwen 清华等，2025.6/2025.11 NIPS25
+
+1. LLM思维链（CoT）推理过程中，只有少数高熵令牌（即“分叉令牌”）作为关键决策点驱动模型探索不同的推理路径，而大多数低熵令牌则用于完成既定的语言结构。
+2. 提出了一种改进的RLVR方法，仅**对20%的最高熵令牌进行策略梯度更新**，这在Qwen3模型上实现了与全梯度更新相当甚至更优的性能，且效果随模型尺寸增大而增强。
+3. 最大Qwen3-32b dense模型，DAPO+20% ～2000steps，AIME24/25 Avg@16分别增加11分和7分；长度稳定到10K
+   
+<img width="757" height="423" alt="image" src="https://github.com/user-attachments/assets/11a026e3-a944-4c3d-9923-17210d10ae2a" />
+<img width="773" height="335" alt="image" src="https://github.com/user-attachments/assets/c09796bf-1091-4645-ba23-c3912d438b7e" />
+
+
+
 ## 微软On-Policy Context Distillation
 On-Policy Context Distillation for Language Models
 
@@ -12,7 +26,7 @@ https://arxiv.org/pdf/2602.12275 2026.2.12 微软
 <img width="771" height="312" alt="image" src="https://github.com/user-attachments/assets/8351d284-4183-4fbf-9a56-9fda41b20f03" />
 <img width="671" height="672" alt="image" src="https://github.com/user-attachments/assets/55dff6f3-d362-43db-839e-6e3cb2ba1198" />
 <img width="765" height="427" alt="image" src="https://github.com/user-attachments/assets/1892bcdb-7d34-4bf7-af34-ae460ffedfcb" />
-<img width="765" height="427" alt="image" src="https://github.com/user-attachments/assets/1892bcdb-7d34-4bf7-af34-ae460ffedfcb" />
+
 
 本文提出了一种名为On-Policy Context Distillation (OPCD) 的框架，旨在使大型语言模型 (LLMs) 将in-context knowledge 内化到其参数中。传统LLMs的in-context learning 能力虽然强大，但in-context knowledge 具有瞬时性，每次重置上下文后都需要重新“学习”。Context distillation 尝试通过训练一个学生模型来模仿context-conditioned teacher 的行为，从而将上下文压缩到学生模型的权重中。
 然而，现有的context distillation 方法主要依赖于off-policy training 和前向 Kullback-Leibler (KL) divergence 最小化，这带来了两个主要限制：一是“exposure bias”，即学生模型在训练时依赖teacher-generated 或 ground-truth 数据，但在推理时必须生成自己的自回归序列；二是前向KL divergence 倾向于“mode-covering”行为，导致学生模型为所有teacher-generated tokens 分配概率质量，可能导致“hallucinations”或分布过于宽泛。
