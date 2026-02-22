@@ -1,6 +1,106 @@
 # AwesomePaper-for-AI
 Awesome or inspiring paper for AI
 
+## SLA2 
+SLA2: Sparse-Linear Attention with Learnable Routing and QAT
+
+https://arxiv.org/pdf/2602.12675 清华张金涛 伯克利等 2026.2.14
+1. 💡SLA2提出了一种**新颖的稀疏线性注意力机制**，通过引入**可学习的路由和更忠实的注意力公式**，改进了现有SLA模型在启发式计算分配和分解不匹配方面的局限性。
+2. ⚙️该方法**动态地选择稀疏或线性**注意力分支，并**通过量化感知训练（QAT）**集成低bit注意力，进一步**提升了计算效率和准确性**。
+3. SLA2在视频扩散模型上实现了97%的注意力稀疏度，带来了18.6x的注意力计算加速，同时**保持甚至超越了生成质量**。
+
+本文提出SLA2，一种用于扩散模型（diffusion models）的稀疏-线性注意力（Sparse-Linear Attention, SLA）方法。
+SLA旨在通过结合稀疏注意力和线性注意力来加速扩散模型，并在视频生成方面表现出色。然而，原始的SLA存在两个主要局限性：(i) 它**依赖于基于注意力权重大小的启发式拆分**，这可能不是最优的；(ii) 对SLA中注意力误差的正式分析揭示了**其与稀疏和线性注意力直接分解之间存在**不匹配。
+
+为解决这些问题，SLA2引入了三项关键创新：
+1.  一个可学习的路由（learnable router），**动态选择**每个注意力计算应使用稀疏注意力还是线性注意力。
+2.  一个更忠实和直接的稀疏-线性注意力公式，它使用一个**可学习的比例系数来组合稀疏和线性注意力分支**。
+3.  一个稀疏加低比特注意力（sparse + low-bit attention）设计，通过量化感知微调（Quantization-Aware Fine-Tuning, QAT）引入低比特注意力，以减少量化误差。
+
+实验结果表明，在视频扩散模型上，SLA2能实现97%的注意力稀疏度，并提供18.6倍的注意力加速，同时保持生成质量。
+
+**1. 原始SLA的局限性与SLA2的动机**
+
+SLA的原始动机是将全注意力图 $P$ 分解为稀疏部分 $P_1$ 和低秩部分 $P_2$，即 $P = P_1 + P_2$，其中 $P_1 = P \odot M$ 且 $P_2 = P \odot (1-M)$， $M$ 是二值掩码。SLA的目标是使用稀疏注意力近似 $P_1$，使用线性注意力近似 $P_2$。全注意力输出为 $O_f = P V = P_1V + P_2V$。
+
+原始SLA的稀疏注意力分支存在误差。稀疏注意力并不直接产生 $P_1$，因为它会在每个行的掩码位置上重新归一化概率。设 $\alpha$ 为 $P_1$ 每行的概率和，即 $\alpha = P_1 \mathbf{1}$。稀疏注意力分布 $P_s$ 实际上是 $P_1 / \alpha$。因此，期望的稀疏注意力输出 $P_1V$ 应为 $(\alpha \odot P_s)V = \alpha \odot O_s$，其中 $O_s = P_sV$。SLA通过一个可学习的线性投影 $\text{Proj}(O_l)$ 来补偿，但这种补偿并不直接，导致线性注意力分支需要额外抵消稀疏注意力分支的缩放误差。
+
+SLA2提出一个更合理的公式：$P \approx \alpha \odot P_s + (1-\alpha) \odot P_l$，其中 $P_s$ 和 $P_l$ **都是行归一化（row-normalized）的注意力权重矩阵**。对应的注意力输出为 $O = \alpha \odot (P_sV) + (1-\alpha) \odot (P_lV)$。在此公式中，$\alpha \odot P_s$ 更直接地匹配 $P_1$，消除了行方向的缩放不匹配，因此不再需要额外的 $\text{Proj}(\cdot)$。同时，$ (1-\alpha) $ 确保了输出的行归一化。
+
+**2. SLA2设计细节**
+<img width="412" height="295" alt="image" src="https://github.com/user-attachments/assets/dbb7dadc-46ef-4df2-8ee6-e76cb21b109f" />
+
+SLA2的整体公式为：$O = \alpha \odot O_s + (1-\alpha) \odot O_l$，其中 $\alpha \in \mathbb{R}^{N \times 1}$ 是一个可学习的向量，其值在0到1之间。
+具体计算如下：
+- **稀疏注意力输出** $O_s$：
+  $O_s = \text{softmax}(QK^T/\sqrt{d} \odot M)V$
+-**线性注意力输出** $O_l$：
+  $O_l = \text{norm}(\phi(Q)\phi(K)^T \odot (1-M))V$
+  其中，$\phi(\cdot)$ 是线性注意力的激活函数，通常使用 softmax 函数；$\text{norm}$ 操作确保矩阵的每行和为1。
+- **掩码** $M$：
+  $M = R(Q, K)$
+  **这里的 $R$ 是可学习的路由器**。
+
+在实际实现中，为了效率，SLA2的 $O_s$ 和 $O_l$ 计算避免了完整的矩阵乘法。对于 $O_s$，它构建在FlashAttention算法之上，仅对 $M=1$ 的位置执行 $QK^T$ 和 $PV$ 的矩阵乘法，并跳过其他计算。对于 $O_l$，它不直接计算 $QK^T$，而是首先计算 $K^TV$（针对 $M=0$ 的位置），然后将结果与 $Q$ 相乘，利用了矩阵乘法的结合律。
+
+**3. 可学习的路由器（Learnable Router）**
+
+可学习路由器 $R$ 的目标是动态输出一个掩码 $M$，决定 $P$ 中哪些概率应由稀疏注意力分支计算。其**决策主要依赖于 $Q$ 和 $K$，与 $V$ 无关**。由于序列长度 $N$ 可能很大，直接在完整的 $Q$ 和 $K$ 上操作会导致 $O(N^2)$ 的复杂度。为降低计算成本，SLA2利用相邻 tokens 通常表现出相似分布的特点，对 $Q$ 和 $K$ 进行平均池化（mean pooling）得到压缩后的 $\bar{Q} \in \mathbb{R}^{N/b_q \times d}$ 和 $\bar{K} \in \mathbb{R}^{N/b_k \times d}$。
+
+为了使 $R$ 可学习，引入了两个线性投影 $\text{proj}_q, \text{proj}_k \in \mathbb{R}^{d \times d}$。掩码 $M_c$ 的计算步骤如下：
+- $P_c = \text{proj}_q(\bar{Q}) \text{proj}_k(\bar{K})^T$
+- $M_c = \text{Top-k}(\text{Pc}, k\%)$
+其中，$\text{Top-k}$ 操作是行方向的，将每行前 $k\%$ 的值设为1，其余为0。压缩掩码 $M_c$ 可以扩展为 $N \times N$ 的掩码 $M$。
+
+在训练过程中，由于 $\text{Top-k}$ 操作不可微分，SLA2将其替换为可微分的 **$\text{SoftTop-k}$** 操作：
+$\text{SoftTop-k}(\text{k%}, P_c)_{ij} = \sigma\left( \frac{(\text{Pc})_{ij}}{\tau} + \lambda_i \right)$
+其中**$\sigma$ 表示 sigmoid 函数，$\tau$ 是温度参数，$\lambda_i$ 通过二分查找（binary search）确定**，以确保每行之和为 $k\% \times N/b_k$。该操作通过重参数化技巧（reparameterization trick）实现梯度反向传播。
+<img width="485" height="186" alt="image" src="https://github.com/user-attachments/assets/c90481b5-58e9-41b7-baad-6d5c96b8a5da" />
+
+**4. 量化感知训练（Quantization-aware Training, QAT）**
+
+为进一步加速稀疏注意力分支 $O_s$ 的计算，SLA2引入了低比特注意力（low-bit attention），并采用 QAT 方式。QAT 将量化效应整合到训练过程中，使模型参数能够适应量化误差，从而在推理时提高低比特精度。
+
+具体而言，在训练的前向传播中，使用低比特量化注意力；而在反向传播中，则完全使用 FP16 精度。
+- **前向传播（低比特注意力）**：
+  将 $Q$ 和 $K$ 量化为 $(\hat{Q}, s_Q)$ 和 $(\hat{K}, s_K)$。
+  $S = \text{dequant}(\hat{Q}\hat{K}^T/\sqrt{d}, s_Q, s_K)$
+  $P = \text{softmax}(S \odot M)$
+  然后将 $P$ 和 $V$ 量化为 $(\hat{P}, s_P)$ 和 $(\hat{V}, s_V)$。
+  $O_s = \text{dequant}(\hat{P}\hat{V}, s_P, s_V)$
+  其中 $\text{quant}(\cdot)$ 将 FP16 张量映射到低比特张量（如 INT8 或 FP8）及其缩放因子，$ \text{dequant}(\cdot) $ 将结果重新缩放到 FP16。
+
+- **反向传播（仅 FP16）**：
+  设 $dO_s$ 为 $O_s$ 的梯度。反向传播完全在 FP16 精度下进行，使用原始的 FP16 输入 $(Q, K, V)$ 和前向输出 $O_s$。
+
+**5. SLA2训练过程**
+
+SLA2采用两阶段训练策略：
+- **阶段1：初始化 $R$ 和 $\alpha$**
+  此阶段旨在为 $R$ 和 $\alpha$ 找到一个更好的初始值，以确保后续扩散模型微调的稳定性和有效性。数据集由每个注意力层在每个扩散时间步的 $Q, K, V$ 张量组成。对于不同的稀疏度设置（例如 5%、4% 和 3%），训练 $R$ 和 $\alpha$。在此阶段，路由器的 $\text{Top-k}$ 操作被可微分的 $\text{SoftTop-k}$ 替代。损失函数为全注意力（Full Attention）和SLA2输出之间的均方误差（MSE）：
+  $L = \text{MSE}(\text{FullAttn}(Q, K, V), \text{SLA2}(Q, K, V, k\%, R, \alpha))$
+
+- **阶段2：微调扩散模型 $\Theta$ 和 $\alpha$**
+  此阶段将扩散模型中的注意力模块替换为SLA2，并使用端到端扩散损失对整个扩散模型 $\Theta$ 和 $\alpha$ 进行微调。在此阶段，路由器的计算与推理保持一致，即使用硬性 $\text{Top-k}$（hard Top-k），这意味着 $R$ 的参数在第一阶段训练后被固定。这样训练出的模型能够适应高稀疏度注意力，并在高稀疏度下实现更好的性能。
+
+**6. 实验结果**
+<img width="941" height="587" alt="image" src="https://github.com/user-attachments/assets/9089da3e-1841-4cbb-a229-dfa2ce704d81" />
+<img width="467" height="507" alt="image" src="https://github.com/user-attachments/assets/bd7d657a-031c-42e4-a429-86a51c7b89de" />
+<img width="484" height="313" alt="image" src="https://github.com/user-attachments/assets/80234740-e9e9-490a-957f-b07b465a9a38" />
+<img width="481" height="295" alt="image" src="https://github.com/user-attachments/assets/7902479e-7430-4f9d-885c-7dcc33bdd4b7" />
+
+SLA2在Wan2.1-1.3B-480P和Wan2.1-14B-720P视频生成模型上进行了微调和评估。
+- **质量表现**：在90%和95%的稀疏度下，SLA2在所有视频质量指标上持续优于所有基线方法。即使在更高的97%稀疏度下，SLA2仍能超越90%稀疏度下的所有基线方法。有趣的是，经过微调后，稀疏注意力方法甚至可以在许多指标上超越全注意力。
+- **效率表现**：
+    - **核函数速度（Kernel Speed）**：在RTX5090上，SLA2在97%稀疏度下比FlashAttn2快18.7倍，比VMoba（95%）快11.7倍，比VSA（95%）快2.6倍。SLA2超越了所有基线方法。
+    - **端到端延迟（End-to-end Latency）**：在Wan-1.3B-480P模型上，注意力延迟从97秒降至7秒（13.9倍加速），使整体端到端延迟降低了2.30倍。在Wan-14B-720P模型上，端到端延迟进一步降低了4.35倍。
+
+**7. 消融研究**
+
+- **量化感知训练（QAT）**：不使用QAT进行微调时，生成视频的质量显著下降，这证实了QAT的有效性。低比特量化本身提供了大约1.3倍的核函数速度提升。
+- **可学习路由器（Learnable Router）**：与原始SLA中使用的Top-k路由器相比，SLA2的可学习路由器显著提高了模型性能。
+- **稀疏度变化（Varying Sparsity）**：稀疏度越低，性能通常越好。即使在97%稀疏度下，SLA2仍然表现出色。
+
 ## ThunderAgent
 ThunderAgent: A Simple, Fast and Program-Aware Agentic Inference System
 
