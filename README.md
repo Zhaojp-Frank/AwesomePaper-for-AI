@@ -1,6 +1,26 @@
 # AwesomePaper-for-AI
 Awesome or inspiring paper for AI
 
+## Magma优化器
+On Surprising Effectiveness of Masking Updates in Adaptive Optimizers
+
+https://arxiv.org/pdf/2602.15322 2026.2.16 西北大学 Google
+
+<img width="796" height="338" alt="image" src="https://github.com/user-attachments/assets/302659b4-d2d8-4f4d-ac83-bb00174a4cda" />
+
+1. 介绍了一种新颖的优化器 Magma，它通过**随机Bernoulli 分布masked参数更新**并结合**动量-梯度对齐**，参数更新被跳过，但动量估计（moment estimates）仍然进行密集更新。为了保持更新的无偏性，未被掩蔽的更新会进行适当的重新缩放.
+2. 随机掩蔽在优化过程中引入了一种**隐式的、依赖曲率的几何正则化**，有助于**平滑优化轨迹并引导模型收敛到更平坦**的损失景观区域。
+3. Magma 作为现有自适应优化器的即插即用替代方案，在各种 LLM 预训练场景下，包括面对**重尾梯度噪声**和异构二次曲面时，都持续超越了最先进的优化器，且计算开销可忽略不计。
+
+<img width="859" height="463" alt="image" src="https://github.com/user-attachments/assets/3b914fa5-cf97-41ca-a4b2-cf23b2c35fff" />
+<img width="852" height="326" alt="image" src="https://github.com/user-attachments/assets/2af9285e-fd7a-4407-b0cc-87aea452d010" />
+
+*   **LLaMA 预训练 (C4 数据集)**：Magma 持续提高所有基优化器（Adam, LaProp, RMSProp）的性能。特别是，RMSProp+Magma 在所有模型规模（60M 到 1B）上都取得了最低的困惑度（perplexity），为该基准测试建立了新的 SOTA。它超越了计算密集型的 Muon 和 SOAP，以及复杂的增强器如 APOLLO+SGG。Magma 在模型规模增大时性能提升更显著，这与较大模型优化景观更复杂且非光滑的特点相符。
+*   **Nano MoE 预训练 (OpenWebText 数据集)**：MoE 模型以其复杂的非光滑优化特性著称。Magma 在此设置下也持续改进了 Adam 和 Muon 的性能。Muon+Magma 达到了最佳整体性能，表明 Magma 的掩蔽机制与结构化预处理在优化过程中具有互补作用。
+*   **重尾梯度噪声下的表现**：在受控的线性 Transformer 基准测试中，Magma 在重尾梯度噪声下显著优于 Adam，而在轻尾噪声下两者表现相似。Magma 在重尾噪声下始终保持更小的鲁棒条件数（robust condition number），表明其更新限制在损失景观中条件较好的区域，这验证了曲率依赖正则化的有效性。
+*   **异构二次函数**：在具有相同特征谱但不同块曲率结构的二次函数优化问题上，Magma 在异构问题上比 AdamW 收敛更快且最终损失更低。这与 LLM 预训练中观察到的收益相吻合，表明 Magma 在曲率病态且在参数子空间中不对齐的情况下特别有效。
+
+
 ## Progressive Thought Encoding
 Training Large Reasoning Models Efficiently via Progressive Thought Encoding
 
