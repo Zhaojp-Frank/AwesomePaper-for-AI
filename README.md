@@ -1,6 +1,22 @@
 # AwesomePaper-for-AI
 Awesome or inspiring paper for AI
 
+## Pascal
+PASCAL: A Phase-Aware Scheduling Algorithm for Serving Reasoning-based Large Language Models
+https://arxiv.org/pdf/2602.11530 2026.2.12 韩国
+
+1. reasoning-based LLM 引入了新的服务挑战，因为其扩展的、**用户不可见的** reasoning phase 会在 GPU 内存受限时显著增加 Time-To-First-Token (TTFT)，而现有调度器未能区分这些阶段。
+2. PASCAL 提出了一种 phase-aware 的分层调度算法，它**优先处理 reasoning phase 以降低 TTFT**，并在 **answering phase 中使用受控的 preemptions 和 token pacing**来保持 Quality-of-Experience (QoE)，同时实现请求的动态迁移。
+3. **基于vLLM的模拟器上进行评估（！）** PASCAL 将尾部 TTFT 降低了高达 72%，同时保持了 answering phase 的 SLO 达标率，证明了针对 reasoning-based LLM 部署进行 phase-aware 调度的重要性。
+并经过真实系统验证（Intel Xeon Platinum 8558 CPU + NVIDIA H100 96GB GPU），MAPE误差较低。
+
+<img width="519" height="236" alt="image" src="https://github.com/user-attachments/assets/b316eb44-1170-4e6e-a73a-98cb443db8e3" />
+
+
+模型与数据集：使用DeepSeek-R1-Distill-Qwen-**32B**，工作负载来自AlpacaEval2.0和Arena-Hard，这些数据集的推理和回答token长度分布均有涉及。
+基线：FCFS（vLLM默认策略）和RR（时间共享抢占式调度）。
+指标：TTFT（从请求提交到第一个回答token生成）、SLO违规率（QoE < 0.95）和总吞吐量。
+
 ## AMPD
 Efficient Multi-round LLM Inference over Disaggregated Serving
 
