@@ -1,7 +1,23 @@
 # AwesomePaper-for-AI
 Awesome or inspiring paper for AI
 
-## SLA2 
+## Progressive Thought Encoding
+Training Large Reasoning Models Efficiently via Progressive Thought Encoding
+
+https://arxiv.org/pdf/2602.16839 2026.2.18 罗切斯特大学 微软
+
+1. 强化学习 (RL) 训练面临效率挑战，因为长推理序列会占用大量 KV cache 内存，而滑动窗口缓存策略则会损害模型的推理性能。
+2. 提出**Progressive Thought Encoding**，一种参数**高效微调方法**，通过将**中间推理逐步编码为固定大小的向量**表示，使得 LRMs 即使在**固定大小的 KV cache **下也能有效推理。
+3. 最多8bdense模型，方法在多种数学基准测试中，平均准确率比基于 LoRA 的微调高出 19.3%，并将 GPU 峰值内存使用降低了～50%。
+
+<img width="836" height="512" alt="image" src="https://github.com/user-attachments/assets/73c86d98-ff4a-4d6f-a1aa-2ed0716a0a57" />
+<img width="857" height="343" alt="image" src="https://github.com/user-attachments/assets/c4707af7-e0fc-4948-ad99-e0d0f3343fd7" />
+
+<img width="828" height="291" alt="image" src="https://github.com/user-attachments/assets/7250add4-6255-410d-979b-17e42db42512" />
+<img width="841" height="327" alt="image" src="https://github.com/user-attachments/assets/51e3f832-fd87-4211-8a00-b1f747bb8afa" />
+
+   
+## SLA2
 SLA2: Sparse-Linear Attention with Learnable Routing and QAT
 
 https://arxiv.org/pdf/2602.12675 清华张金涛 伯克利等 2026.2.14
