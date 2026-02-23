@@ -1,6 +1,25 @@
 # AwesomePaper-for-AI
 Awesome or inspiring paper for AI
 
+## AMPD
+Efficient Multi-round LLM Inference over Disaggregated Serving
+
+https://arxiv.org/pdf/2602.14516 2026.2.16 东南 上海交大 北大等
+
+1. 多轮LLM推理交错（interleaved）工作负载模式 在PD分离服务范式下，面临并发工作负载模式处理不足和模型部署配置次优的挑战。
+2. AMPD系统引入了基于**实时负载的自适应路由**和**预填充任务重排**序机制，并采用整数线性规划进行**最优资源分配和并行策略的离线规划**。
+3. AMPD基于NV Dynamo/NIXL开发， Qwen3-32B, Llama3.1-70B 和 Mixtral-8x7B 三种 LLM，4 台 H20 (96GB)服务器（故意选了个计算差劲的机器？），对比了 Dynamo（解耦基线）、vLLM（共存基线）和 vLLM-Continuum（针对多轮工作流优化的 vLLM）。ToolBench, GAIA, HotpotQA, DuReader 等多轮工作流轨迹。主要评估指标是 SLO 达成率。显著提高了服务水平目标（SLO）达成率，相较于现有基线平均提升了67.29%至339.74%。
+   
+<img width="443" height="180" alt="image" src="https://github.com/user-attachments/assets/7e9d6366-ebb3-4f8d-9341-b7bd2565cafd" />
+
+<img width="364" height="161" alt="image" src="https://github.com/user-attachments/assets/a4baf611-adf9-4ac8-a931-ca067c5b9269" />
+
+<img width="459" height="448" alt="image" src="https://github.com/user-attachments/assets/ad6bb644-cc29-410c-ae57-7d7fbd027dfe" />
+
+端到端对比：AMPD 在所有实验中均取得了最高的 SLO 达成率。相较于 Dynamo 和 vLLM，AMPD 平均将 SLO 达成率分别提高了 67.29% 和 339.74%（最高可达 967.54% 和 3435.1%）。这表明 AMPD 有效地平衡了 TTFT 和 ITL 之间的权衡。
+消融研究：自适应路由机制将 13.9%-31.7% 的**预填充任务路由到解码 Worker 本地执行**，显著减轻了预填充 Worker 的负担，使 SLO 达成率提高了 27.37%-350%。预填充重排序策略在此基础上进一步提高了 13.42%-14.81%。两项技术共同带来了 44.47%-402% 的提升。
+敏感性分析：预填充重排序中窗口大小的变化对性能影响较小（3% 以内差距）。自适应路由中参数 \alphaα\alphaα 和 \betaβ\betaβ 的适中值能更好地平衡预填充和解码 Worker 的负载，从而提高整体系统效率。
+
 ## Think Deep, Not Just Long
 Think Deep, Not Just Long: Measuring LLM Reasoning Effort via Deep-Thinking Tokens 
 
