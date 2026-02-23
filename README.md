@@ -1,6 +1,29 @@
 # AwesomePaper-for-AI
 Awesome or inspiring paper for AI
 
+
+## 检索召回
+Empty Shelves or Lost Keys? Recall Is the Bottleneck for Parametric Factuality
+
+https://arxiv.org/pdf/2602.14080 Google, 以色列等 2026.2.15
+
+1. 现有大型语言模型（LLM）的事实性评估未能区分知识缺失（“空货架”）和知识检索失败（“key丢失”），为此，本文提出了一个行为框架“知识画像”（knowledge profiling），用于表征模型的参数事实性知识。
+2. 为实现这一诊断，研究者构建了WikiProfile这一新型基准测试，该测试通过一个自动化流程生成，该流程使用基于网络搜索的提示式LLM来构建和验证事实。
+3. 对13个LLM的400万次响应进行评估后发现，前沿模型在**知识编码上几乎饱和**，但**召回能力仍是瓶颈**，且**“思考”（thinking）机制能显著改善召回**，这表明未来的进展将更多依赖于知识的利用而非单纯的模型扩展。
+
+<img width="441" height="590" alt="image" src="https://github.com/user-attachments/assets/eb8fa984-fa0e-4b0d-85fe-df4bf2b7611c" />
+
+<img width="420" height="461" alt="image" src="https://github.com/user-attachments/assets/c59767d1-6ef7-450d-aa86-152f678a5145" />
+
+召回是前沿LLM的事实性瓶颈： 对于Gemini-3-Pro和GPT-5等前沿模型，知识编码已接近饱和（95-98%的事实已被编码），但这些模型在不启用thinking的情况下仍无法直接召回25-33%的已编码事实。这意味着召回失败是主要错误来源，且随着模型规模的扩大，错误重心从编码失败转向召回失败。
+
+召回失败的系统性模式：
+事实流行度： 不流行（长尾）事实的编码率与流行事实接近，但其召回率显著低于流行事实（通常差距超过25%）。这表明**长尾问题并非源于知识缺失，而是召回困难**。
+逆向诅咒： LLMs在生成逆向问题（例如，**知道“A是B”但无法回答“什么是B”**）的答案时表现不佳，但在多项选择（验证）任务中，它们对逆向问题的识别能力与直接问题相当。这**暗示“逆向诅咒”反映的是召回不对称性，而非缺乏双向关联知识**。
+措辞： 在本研究的设置中，问题的不同措辞对模型性能没有显著影响。
+
+Thinking作为关键的恢复机制： 结果表明，**thinking能有效恢复那些已编码但无法直接访问的事实**。对于thinking-optimized LLMs，thinking能恢复40-65%已编码但未直接知晓的事实，而对未编码事实的恢复率仅为5-20%。这支持了**thinking主要促进知识召回**，而非仅仅通过多步推理来生成答案。Thinking带来的提升**在长尾事实和逆向问题等挑战性场景中尤为明显**。
+
 ## Pascal
 PASCAL: A Phase-Aware Scheduling Algorithm for Serving Reasoning-based Large Language Models
 https://arxiv.org/pdf/2602.11530 2026.2.12 韩国
