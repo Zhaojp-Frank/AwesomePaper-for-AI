@@ -1,6 +1,48 @@
 # AwesomePaper-for-AI
 Awesome or inspiring paper for AI
 
+## Think Deep, Not Just Long
+Think Deep, Not Just Long: Measuring LLM Reasoning Effort via Deep-Thinking Tokens 
+
+https://arxiv.org/pdf/2602.13517 弗吉尼亚大学 Google 2026.2.12
+
+1. Chain-of-Thought (CoT)长度并非衡量推理质量的可靠指标，本研究引入了“deep-thinking tokens”来量化其内在推理努力。
+2. “deep-thinking tokens”指的是那些内部预测在更深层模型中经历**显著修正的token**，它们的**比例（DTR）与模型在数学和科学基准测试中的准确性呈现出强烈的正相关**，显著优于基于长度和置信度的基线。
+3. 提出了**Think@𝑛策略**，通过优先**选择DTR较高的样本，在不牺牲性能的前提下，通过对不理想生成进行早期拒绝**，将**推理成本降低了约一半**，甚至超越了标准的Self-Consistency方法。
+4. 八个推理 LLMs 变体（GPT-OSS 家族、DeepSeek-R1-70B、Qwen3-30B-Thinking）
+
+<img width="605" height="344" alt="image" src="https://github.com/user-attachments/assets/a29d9c39-f560-46ad-8527-9b4919005d52" />
+
+<img width="1018" height="423" alt="image" src="https://github.com/user-attachments/assets/780cd9ca-f3f5-44f8-acdd-e7cd26e1941b" />
+<img width="710" height="475" alt="image" src="https://github.com/user-attachments/assets/29e4bbe5-1f87-4be8-84a5-355d86782bcc" />
+
+这篇论文题为《Think Deep, Not Just Long: Measuring LLM Reasoning Effort via Deep-Thinking Tokens》，提出了一种新的衡量大型语言模型 (LLMs) 推理努力的方法：Deep-Thinking Tokens，并在此基础上引入了 Deep-Thinking Ratio (DTR)。
+
+**核心问题与贡献**
+现有研究表明，LLMs 通过延长 Chain-of-Thought (CoT) 推理可以增强其推理能力，但这通常以增加测试时计算量为代价。然而，研究发现原始 token 计数并非推理质量的可靠指标：生成长度的增加与准确性之间没有一致的正相关，甚至可能导致“过度思考 (overthinking)”和性能下降。为了解决这一问题，作者引入了 Deep-Thinking Tokens 的概念，旨在量化推理时的内在努力。Deep-Thinking Tokens 指的是那些在模型深层中其内部预测经历显著修订才收敛的 token。论文核心贡献在于：
+1.  提出了 Deep-Thinking Ratio (DTR)，一种新的推理时思考努力度量，通过计算序列中预测在深层才稳定下来的 token 比例来衡量。
+2.  实验证明，在多个推理基准和模型家族上，DTR 与任务准确性呈现强烈的正相关，显著优于基于长度和置信度的基线。
+3.  基于 DTR，提出了一种名为 Think@𝑛 的测试时缩放策略，通过基于短前缀的 DTR 估计来优先选择具有高 DTR 的样本，从而在显著降低推理成本的同时，达到或超越了标准 Self-consistency 的性能。
+<img width="726" height="749" alt="image" src="https://github.com/user-attachments/assets/e38dd220-fe98-4aaf-affd-87fe7325be2b" />
+
+**主要发现**:
+1.  **DTR 与准确性的强相关性**: DTR 与任务准确性表现出**最强且最稳定的关系**，平均 Pearson correlation coefficient $r = 0.683$，显著优于所有基线。
+2.  **长度指标的不可靠性**: Token 计数与准确性**呈中度负相关**（平均 $r = -0.59$），表明更长的生成通常与较低的性能相关联，印证了“过度思考”现象。
+3.  **置信度指标的局限性**: 基于置信度的指标（Log probability, Negative perplexity, Negative entropy, Self-Certainty）表现出中度正相关（平均 $r = 0.219 \sim 0.605$），但其表现跨模型和基准异质，表明它们可能混淆了其他因素，如过度自信。
+4.  **超参数的影响**: 稳定阈值 $g$ 对 DTR 与准确性的相关性影响更大；深度分数 $\rho$ 主要影响 DTR 分数的范围，但保持了整体一致的正斜率。这说明 DTR 对超参数选择具有一定的鲁棒性。
+
+**应用：Think@𝑛**
+基于 DTR 的强大指示能力，作者提出了 Think@𝑛 策略，用于更高效地进行测试时缩放。该策略通过 DTR **对生成的样本进行排序，并优先选择 DTR 较高的样本进行聚合**（多数投票）。
+
+**性能与成本效益**:
+*   Think@𝑛 通过 DTR 估计（仅使用短前缀，如 50 个 token）**实现早期终止不具前景的生成**，显著降低了推理成本。
+*   在 AIME 25、AIME 24、HMMT 25 和 GPQA-D 四个基准上，Think@𝑛 匹配或超越了标准 Self-consistency (Cons@n) 的准确性，同时将推理成本降低了约 50%。
+*   与 Mean@𝑛、Long@𝑛、Short@𝑛 和 Self-Certainty@𝑛 等其他聚合方法相比，Think@𝑛 实现了**最佳的准确性-成本权衡**，表现出 Pareto-optimal 性能。
+
+**与相关工作的联系**
+该研究与探讨 CoT 长度与性能关系（如“倒 U 形”关系、inverse scaling）的工作一致，强调原始 token 计数作为推理努力代理的不足。同时，该工作利用了关于 LLM 内部信息利用（如 Logit lens、层间预测演变）的发现，但其目的并非修改模型内部状态以提高性能，而是将自然的、未经修改的内部表示作为衡量模型计算努力的代理，从而反映思维努力。
+
+
 ## Magma优化器
 On Surprising Effectiveness of Masking Updates in Adaptive Optimizers
 
