@@ -2,6 +2,23 @@
 Awesome or inspiring paper for AI
 
 
+## DualPath 
+DualPath: Breaking the Storage Bandwidth Bottleneck in Agentic LLM Inference
+
+https://arxiv.org/pdf/2602.21548 2026.2.25 北大 清华 DeepSeek
+
+1. ✨ DualPath系统解决了agentic LLM推理中KV-Cache加载的I/O瓶颈，该瓶颈源于预填充引擎存储NIC带宽利用率过高而decode node.NIC闲置。
+2. ⚙️ DualPath通过引入创新的“storage->decode”KV-Cache加载路径，并利用RDMA将数据从解码引擎高效传输至预填充引擎，从而聚合所有引擎的存储网络带宽。
+3. 🚀 结合NIC-centric流量管理和全局调度器，DualPath显著提升了系统性能，使离线推理吞吐量提高高达1.87倍，并使在线服务吞吐量平均提高1.96倍。
+- 基于自研推理引擎，Hopper(H100/200?) 400Gb*8 node; DS-660b（2P4D）, DS-27b(1P2D), Qwen-32b(1P1D); 60~157轮多轮agent负载，对标SGLang+HiCache+Mooncake
+  
+<img width="374" height="186" alt="image" src="https://github.com/user-attachments/assets/a02eeff3-3eac-4094-aa03-66bda39f4a8b" />
+<img width="380" height="150" alt="image" src="https://github.com/user-attachments/assets/6240994e-7f49-4aec-a1b2-fc978de2a764" />
+<img width="779" height="512" alt="image" src="https://github.com/user-attachments/assets/7a0db7cb-4569-4616-a982-4c5905601cca" />
+<img width="392" height="229" alt="image" src="https://github.com/user-attachments/assets/af79116a-7949-42cb-a929-45b1b7c93e19" />
+<img width="795" height="294" alt="image" src="https://github.com/user-attachments/assets/f7a583c4-accb-4d36-9626-f004c56b48d0" />
+
+
 ## 检索召回
 Empty Shelves or Lost Keys? Recall Is the Bottleneck for Parametric Factuality
 
