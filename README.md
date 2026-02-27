@@ -1,20 +1,56 @@
 # AwesomePaper-for-AI
 Awesome or inspiring paper for AI
 
+## Reinforced Attention Learning
+Reinforced Attention Learning 
+
+https://arxiv.org/abs/2602.04884 2026.2.12 UC Davis、Princeton、Google等
+
+中文解读：https://mp.weixin.qq.com/s/V53W6dfUS9898o_hyLTZqw
+
+1. 🌟 针对多模态大语言模型 (MLLM) 传统强化学习优化输出 token 序列在感知任务中效果有限的问题，本文提出了强化注意力学习 (RAL) 框架。
+2. 🎯 RAL 将 Transformer 的内部注意力分布视为一种策略policy，直接优化其信息分配，将优化目标从“生成什么”转向“关注何处”，以增强多模态信息的有效分配和接地能力。
+3. 📈 Qwen-VL-7b/32b，RAL 在多种图像和视频基准测试中持续略优于 GRPO 等基线，并且通过 On-Policy Attention Distillation 进一步证实了潜在注意力行为的转移能够实现更强的跨模态对齐，为多模态后训练提供了一种通用替代方案。
+
+好比你问一个人“图里这只鸟是什么品种”，他如果开始长篇大论地分析鸟类进化的历史，反而容易忽略图里那只鸟嘴巴的细节特征。感知需要的是“精准的注视”，而不是“冗长的陈述”
+Next-token Prediction（下一个词预测）作为 MLLM 后训练的基础策略目标，可能是不够的。
+在典型的 MLLM 架构中，视觉输入被编码成 Token，投射到文本嵌入空间中。要准确回答细粒度的问题，模型必须精确地识别并关注与任务相关的视觉信息。这个过程是由 Transformer 的注意力机制（Attention Mechanism） 主导的，它决定了给哪些 Token 分配更高的权重。
+然而，标**准的 RLHF（基于人类反馈的强化学习） 优化的是结果（Token），而不是过程（内部的信息分配）**。
+
+受到这一观察的启发，作者提出重新制定 MLLM 的后训练策略，让它直接作用于生成过程中的注意力分布（Attention Distribution）。这就是本文提出的 Reinforced Attention Learning (RAL)。
+RAL 旨在优化模型，使其产生高效用的注意力轨迹。与传统方法不同，RAL 将注意力模式本身视为策略（Policy）：
+当一个回答获得高奖励时，算法会通过最小化当前策略与参考策略（Reference Policy）之间的散度，来鼓励这种底层的注意力分布。
+反之，对于低奖励的回答，模型会通过增加散度来受到惩罚，从而远离那些次优的注意力模式。
+通过将优化目标从“Token 似然度”转移到“基于注意力的分配”，RAL 能更直接地对 MLLM 进行多模态对齐微调。实验表明，RAL 在视频和图像基准测试上始终优于 GRPO (Group Relative Policy Optimization)，特别是在那些感知密集型的任务上。
+RAL 的本质是一次优化对象的降维打击。
+
+传统的 RLHF 是在说：“只要你说出了正确的答案，我就给你糖吃。”（结果导向，What to generate）
+RAL 是在说：“我看你刚才盯着图像的左上角看，然后答对了，这很好，下次继续盯着这儿看。”（过程导向，Where to focus）
+它试图通过奖励信号，去反向修正模型内部“看东西”的习惯，让模型探索出一种高效的“信息收集策略”（Information-gathering Policy）。
+此外，优化注意力分布的有效性还可以自然地延伸到 On-Policy Distillation（在线策略蒸馏）。传统的蒸馏侧重于 Token 级别的概率对齐，而作者提出了一种双重蒸馏方法（Dual-distillation），即同时进行 Token 对齐和注意力分布对齐。实验表明，加入注意力蒸馏能带来显著的额外性能提升。
+
+Reinforced Attention Learning (RAL)：提出了一种策略梯度方法，将优化目标从 Next-token Prediction 转移到 Attention-distribution Alignment（注意力分布对齐），从而通过直接强化视觉 Grounding，而不是通过文本输出进行间接监督。
+On-Policy Attention Distillation：将框架扩展到在线策略蒸馏设置，显著提高了学生模型从教师模型继承细粒度感知和 Grounding 行为的能力。
+
+<img width="759" height="376" alt="image" src="https://github.com/user-attachments/assets/bf250669-f405-4faf-a2b5-48e406237c4d" />
+<img width="767" height="599" alt="image" src="https://github.com/user-attachments/assets/14655d01-3b37-4674-a97c-821df19f3af2" />
 
 ## DualPath 
 DualPath: Breaking the Storage Bandwidth Bottleneck in Agentic LLM Inference
 
 https://arxiv.org/pdf/2602.21548 2026.2.25 北大 清华 DeepSeek
 
-1. ✨ DualPath系统解决了agentic LLM推理中KV-Cache加载的I/O瓶颈，该瓶颈源于预填充引擎存储NIC带宽利用率过高而decode node.NIC闲置。
+1. ✨ DualPath系统解决了agentic LLM推理中KV-Cache加载的I/O瓶颈，该瓶颈源于Preill.storageNIC带宽利用率过高而decode node.NIC闲置。
 2. ⚙️ DualPath通过引入创新的“storage->decode”KV-Cache加载路径，并利用RDMA将数据从解码引擎高效传输至预填充引擎，从而聚合所有引擎的存储网络带宽。
 3. 🚀 结合NIC-centric流量管理和全局调度器，DualPath显著提升了系统性能，使离线推理吞吐量提高高达1.87倍，并使在线服务吞吐量平均提高1.96倍。
 - 基于自研推理引擎，Hopper(H100/200?) 400Gb*8 node; DS-660b（2P4D）, DS-27b(1P2D), Qwen-32b(1P1D); 60~157轮多轮agent负载，对标SGLang+HiCache+Mooncake
   
 <img width="374" height="186" alt="image" src="https://github.com/user-attachments/assets/a02eeff3-3eac-4094-aa03-66bda39f4a8b" />
 <img width="380" height="150" alt="image" src="https://github.com/user-attachments/assets/6240994e-7f49-4aec-a1b2-fc978de2a764" />
+
 <img width="779" height="512" alt="image" src="https://github.com/user-attachments/assets/7a0db7cb-4569-4616-a982-4c5905601cca" />
+<img width="386" height="152" alt="image" src="https://github.com/user-attachments/assets/fc7bae61-1351-4636-97dd-e2f8de962094" />
+
 <img width="392" height="229" alt="image" src="https://github.com/user-attachments/assets/af79116a-7949-42cb-a929-45b1b7c93e19" />
 <img width="795" height="294" alt="image" src="https://github.com/user-attachments/assets/f7a583c4-accb-4d36-9626-f004c56b48d0" />
 
