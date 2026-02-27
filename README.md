@@ -1,6 +1,43 @@
 # AwesomePaper-for-AI
 Awesome or inspiring paper for AI
 
+## SparseAttnV2
+SpargeAttention2: Trainable Sparse Attention via Hybrid Top-k+Top-p Masking and Distillation Fine-Tuning
+https://arxiv.org/pdf/2602.13515 2026.2.13 张金涛等 清华
+
+1. ✨本研究提出SpargeAttention2，通过结合混合Top-k+Top-p注意力掩码和基于速度蒸馏的微调，旨在解决**视频扩散模型中**现有稀疏注意力方法的局限性。
+2. ⚙️该方法通过混合掩码克服了单独Top-k和Top-p在不同注意力分布下的失效问题，并利用速度蒸馏损失在训练数据与预训练数据不匹配时有效保持模型生成质量。
+3. Wan-2.1-1.3b/14b模型，SpargeAttention2实现了95%的注意力稀疏度及16.2倍的注意力加速，同时保持了与全注意力模型相当甚至更优的生成质量。
+   
+<img width="778" height="426" alt="image" src="https://github.com/user-attachments/assets/6b5c4004-9d80-4c0a-b3d2-4591485900ef" />
+
+提出了一种名为 SpargeAttention2 的可训练稀疏注意力（trainable sparse attention）方法，旨在提高**视频扩散模型**（video diffusion models）的效率，同时保持生成质量。
+
+**核心问题与现有局限：**
+注意力机制在视频扩散模型中由于其长序列长度和 $O(N^2)$ 的时间复杂度而成为效率瓶颈。稀疏注意力通过选择性地计算注意力权重来降低成本。现有方法分为“训练无关”（training-free）和“可训练”（trainable）两类。可训练方法通常能实现更高的稀疏度。论文聚焦于稀疏注意力的三个核心要素：合理掩码（masker）设计、高效的可训练内核实现以及合适的训练目标。
+
+作者指出当前可训练稀疏注意力存在两大主要局限：
+1.  **L1：Top-k 和 Top-p 掩码在极高稀疏度下的失效。**
+    *   当注意力权重分布相对均匀（uniform）时，Top-k 掩码（固定选择 $k\%$ 最大值）可能因只保留固定数量的令牌而错过重要的上下文，导致“丢弃误差”（dropped error）增大。
+    *   当注意力权重分布高度倾斜（skewed）时，Top-p 掩码（累积概率达到 $p\%$）可能仅选择少数几个注意力“汇点”（attention sinks），从而忽略其他信息丰富的令牌，导致稀疏注意力输出的误差增大。
+2.  **L2：使用标准扩散损失（diffusion loss）进行微调（fine-tuning）的局限性。**
+    *   对于预训练数据集不公开的开源模型（如 Wan2.1），用于微调的数据集通常与预训练数据分布不匹配或质量较低。在这种情况下，即使使用全注意力（full attention）进行微调，也可能导致模型性能明显下降。这是因为扩散损失是数据驱动的，会强制模型适应微调数据集，从而导致“行为漂移”（behavior drift）。
+
+**SpargeAttention2 的方法论：**
+
+SpargeAttention2 针对上述问题提出了三项关键创新：
+<img width="1154" height="456" alt="image" src="https://github.com/user-attachments/assets/7d149aa7-9ffb-4f3a-94ba-d58a18a1d8b3" />
+
+**实验结果：**
+实验在 Wan2.1-1.3B (480p) 和 Wan2.1-14B (720p) 视频扩散模型上进行。
+*   **有效性：** SpargeAttention2 在 95% 的注意力稀疏度下，在 Imaging Quality (IQ)、Overall Consistency (OC)、Aesthetic Quality (AQ)、Vision Reward (VR) 以及 VQA-a 和 VQA-t 等各项生成质量指标上，均与全注意力模型相当甚至超越，且表现优于所有现有可训练稀疏注意力基线（如 VSA, VMoBA, SLA, SpargeAttention）。这表明 SpargeAttention2 在高稀疏度下仍能保持卓越的生成质量。
+*   **效率：** SpargeAttention2 在 Wan2.1-1.3B (480p) 上实现了 16.2 倍的注意力运行时加速（从 97s 降至 6s），端到端视频生成速度提升了 2.3 倍（从 159s 降至 68s）。在 Wan2.1-14B (720p) 上，注意力运行时加速同样达到 16.2 倍（从 2550s 降至 157s），端到端生成速度提升至 4.7 倍（从 3043s 降至 650s）。其效率远超其他基线方法。
+*   **消融研究（Ablation Studies）：**
+    *   **掩码设计：** 混合 Top-k+Top-p 掩码始终优于单独使用 Top-k 或 Top-p 掩码。
+    *   **可训练性：** 训练无关（training-free）版本导致生成质量显著下降，验证了可训练适应的必要性。
+    *   **训练目标：** 基于标准扩散损失的微调性能始终不如提出的速度蒸馏方法，证实了速度蒸馏在稀疏注意力适应中的有效性。
+
+
 ## Attention Matching
 Fast KV Compaction via Attention Matching
 
