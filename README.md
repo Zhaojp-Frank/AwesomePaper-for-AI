@@ -1,6 +1,49 @@
 # AwesomePaper-for-AI
 Awesome or inspiring paper for AI
 
+## FlowPrefill
+FlowPrefill: Decoupling Preemption from Prefill Scheduling Granularity to Mitigate Head-of-Line Blocking in LLM Serving
+
+https://arxiv.org/pdf/2602.16603 清华 2026.2.18
+
+1. 针对LLM服务中计算密集型prefill阶段常见的**Head-of-Line** (HoL) 阻塞问题，FlowPrefill提出通过**解耦抢占粒度与调度频率**来缓解，以解决现有固定粒度抢占机制在响应性和吞吐量之间的固有矛盾。
+2. 引入了两大核心创新：**op级别抢占**（Operator-Level Preemption），它利用op细粒度中断而无效率损失；以及事件驱动调度（**Event-Driven Scheduling**），仅在**请求抵达或完成时触发调度决策**，从而降低控制平面开销并确保调度响应性。
+3. 基于vllm-0.11, 8B~70B, Qwen-30B-A3B，单机A800.Qwen-trace负载，FlowPrefill相比现有先进系统将最大goodput提升5.6倍，并能满足更严格的SLO要求，同时将抢占阻塞时间减少了3.5至4.2倍，显著提升了LLM服务的效率和用户体验。
+
+<img width="799" height="302" alt="image" src="https://github.com/user-attachments/assets/cd614245-2453-4895-ac04-3b4d5b5b195d" />
+FlowPrefill是一种针对大型语言模型（LLM）服务的良好吞吐量（goodput）优化系统，旨在缓解计算密集型（compute-intensive）prefill阶段中的Head-of-Line (HoL) blocking问题，尤其是在存在异构服务级别目标（SLO）要求的情况下。
+
+**问题背景与动机：**
+LLM推理通常包括prefill和decode两个阶段。Prefill阶段处理输入提示词（prompt），是计算密集型任务，而decode阶段则逐token生成输出，是内存密集型任务。现有的预填充-解码分离（PD disaggregation）架构虽然减少了两个阶段的相互干扰，但将所有资源争用转移到了prefill实例，导致长请求（long-context request）独占GPU，严重阻塞后续请求，特别是高优先级请求的Time-to-First-Token (TTFT) SLO容易被违反。
+现有解决方案，如分块预填充（chunked prefill）和分层调度（layer-level scheduling），通过允许中断来缓解HoL blocking。然而，这些方法存在固有矛盾：减小粒度（即使用小chunk或在每层进行调度检查）可以提高响应性，但会引入显著的执行开销（如内核启动开销、KV cache冗余访问、设备利用率低）和控制平面（control-plane）开销；增大粒度则优化了吞吐量，却加剧了HoL blocking。核心问题在于抢占粒度（preemption granularity）与调度频率（scheduling frequency）之间的紧密耦合。
+
+**核心方法：FlowPrefill**
+FlowPrefill通过解耦抢占粒度与调度频率来解决上述挑战，主要依赖于两项关键创新：
+
+1.  **Operator-Level Preemption (算子级抢占)：**
+    *   **原理与机制：** FlowPrefill利用Transformer模型中算子（operators）的自然边界来实现细粒度抢占。它采用合作式抢占（cooperative preemption）机制，在核心算子（如`qkv_proj`, `attn`, `o_proj`, `gate_up_proj`, `down_proj`）之间插入轻量级抢占检查（preemption checks）。当有更高优先级请求到来时，调度器（Scheduler）发出抢占信号。执行运行时（execution runtime）会在当前算子完成后，检测到最近的算子边界并暂停正在运行的任务。这种方式确保了抢占延迟被限制在单个算子的执行时间之内，实现了接近无阻塞（near non-blocking）的响应，同时避免了固定小chunk带来的效率损失。
+    *   **张量并行（Tensor Parallelism）支持：** 为确保在张量并行环境中的安全性，FlowPrefill在各并行进程之间使用同步迭代计数器（synchronized iteration counter），仅当所有进程达到相同计数器时才进行暂停，从而防止死锁。
+
+2.  **Event-Driven Scheduling (事件驱动调度)：**
+    *   **原理与机制：** FlowPrefill将调度决策与执行粒度分离，仅在两种事件发生时触发调度：请求到达（request arrival）和请求完成（completion）。这大大减少了不必要的调度开销。
+    *   **优先级策略：Slack-aware Earliest-Deadline-First (S-EDF)：** FlowPrefill采用S-EDF策略来确定请求优先级。每个请求的优先级$priority$定义为：
+        $$priority = \text{sgn}(\text{slack}) \text{deadline}$$
+        其中，$\text{slack} = \text{deadline} - \text{current\_time} - \text{predicted\_TTFT}$。$\text{sgn}()$是一个符号函数，对于正的slack返回1，负的slack返回-1。这意味着优先级最高的请求是具有最早截止时间（earliest deadline）且slack非负的请求。S-EDF通过主动降低那些不太可能满足其截止时间的请求的优先级，从而提高了SLO达标的稳定性，尤其是在高负载下。
+    *   **批处理策略：SLO-aware Batching：** 调度器使用SLO-aware Batching（如Algorithm 1所示）来形成批次。它会将最高优先级请求$H$与其他兼容请求进行批处理，但前提是批处理后的预测延迟$L$不超过$H$的剩余时间$T_{remain}$，并且批次的总token数不超过预设的批处理token预算$G$。这种策略在最大化吞吐量的同时，最小化了SLO违规的风险。
+    *   **调度流程（如Algorithm 2所示）：** 调度器持续等待请求到达或完成事件。一旦事件发生，它会更新所有请求的状态，根据S-EDF优先级对请求进行排序，并选择最高优先级请求。如果该请求尚未开始执行，则尝试进行SLO-aware批处理。最后，调度器向执行池（Execution Pool）发出控制命令（submit, preempt, resume），确保GPU始终执行当前最高优先级的任务。
+
+**系统架构：**
+FlowPrefill主要优化了prefill实例。每个prefill实例包含：
+*   **Request Queue：** 跟踪系统中所有请求的逻辑状态。
+*   **Execution Pool：** 管理来自不同请求批次的执行任务，并安全地保存被抢占任务的执行状态，直到它们被恢复。
+*   **Scheduler：** 负责请求排序和分发，实现事件驱动调度、S-EDF策略和SLO-aware批处理，并向Execution Pool发出控制命令。
+
+**评估：**
+FlowPrefill在真实生产追踪QwenTrace上，针对Llama3-8B、Qwen2.5-14B、Llama3-70B以及MoE模型Qwen3-30B-A3B进行了广泛评估。
+*   **端到端性能：** 相比state-of-the-art的DistServe系统，FlowPrefill的最大良好吞吐量提升高达5.6倍，并且能够满足3.1倍更严格的SLO。相比基于分块的DistServe-CP2K和DistServe-CP8K，FlowPrefill的良好吞吐量分别提升了高达2.0倍和4.5倍。
+*   **运行时分析：** 算子级抢占将平均抢占阻塞时间（从发出抢占信号到新请求提交的时间）降低了3.5-4.2倍，使其低于4.5毫秒，实现了接近无阻塞的执行。TTFT预测模型在PD-disaggregated设置下表现出高准确性。调度开销极低，每次事件触发的调度轮次大约是请求数量的两倍。
+*   **兼容性：** FlowPrefill在单SLO场景下与基线系统吞吐量持平，SLO达标率更高。它可以与chunked prefill结合使用，进一步优化长输入处理。在PD-colocation（prefill和decode共同部署）设置下，FlowPrefill也能显著提高TTFT和TBT（Time-Between-Tokens）SLO达标率。此外，FlowPrefill与MoE模型兼容，展示了其通用性。
+
 ## SparseAttnV2
 SpargeAttention2: Trainable Sparse Attention via Hybrid Top-k+Top-p Masking and Distillation Fine-Tuning
 https://arxiv.org/pdf/2602.13515 2026.2.13 张金涛等 清华
