@@ -1,6 +1,41 @@
 # AwesomePaper-for-AI
 Awesome or inspiring paper for AI
 
+## EvoX 
+EvoX: Meta-Evolution for Automated Discovery
+
+https://escholarship.org/content/qt68v0c7vf/qt68v0c7vf.pdf 伯克利 斯坦福 Bespoke等
+
+code: https://github.com/skydiscover-ai 待开源
+
+1. EvoX提出了一种**元进化**方法，通过**共同进化候选解决方案和生成它们的搜索策略**，实现了动态调整优化过程中的搜索行为。
+2. 系统采用双层进化循环：一个内部循环进化解决方案，一个外部元进化循环则根据**进展和种群状态，利用LLM动态更新搜索策略**。
+3. 在涵盖数学、系统和算法的近200个真实世界优化任务中，EvoX**持续超越了包括AlphaEvolve**在内的现有AI驱动进化框架，并经常达到或超过人类最佳表现。
+
+<img width="826" height="349" alt="image" src="https://github.com/user-attachments/assets/16d94613-9f47-46d0-9c9d-c3151bba6c6a" />
+
+<img width="444" height="277" alt="image" src="https://github.com/user-attachments/assets/0c027999-426a-463e-87b0-fed5ad7724f9" />
+
+LLM驱动的优化与进化搜索相结合，在程序、提示和算法的改进方面展现了显著的有效性。然而，现有方法通常依赖于固定的搜索策略，其预定义参数（如探索-利用比率）在整个执行过程中保持静态，导致在不同任务或同一任务的不同阶段缺乏适应性。
+
+本文引入了 EvoX，一种自适应的元进化方法，能够优化其自身的进化过程。EvoX 联合进化**候选解和用于生成这些解的搜索策略**，并根据进展**持续更新如何选择和变异现有解来生成新候选解**。这使得系统能够在优化过程中动态地切换不同的搜索策略。
+
+EvoX 的核心方法是一个两层进化过程：
+1.  **解决方案进化循环 (solution-evolution loop)**：这是一个内循环，遵循标准的 LLM 驱动进化搜索范式。在每一步，一个搜索策略 $S$ 从当前评估过的解决方案数据库 $D_t = \{(x_i, s_i, a_i)\}_{i=1}^t$ 中选择一个或多个父候选解 $x_{par}$，确定一个变异操作符 $\pi$（如局部细化、结构变异或自由变异），并可选地提供一个启发集 $I \subseteq D_t$。这个选择过程构造了生成上下文 $C_S(D_t) \to (x_{par}, \pi, I)$。随后，解决方案生成器 $G_{sol}$（一个 LLM）根据此上下文生成新的候选解 $x' \sim G_{sol}(\cdot | x_{par}, \pi, I)$，该解被评估并添加到数据库中。
+2. 
+3.  **元进化循环 (meta-evolution loop)**：这是一个外循环，周期性地更新搜索策略。每个策略 $S_t$ 会在一个滑动窗口 $W$ 的解决方案进化迭代中部署，并通过其对下游任务引起的进展来评估其有效性。进展的衡量指标 $J(S_t | D_t)$ 定义为：
+    $$J(S_t | D_t) = (s_{end} - s_{start}) \frac{\log(1 + s_{start})}{\sqrt{W}}$$
+    其中，$s_{start}$ 和 $s_{end}$ 分别表示窗口开始和结束时的最高分数。$\log(1 + s_{start})$ 项旨在奖励在较高初始分数下实现的改进，而 $1/\sqrt{W}$ 则用于窗口长度的归一化。当进展 $s_{end} - s_{start}$ 低于预设的停滞阈值 $\tau$ 时，元进化循环会触发策略更新。此时，搜索策略生成器 $G_{str}$（也是一个 LLM）会生成一个新的搜索策略 $S'$。这个生成过程是条件化的，它基于：a) 历史策略数据库 $H = \{(S_j, \phi_j, J_j)\}_{j=1}^M$，其中记录了先前部署的策略、它们部署时的种群状态描述符 $\phi_j$ 和观察到的性能 $J_j$；b) 当前解决方案种群状态描述符 $\phi(D_t)$，它总结了当前种群的关键特征（如分数统计、多样性、停滞信号等）。通过这种方式，$S' \sim G_{str}(\cdot | S_{par}, \phi(D_t))$，其中 $S_{par}$ 是从 $H$ 中根据分数偏好选择的父策略。新生成的策略在部署前会经过验证。
+<img width="815" height="308" alt="image" src="https://github.com/user-attachments/assets/a64dc72b-0971-48ee-b2af-01120d0e8312" />
+
+EvoX 的主要创新在于**其能够从简单策略（例如随机采样）开始，并根据实时反馈动态地发现和采用更复杂的“优化机制”**，例如从简单的启发式规则转向更高级的数值优化方法（如 SLSQP）。它不仅提升了搜索效率，还实现了“优化机制发现 (optimization-mechanism discovery)”。
+<img width="817" height="563" alt="image" src="https://github.com/user-attachments/assets/ca532b58-8a2f-4bc1-910c-dbc06919dc61" />
+<img width="819" height="292" alt="image" src="https://github.com/user-attachments/assets/b1b84bea-5d43-4412-b59b-3087245304bc" />
+<img width="845" height="358" alt="image" src="https://github.com/user-attachments/assets/46ffc74c-1293-46bd-a097-e239db39fc91" />
+
+在近200个真实世界优化任务上进行的广泛评估表明，EvoX 的性能持续优于现有基于 LLM 的进化框架，包括 AlphaEvolve、OpenEvolve、GEPA 和 ShinkaEvolve。在大多数任务中，EvoX 取得了最佳结果。例如，在数学优化任务中，EvoX 在 Circle Packing 问题上达到了 2.636 的分数，超越了 AlphaEvolve 的 2.635。在系统优化任务中，EvoX 在 Gemini-3.0-Pro 模型上超越了所有六项基准的人为最佳结果。在算法和研究任务（如 ALE-Bench-Lite 和 Frontier-CS）中，EvoX 也取得了最高的平均/中位数分数。消融研究进一步证实，EvoX 对不同的初始搜索策略具有强大的鲁棒性，并且在 LLM 生成成本方面展现出更高的成本效益。例如，在 Heilbronn triangle 任务中，EvoX 达到特定分数所需的 LLM 生成成本远低于其他方法，并且能够在其他方法停滞时继续改进。
+
+
 ## FlowPrefill
 FlowPrefill: Decoupling Preemption from Prefill Scheduling Granularity to Mitigate Head-of-Line Blocking in LLM Serving
 
