@@ -1,6 +1,69 @@
 # AwesomePaper-for-AI
 Awesome or inspiring paper for AI
 
+## FA-4
+FlashAttention-4: Algorithm and Kernel Pipelining Co-Design for Asymmetric Hardware Scaling
+
+https://arxiv.org/abs/2603.05451 2026.3.5 普利斯顿 Meta Together-AI NVIDIA Colfax Resarch
+
+code: https://github.com/Dao-AILab/flash-attention/tree/main/flash_attn/cute
+
+https://pytorch.org/blog/flexattention-flashattention-4-fast-and-flexible/  FlexAttention 增加支持 FlashAttention-4 
+
+1. 提出了FlashAttention-4，旨在解决Blackwell GPU上Transformer注意力计算的瓶颈，特别是针对张量核心吞吐量快速增长而其他功能单元（如共享内存带宽和指数计算单元）扩展缓慢的不对称硬件扩展问题。
+2. FlashAttention-4通过**重新设计的流水线**，以利用Blackwell的**异步MMA操作和更大的tile尺寸**，实现了**指数函数的软件模拟**和**条件softmax重新缩放**，并利用tensor memory和2-CTA MMA模式来减少共享内存流量和原子加法。
+3. FlashAttention-4在B200 GPU + BF16实现了高达1.3倍于cuDNN 9.13和2.7倍于Triton的速度提升，**峰值达到1613**TFLOPs/s，且完全采用CuTe-DSL嵌入Python实现，编译时间比传统C++模板方法快20-30倍。
+
+FlashAttention-4 (FA-4) 旨在解决大型语言模型和长上下文应用中 Transformer 架构核心注意力机制的性能瓶颈。针对 Blackwell GPU（如 B200 和 GB200）上不对称的硬件扩展（tensor core 吞吐量翻倍，而共享内存带宽和指数单元等其他功能单元扩展速度较慢或保持不变），FA-4 共同设计算法和内核实现以应对这些变化中的瓶颈。
+
+核心方法和技术细节如下：
+<img width="683" height="568" alt="image" src="https://github.com/user-attachments/assets/a0475754-c89a-4180-b4c7-b2b46bfb88a7" />
+
+**1. 算法与内核管线重设计：**
+FA-4 重新设计了前向和反向传播的软件管线，以最大化张量核心 (tensor core) 操作、softmax 计算和内存操作之间的重叠。
+*   **前向管线 (Forward Pass Pipeline)：** 采用类似 FA-3 的乒乓调度机制，每个线程块计算两个输出 tile。在 Blackwell 架构中，累加器存储在 TMEM 而非寄存器中，且 MMA tile 尺寸为 128x128（Hopper 为 64x128）。FA-4 利用两个 128 线程的 warp 组，每个线程处理一整行，消除了行最大值计算中的 inter-warp shuffle。通过 TMEM 传输 P，将 rescaling 操作解耦到独立的“correction” warp 组。TMEM 划分为同时存储两个 S tile，并允许 S 和 P 之间共享 TMEM 区域，以及存储 rescale 统计信息。为了降低寄存器压力，P 的存储是分阶段进行的。
+*   **反向管线 (Backward Pass Pipeline)：** FA-4 实现了五个 MMA 操作，并利用 TMEM 启用新的调度策略，以显著重叠 MMA 和非 MMA 操作（如 softmax）。具体而言，softmax 计算与前一个迭代的 $dQ$ 和 $dK$ MMA 操作重叠。在 TMEM 分配上，S 和 P 共享一个 TMEM 区域，dP、dS 和 dQ 共享另一个区域，而 dV 和 dK 则直接累加。计算图经过精心设计，以优化加载、MMA、计算和归约操作之间的资源管理。
+<img width="686" height="237" alt="image" src="https://github.com/user-attachments/assets/5f894fa0-a520-40ea-9efd-1b55c1c8de6c" />
+
+**2. 指数单元瓶颈缓解：**
+*   **软件仿真指数函数：** 由于 Blackwell 上 MUFU（multi-function unit）的指数运算吞吐量（16 ops/clock/SM）远低于 tensor core（8192 ops/clock/SM），FA-4 采用浮点 FMA 单元软件仿真 $2^x$ 函数。这通过多项式逼近实现，遵循经典 Range Reduction 技术。
+    *   $2^x = 2^{\lfloor x \rfloor} 2^{x-\lfloor x \rfloor}$。
+    *   整数部分 $2^{\lfloor x \rfloor}$ 通过 IEEE 754 浮点表示的位操作（整数 ALU 指令）高效计算。
+    *   小数部分 $2^{x_{frac}}$（其中 $x_{frac} \in [0, 1)$）通过多项式 $\sum_{i=0}^n p_i x_{frac}^i$ 逼近，使用 Horner 方法和 FMA 指令。系数通过 Sollya 软件生成。
+    *   此仿真并非用于所有指数计算，而是部分应用于 softmax 行中的 10-25% 条目，其余仍使用硬件 MUFU.EX2，以平衡吞吐量和寄存器压力。数值精度方面，对于 BF16 精度，3 次多项式逼近的量化误差已经足够，因为它被 BF16 的固有量化误差（约 $3.9 \times 10^{-3}$）所掩盖。
+*   **条件 softmax 缩放：** 现有 FlashAttention 在处理块时，为数值稳定性维护运行统计量，并通过缩放因子 $e^{m_{j-1}-m_j}$ 对中间输出 $O_j$ 进行重归一化。FA-4 修改了算法，引入条件缩放：
+    $O_j = \begin{cases} e^{m_{j-1}-m_j} O_{j-1} + e^{S_j - m_j} V_j & \text{if } m_j - m_{j-1} > \tau \\ O_{j-1} + e^{S_j - m_{j-1}} V_j & \text{otherwise} \end{cases}$
+    其中 $\tau$ 是一个阈值（通常设置为 $\log_2(256) = 8.0$）。只有当新的最大值显著大于旧最大值时才进行缩放，减少了不必要的向量乘法操作。最终的归一化步骤 $1/\ell_{final} O_{final}$ 保证了数值的正确性。
+<img width="676" height="223" alt="image" src="https://github.com/user-attachments/assets/64e19309-789a-43cc-b779-8eda15177440" />
+
+**3. 共享内存流量优化与 2-CTA MMA 模式：**
+*   **TMEM 利用：** Blackwell 的 TMEM 用于存储 tensor core 中间结果，减轻了寄存器压力并支持更大的 tile。FA-4 利用 TMEM 存储更多中间结果，从而减少共享内存 (SMEM) 流量。
+*   **2-CTA MMA 模式：** Blackwell 引入的 2-CTA MMA 模式允许两个 CTA 在同一线程块集群中协作执行单个 MMA。输出累加器在 M 维度上进行划分，每个 CTA 仅暂存操作数 B 的一半，从而减少冗余的 SMEM 容量和带宽。
+    *   **反向 $dQ$ 步骤优化：** 在反向传播中，由于 $dQ$ 的归约维度 N 也在 2-CTA 模式下被划分，FA-4 利用分布式共享内存 (DSMEM) 在两个 CTA 之间交换一半的 $dS$，从而将 $dS$ 重新打包为沿非归约轴分区。每个 CTA 拥有 $M/2$ 行和完整的 $2N$ 归约。这样，每个 CTA 的 $dQ$ MMA tile 形状为 $(M/2, 2N)(2N, d)$。这种方式将全局原子归约的数量减半，因为每个 CTA 只写入 $dQ$ tile 的一半。管线重新排序，使当前 tile 的 $dP$ 在前一个 tile 的 $dQ$ 之前计算，进一步优化了 TMEM 的利用。
+<img width="683" height="543" alt="image" src="https://github.com/user-attachments/assets/26c4cf67-c33c-459c-a3e0-08c87a534697" />
+
+**4. 调度策略：**
+*   **最长处理时间优先 (LPT) 调度：** 针对因因果掩码或可变序列长度 (varlen) 导致的负载不均衡，FA-4 采用 LPT 调度。
+    *   **因果掩码：** 标准 attention grid (mblocks, heads, batches) 顺序处理会导致 SM 处理效率低下。FA-4 始终将批次作为最外层维度，并在 heads 之间进行 swizzle。heads 被划分为 L2 缓存友好的段，tile 调度器遍历顺序为：每段的 heads、mblocks（逆序）、段、最后是批次。对于 MQA 或 GQA，总是先遍历每个 KV head 的所有 query heads，然后才遍历 mblocks。
+    *   **可变序列长度：** 预处理内核根据每个工作 tile 的最大执行时间对批次进行排序，生成一个虚拟到实际的批次索引映射，供 attention 内核读取，以实现 LPT 调度。此元数据可缓存，避免了性能损失。
+
+**5. 开发语言与框架：**
+*   FlashAttention-4 完全使用嵌入 Python 的 CuTe-DSL 实现，不包含任何 CUDA C++ 组件。
+*   **全表达能力：** CuTe-DSL 编程模型与 CUTLASS C++ 同构，提供低级 GPU 编程的全部表达能力，同时受益于 Python 元编程的生产力。它允许直接访问 PTX 作为逃生通道。
+*   **快速编译：** 通过 JIT 编译，FA-4 相比传统 C++ 模板方法实现了 20-30 倍的编译时间加速（例如，前向从 55s 缩短到 2.5s，反向从 45s 缩短到 1.4s），显著提高了开发效率。
+*   **灵活性与可访问性：** 降低了 GPU 编程的入门门槛，使得研究人员和工程师能够更容易地扩展和部署新的注意力变体，促进了 FlexAttention 和 block-sparse attention 等变体的开发。框架通过将通用功能分解为独立、可组合的原语来实现模块化设计。
+
+**6. 经验评估：**
+*   在 B200 GPU 上进行基准测试 (BF16)。
+*   **前向传播：** FA-4 比 cuDNN 9.13 快 1.1-1.3 倍，比 Triton 快 2.1-2.7 倍。对于中长序列，FA-4 持续优于所有基线。**因果掩码情况下的增益更大**，这归因于 LPT 调度器。
+*   **反向传播：** FA-4 在长序列和因果掩码情况下实现了持续加速，**验证了 2-CTA 反向传播**的有效性。
+*   **确定性反向传播：** 尽管原子操作引入了非确定性，但 FA-4 提供的**确定性模式通过引入信号量锁序列化全局归约**，并结合精心设计的 **CTA swizzling 和调度**（如 SPT 调度），其速度**可达到非确定性 1-CTA 反向传播的 75%**。
+<img width="908" height="329" alt="image" src="https://github.com/user-attachments/assets/8eb5fca4-fdb7-41f5-a6d2-9f08f2f81cd2" />
+<img width="759" height="362" alt="image" src="https://github.com/user-attachments/assets/efae6437-5c69-44eb-81d9-4f70ac12f2ec" />
+<img width="913" height="276" alt="image" src="https://github.com/user-attachments/assets/a3157429-a3ea-4a81-b1ee-5db86e76ac1e" />
+<img width="906" height="495" alt="image" src="https://github.com/user-attachments/assets/6db7d918-0990-4f27-a416-587f6d5aa7c9" />
+
+   
 ## EvoX 
 EvoX: Meta-Evolution for Automated Discovery
 
@@ -8485,7 +8548,7 @@ NVIDIA 2025.11.26
 <img width="1006" height="360" alt="image" src="https://github.com/user-attachments/assets/b8d044f3-1664-4a54-ae9e-1a7aac2c7b91" />
 
 ToolOrchestra通过强化学习（RL）端到端地训练一个小型语言模型（例如8B参数），使其作为异构工具使用agent的“大脑”，动态地选择和利用各种外部工具。
-![Uploading image.png…]()
+<img width="908" height="329" alt="image" src="https://github.com/user-attachments/assets/6b55524d-33a2-4fcc-b358-5aae55306ec2" />
 
 1.  **统一工具调用（Unified Tool Calling）**：
     与现有工具使用agent不同，ToolOrchestra扩展了工具集，不仅包含传统工具（如网页搜索、代码解释器），还包括领域专用模型（specialized LLMs）和通用大模型（generalist LLMs）。所有工具都通过一个统一的JSON接口暴露，包含工具名称、描述和类型化参数schema。当LLM作为工具使用时，其描述通过以下步骤自动生成：随机抽取10个训练任务，获取LLM完成这些任务的轨迹，然后由另一个LLM根据任务指令、LLM轨迹以及LLM是否完成任务来编写描述。
