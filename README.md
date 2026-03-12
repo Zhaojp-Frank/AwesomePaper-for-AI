@@ -1,6 +1,18 @@
 # AwesomePaper-for-AI
 Awesome or inspiring paper for AI
 
+
+## KernelArena
+https://www.wafer.ai/blog/introducing-kernelarena Wafer 2026.3.11 面向B200（Mi300）的大模型生成GPU kernel评测
+https://www.kernelarena.ai/eval
+
+中文介绍 https://mp.weixin.qq.com/s/y_6glt8NeZZ985lkVnTeyg 
+
+<img width="1008" height="312" alt="image" src="https://github.com/user-attachments/assets/391f7248-7625-479a-9378-e7ef6487276a" />
+
+<img width="932" height="490" alt="image" src="https://github.com/user-attachments/assets/34d201c7-e1dd-415a-a30d-ab2586eacf3c" />
+<img width="901" height="488" alt="image" src="https://github.com/user-attachments/assets/9542272f-301f-4b24-8132-37c78be5a0ac" />
+
 ## FA-4
 FlashAttention-4: Algorithm and Kernel Pipelining Co-Design for Asymmetric Hardware Scaling
 
