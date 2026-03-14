@@ -1,6 +1,21 @@
 # AwesomePaper-for-AI
 Awesome or inspiring paper for AI
 
+## Flash-KMeans
+Flash-KMeans: Fast and Memory-Efficient Exact K-Means
+
+paper: https://arxiv.org/abs/2603.09229 伯克利 2026.3.10
+
+[GitHub - svg-project/flash-kmeans: Fast and memory-efficient exact kmeans](https://github.com/svg-project/flash-kmeans)
+
+1. 💡 Flash-KMeans 提出了一种针对现代 GPU 工作负载优化的 k-means 实现，旨在解决现有方法中严重的 I/O 瓶颈和原子写入竞争。
+2. ⚡️ 该方案通过引入 FlashAssign 避免了 N × K 距离矩阵的显式物化，并利用 Sort-Inverse Update 将高竞争的原子散点操作转化为高效的段级局部规约。
+3. 🚀 实验结果显示，Flash-KMeans H200实现了端到端17.9x倍的加速，相比CPU实现200x加速。
+
+1.FlashAssign: 类似flashattn思想，分块方式加载(计算)，大幅减少中间结果写回显存。(以及临时激活显存)
+2.先排序 后分段顺序规约。大幅优化gpu原子锁(atomicadd)串行处理效率问题。大概6x
+3.offload/overlap...
+
 
 ## KernelArena
 https://www.wafer.ai/blog/introducing-kernelarena Wafer 2026.3.11 面向B200（Mi300）的大模型生成GPU kernel评测
