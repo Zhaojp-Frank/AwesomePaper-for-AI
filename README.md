@@ -1,6 +1,21 @@
 # AwesomePaper-for-AI
 Awesome or inspiring paper for AI
 
+# OpenClaw-RL
+OpenClaw-RL: Train Any Agent Simply by Talking 
+https://arxiv.org/pdf/2603.10165 2026.3.10 普林斯顿
+
+https://github.com/Gen-Verse/OpenClaw-RL
+
+1. 提出了一种新颖的Agentic RL系统，能够将用户回复、工具输出和GUI状态变化等普遍的下一状态信号作为**实时的在线学习源**，解决了现有系统丢弃宝贵交互数据的问题。
+2. 系统采用完全**解耦的异步架构**，用于**策略服务、环境托管、PRM判断和策略训练**，并能从下一状态中提取评估信号（通过PRM判断生成标量奖励）和指导信号（通过Hindsight-Guided On-Policy Distillation进行token级监督）。
+3. OpenClaw-RL实现了个人Agent的持续个性化以及通用Agent（终端、GUI、SWE、工具调用）的**可扩展RL训练**，通过结合Binary RL和OPD取得了显著的性能提升，并验证了过程奖励对长周期任务的重要性。
+
+基于slime开发实现，评测主要用Qwen3-4b～32b模型
+
+
+
+
 ## Flash-KMeans
 Flash-KMeans: Fast and Memory-Efficient Exact K-Means
 
