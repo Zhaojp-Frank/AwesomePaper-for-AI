@@ -1,6 +1,18 @@
 # AwesomePaper-for-AI
 Awesome or inspiring paper for AI
 
+## Sparse Attention for RL
+Sparse Attention for Efficient LLM Reinforcement Learning 
+
+- Sparse Attention for Efficient LLM Reinforcement Learning ICLR2026 陈贝迪等
+- https://openreview.net/pdf?id=vMrhhCAgCA
+
+1. RL-rollout慢，sparse attn虽能提升LLM RL rollout效率，但其引入的分布不匹配导致训练不稳定，尤其是在长生成任务中。
+2. 提出了DISTILLSPARSE框架，重新计算 Dense Log-probabilities，并结合 LoRA-based 蒸馏来维持与 Dense Policy 的对齐，同时辅以奖励感知的过采样和过滤机制恢复分布对齐。
+3. Qwen3-4B/8B，Polaris 数据集, H200，最长rollout 16K，稀疏到512 token；最终模型能力和dense rollout相当，rollout加速～2x，E2E训练加速1.72x；且可以得到一个高效的稀疏版本的模型。
+  1. 基于VeRL，FSDP （PEFT LoRA， Sparse Flash Attn）+ SGLang （vortex_torch)
+
+
 # OpenClaw-RL
 OpenClaw-RL: Train Any Agent Simply by Talking 
 https://arxiv.org/pdf/2603.10165 2026.3.10 普林斯顿
