@@ -1,6 +1,24 @@
 # AwesomePaper-for-AI
 Awesome or inspiring paper for AI
 
+## SlideSparse
+SlideSparse: Fast and Flexible (2N-2):2N Structured Sparsity
+https://arxiv.org/abs/2603.05232 2026.3.6 北大 微软亚研院等 
+https://github.com/bcacdwk/vllmbench
+ 
+1. 针对NV近3代主流硬件（A100~B200，包括消费卡）都带2:4结构化稀疏计算加速能力，但实际场景却难以应用的问题。
+50%稀疏比在现实模型中精度掉点大，实际基本没人用。Rubin以后NV已经决定砍掉这个特性了。
+2. 提出一种(2N-2):2N(例如6:8，8:10稀疏）：精度掉点更少 且能发挥硬件加速的软件方法。
+3. A100/H100/B200/Ada/5080等多种硬件 FP4/INT8/FP8 实测最大14b模型 E2E推理P加速30%～40%；kernel加速更大些（但B200 INT8加速4x纯粹是B200 INT8算力比较畸形，难作参考）。
+牺牲了些显存容量（冗余50%），换来E2E速度加速（特别是prefilll阶段；decode也测了，但要很大batch >=64才能有点加速）。
+<img width="597" height="452" alt="image" src="https://github.com/user-attachments/assets/961ada3c-ed18-4409-9a1d-5ea30b562651" />
+
+<img width="834" height="265" alt="image" src="https://github.com/user-attachments/assets/ebe0a551-3382-4a4f-b00e-749c1dbff4d9" />
+
+<img width="979" height="491" alt="image" src="https://github.com/user-attachments/assets/5f1f45f1-e35b-4371-80bc-010e21bfb67f" />
+
+<img width="986" height="399" alt="image" src="https://github.com/user-attachments/assets/89a91b74-3108-47ac-abfe-21230b46906a" />
+
 ## Sparse Attention for RL
 Sparse Attention for Efficient LLM Reinforcement Learning 
 
