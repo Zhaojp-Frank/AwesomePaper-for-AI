@@ -1,13 +1,79 @@
 # AwesomePaper-for-AI
 Awesome or inspiring paper for AI
 
+## KVTC
+KV Cache Transform Coding for Compact Storage in LLM Inference
+
+https://arxiv.org/pdf/2511.01815 NV ICLR2026
+
+1. 🧠 针对LLM推理中KV缓存管理面临的**显存消耗和传输开销**挑战，本文提出了kvtc，一种**轻量级变换编码器**，旨在实现KV缓存的紧凑存储。
+2. 🌟 kvtc借鉴经典媒体压缩技术，通过结合基于**PCA的特征去相关**、利用**动态规划实现自适应量化**以及**熵编码（DEFLATE）**，仅需**一次简短的初始校准**，且不改变模型参数。
+3. 🚀 kvtc能够在保持推理和长上下文准确性的前提下，实现高达**20x（特定用例下可达40倍或更高）的压缩率**，并一致优于现有的推理时基线方法，显著降低了LLM服务的内存和传输成本。
+<img width="384" height="340" alt="image" src="https://github.com/user-attachments/assets/38954f5c-9006-4141-8b89-bd6b9b7cba68" />
+
+<img width="812" height="343" alt="image" src="https://github.com/user-attachments/assets/0efbfbdd-bf72-4679-9f67-469d88596fd7" />
+
+<img width="332" height="488" alt="image" src="https://github.com/user-attachments/assets/8abfca0a-5d66-428d-96c3-614ac7dd5912" />
+<img width="812" height="385" alt="image" src="https://github.com/user-attachments/assets/11de80f2-5004-4dda-84da-6f3e8f6a1b28" />
+
+`kvtc` 是一种轻量级转换编码器，旨在解决大型语言模型（LLM）推理中键值（KV）缓存管理带来的存储和内存瓶颈问题。该方法通过压缩 KV 缓存，实现紧凑的 GPU 内存和卸载存储，从而提高 LLM 服务效率，尤其适用于迭代式对话和代码编辑等场景中缓存重用。
+
+**核心方法学：kvtc 转换编码管道**
+
+`kvtc` 的核心是一个结合了经典媒体压缩技术的转换编码管道，主要包含三个阶段：
+
+1.  **特征去相关 (Feature Decorrelation)**：
+    *   **动机**：研究发现，不同注意力头（attention heads）产生的**键（keys）和值（values）在经过正交变换后**，可以**对齐到一个共享的潜在空间**（如图 3 所示），表明它们存在**高度相关性或低秩结构**。这为基于主成分分析（PCA）的降维提供了依据。
+    *   **校准过程**：这一步仅需**对每个模型和目标压缩比执行一次**。
+        *   `kvtc` 首先使用**一个代表性的校准数据集** $\mathcal{C}$ 获取键和值缓存。
+        *   对于每个序列，将缓存条目沿时间维度连接，形成一个全局位置池。
+        *   从该池中采样 $n$ 个 token 位置，排除注意力汇点（attention sinks）和最新 token。
+        *   对每个采样位置，获取 $l$ 层和 $h$ 头对应的键（或值），并去除位置旋转编码（positional rotations）。
+        *   将这些键（或值）沿隐藏维度 $d_{\text{head}}$ 连接，形成数据矩阵 $C \in \mathbb{R}^{n \times p}$，其中 $p = l \cdot h \cdot d_{\text{head}}$。
+        *   计算中心化矩阵 $C - \mu$ 的奇异值分解（SVD），即 $SVD(C - \mu) = U \Sigma V^\top$，其中 $\mu$ 是数据均值。$V^\top$ 即为投影矩阵。
+        *   与传统 SVD 方法（如 `SVDq` 和 `xKV`）为每个 prompt 单独计算 SVD 不同，`kvtc` 只计算一次通用的 $V$ 矩阵，并在推理时重复使用。
+    *   **数学表示**：对于任意数据矩阵 $X \in \mathbb{R}^{m \times p}$，去相关表示为 $D = (X - \mu)V$，其逆变换为 $X = DV^\top + \mu$。当基础矩阵 $V$ 被截断为 $V \in \mathbb{R}^{p \times r}$（其中 $r < p$）时，则有 $X \approx DV^\top + \mu$。
+    *   **可扩展性**：为提高计算效率，采用随机化 SVD（Randomized SVD）来计算目标秩 $r < p$ 的 PCA 基础。
+
+2.  **自适应量化 (Adaptive Quantization)**：
+    *   **目标**：在去相关域中，根据**主成分解释的方差大小，为每个主成分分配不同的比特宽度**，以实现固定比特预算下的最优量化。
+    *   **优化目标**：最小化 Frobenius 重构误差。由于右乘正交矩阵保留 Frobenius 范数，问题简化为最小化去相关域中的误差：
+        $$\left\|D V^\top - D_{q_1,...,q_k} V^\top\right\|_F^2 = \left\|D - D_{q_1,...,q_k}\right\|_F^2$$
+    *   **算法**：通过动态规划（Dynamic Programming, DP）算法解决约束下的比特分配问题。该算法维护两个表：(1) 在给定比特预算下，使用前 $i$ 个主成分可达到的最小重构误差；(2) 存储最优局部决策的回溯指针。
+    *   **细节**：受 Microscaling 数据格式启发，将连续的 PCA 坐标分组量化，每组共享 16 位移位和缩放因子。DP 算法同时优化每组的比特宽度和组大小（限制为 {1, 16, 64, 256, 1024} 个分量）。总预算包括所有坐标的有效载荷比特以及每组的移位和缩放因子。
+    *   **效果**：DP 分配的比特宽度随主成分指数的增加而单调递减，并且会为大量的尾部主成分分配零比特，这进一步支持了早期降维。
+
+3.  **熵编码 (Entropy Coding)**：
+    *   **算法**：将**量化后的值打包成字节数组**，然后使用 DEFLATE 算法进行进一步压缩。
+    *   **加速**：利用 `nvCOMP` 库在**GPU 上并行执行此步骤。**
+    *   **性质**：这是一个无损压缩步骤，最终压缩比取决于内容。
+
+**关键设计与考量**
+<img width="822" height="314" alt="image" src="https://github.com/user-attachments/assets/61d58ac7-ba05-4567-a907-04b045c2b591" />
+
+*   **滑动窗口与注意力汇点 (Sliding Windows and Sink Tokens)**：`kvtc` 避免对最近的 $w$ 个 token 和最老的 $s$ 个 token（注意力汇点）进行压缩。这些 token 对典型注意力模式的贡献不成比例地高，压缩它们会导致更高的重构误差和显著的精度下降（如图 4 所示）。实验中，选择 $w=128$ 和 $s=4$。
+*   **KV 缓存管理 (KV Cache Management)**：在 LLM 服务中，KV 缓存是关键的内存瓶颈。`kvtc` 通过将 KV 缓存压缩至原始大小的 20 倍（甚至更高），显著降低了其片上保留成本和卸载所需的带宽。这延长了缓存的生命周期，提高了 HBM/DRAM 层的缓存命中率，并减少了跨节点传输时的网络流量。
+*   **校准数据 (Calibration Data)**：校准数据集采用 FineWeb（通用文本）和 OpenR1Math（思维链痕迹）的 1:1 混合。对 Llama 3.1 8B 等模型，使用 160K token 进行校准，并在计算 PCA 前移除旋转位置嵌入（RoPE）。
+
+**实验结果**
+<img width="374" height="265" alt="image" src="https://github.com/user-attachments/assets/181cd651-2590-49cd-9922-ff41b38ee060" />
+<img width="742" height="472" alt="image" src="https://github.com/user-attachments/assets/07f3225c-e525-4208-bdd3-5af50932ec0c" />
+
+`kvtc` 在 Llama 3、Mistral NeMo 和 R1-Qwen 2.5 等模型上进行了广泛测试，并与 `KIVI`、`GEAR`、`H2O`、`TOVA`、`xKV` 和 `DMS` 等基线方法进行了比较。
+*   `kvtc` 实现了高达 20 倍的压缩比（在应用 DEFLATE 后），同时在 `GSM8K`、`MMLU`、`QASPER`、`LITM`、`RULER-VT` 等基准测试中保持与**原始模型相当的推理和长上下文精度（通常在 1 分之内）**。在特定用例下，可达 40 倍甚至更高的压缩比。
+*   `kvtc` 在高压缩比下，甚至在**某些情况下略微超越了原始模型的性能**，这可能与 CoT 设置中固有的可变性有关。
+*   在需要长上下文推理的数学竞赛 `AIME` 和编码任务 `LiveCodeBench` 中，`kvtc8x` 和 `kvtc16x` 也表现出竞争力，仅有轻微的精度下降。
+*   对于分布式在多个 GPU 上的大型模型（如 Llama 3.3 70B Instruct），`kvtc` 也能有效压缩每个 GPU 上的局部 KV 缓存，且精度下降在可接受范围内。
+*   **延迟**：`kvtc` 在解压 KV 缓存时，可将首 token 生成时间（**TTFT）缩短至完全重新计算的 8 倍**，证明了其在实际应用中的低开销和高效性。
+
 ## HPLB
 S-HPLB: Efficient LLM Attention Serving via Sparsity-Aware Head Parallelism Load Balance
+
 https://arxiv.org/pdf/2603.10353 上海交大 2026.3.11
 
-1. 💡 针对LLM中注意力计算的性能瓶颈，尤其是随着上下文长度增加而凸显的**注意力头异构稀疏性**及由此导致的**跨GPU负载不均问题**，论文提出了一种优化方法。
-2. 🛠️ S-HPLB（Sparsity-aware **Head-Parallel Load Balance**）是一种系统-算法协同设计机制，通过**离线分析和迭代的最大最小预算分配策略**，自适应地**调整每个注意力头的计算预算**，并采用贪婪启发式算法进行head-parallel负载均衡。
-3. 基于MInference实现，Qwen2.5 7b-72b A100*8评测推理prefill阶段，S-HPLB在不牺牲模型质量的前提下，将平均attn计算延迟降低了**2.88倍**，并且在延迟-准确性（Pareto frontier）权衡方面持续优于现有的稀疏注意力方法。
+1. 针对LLM中注意力计算的性能瓶颈，尤其是随着上下文长度增加而凸显的**注意力头异构稀疏性**及由此导致的**跨GPU负载不均问题**，论文提出了一种优化方法。
+2. S-HPLB（Sparsity-aware **Head-Parallel Load Balance**）是一种系统-算法协同设计机制，通过**离线分析和迭代的最大最小预算分配策略**，自适应地**调整每个注意力头的计算预算**，并采用贪婪启发式算法进行head-parallel负载均衡。
+3. **基于MInference实现**，Qwen2.5 7b-72b A100*8评测**推理prefill阶段**，S-HPLB在不牺牲模型质量的前提下，将平均attn计算延迟降低了**2.88倍**，并且在延迟-准确性（Pareto frontier）权衡方面持续优于现有的稀疏注意力方法。
 
 **背景与动机**
 
