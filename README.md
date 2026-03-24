@@ -1,6 +1,73 @@
 # AwesomePaper-for-AI
 Awesome or inspiring paper for AI
 
+## HPLB
+S-HPLB: Efficient LLM Attention Serving via Sparsity-Aware Head Parallelism Load Balance
+https://arxiv.org/pdf/2603.10353 上海交大 2026.3.11
+
+1. 💡 针对LLM中注意力计算的性能瓶颈，尤其是随着上下文长度增加而凸显的**注意力头异构稀疏性**及由此导致的**跨GPU负载不均问题**，论文提出了一种优化方法。
+2. 🛠️ S-HPLB（Sparsity-aware **Head-Parallel Load Balance**）是一种系统-算法协同设计机制，通过**离线分析和迭代的最大最小预算分配策略**，自适应地**调整每个注意力头的计算预算**，并采用贪婪启发式算法进行head-parallel负载均衡。
+3. 基于MInference实现，Qwen2.5 7b-72b A100*8评测推理prefill阶段，S-HPLB在不牺牲模型质量的前提下，将平均attn计算延迟降低了**2.88倍**，并且在延迟-准确性（Pareto frontier）权衡方面持续优于现有的稀疏注意力方法。
+
+**背景与动机**
+
+自注意力机制是LLM推理的核心操作，其计算公式为：
+$A = \text{Softmax}\left( \frac{Q \times K^T}{\sqrt{d}} \right), O = A \times V$
+其中，$Q, K, V$ 分别是查询、键和值矩阵，$d$ 是维度。主流的注意力架构如Multi-Head Attention (MHA) 和 Group-Query Attention (GQA) 包含多个注意力头 (attention head)，每个头独立执行自注意力计算并捕获不同子空间中的特征。
+
+为提升注意力服务的效率，现有方法主要分为两类：
+1.  **分布式部署：** 包括注意力-FFN解耦 (Attention-FFN disaggregation, AFD) 将注意力模块与FFN模块分离，以及头部并行 (Head Parallelism, HP) 将不同注意力头分布到多个GPU上以并行计算。
+2.  **稀疏注意力：** 利用注意力机制的固有稀疏性，即只有一小部分查询-键对对最终输出贡献显著。传统的 `top-k` 方法为**所有注意力头设置统一的令牌预算** `k`，选择得分最高的 `k` 个令牌进行计算。
+
+然而，作者发现LLM的注意力头表现出异构的稀疏性特征（即**不同的注意力头需要不同数量的令牌才能恢复相同比例的注意力权重**）。如图3所示，注意力头的恢复率 (recovery ratio) 差异很大。统一的 `top-k` 预算会导致：
+*   对稀疏性高的头部造成**冗余计算**。
+*   对稀疏性低的头部造成**精度损失**。
+`top-p` 方法（选择累积注意力权重超过阈值 `p` 的令牌）尝试解决异构性问题，但其**在线估计成本高昂且不精确**。此外，**异构的令牌预算会导致不同GPU上的注意力计算负载不一致**，产生**显著的资源空闲和同步等待，降低整体效率**（如图4和图8所示，负载不均衡可能高达2.78倍）。
+<img width="847" height="244" alt="image" src="https://github.com/user-attachments/assets/c9ddfd29-d975-47bd-be76-c852aa42cc75" />
+
+S-HPLB框架包含两个核心组件：
+1.  **自适应头部预算分配 (Adaptive Head Budget Allocation)：**
+    *   **稀疏性特征的稳定性：** 尽管跨头稀疏性存在异构性，但每个头的相对稀疏性模式（即恢复特定比例注意力权重所需的令牌比例）在不同输入（上下文长度、任务）之间表现出显著的稳定性（如图6所示）。这一关键观察使得可以通过离线分析和预计算来确定每个头的最佳预算。
+    *   **最大-最小稀疏性预算转移 (Max-min Sparsity Budget Shifting)：** 该组件旨在在一个固定的总计算量（或总令牌预算 $k_{total}$）下，通过自适应调整每个头的预算来近似 `top-p` 的精度。其核心思想是迭代地将预算从稀疏性最高（即在相同预算下恢复率最高）的头部转移到稀疏性最低的头部。初始时，每个头分配相等预算。算法迭代过程如下：
+        *   识别当前恢复率最高的头部（最稀疏的头部）和恢复率最低的头部（最不稀疏的头部）。
+        *   将一部分预算从恢复率最高的头部转移到恢复率最低的头部。
+        *   重复此过程，直到：
+            *   进一步的预算重新分配不再带来效益（即提供预算的头部变成了新的最低恢复率头部）。
+            *   所有头部都达到了预定义的最低预算下限（例如128个令牌）。
+    这种策略确保了预算的有效利用，同时最大化了整体精度。
+
+2.  **头部并行负载均衡 (Head Parallel Load Balance)：**
+    *   **问题建模：** 鉴于自适应预算分配导致不同头部计算量不一致，需要优化注意力头到GPU设备的分配，以最小化跨设备负载不均衡造成的等待。这被建模为一个NP-hard多路划分问题 (multiway partitioning problem)。
+        *   给定注意力头集合 $H = \{h_1, h_2, \dots, h_N\}$，每个头 $h_i$ 有其对应的计算预算 $b_{h_i}$。
+        *   设备集合 $D$。$H_d$ 是分配给设备 $d \in D$ 的头部子集。
+        *   设备 $d$ 的总负载 $L_d = \sum_{h \in H_d} b_h$。
+        *   优化目标是最小化负载不均衡比率 $I$：
+            $\min_{\{H_d\}_{d \in D}} I = \frac{\max_{d \in D} L_d}{\frac{1}{|D|} \sum_{d \in D} L_d}$
+        *   约束条件：
+            *   每个头精确分配给一个设备：$\bigcup_{d \in D} H_d = H$。
+            *   设备间的头部集合不重叠：$H_{d_1} \cap H_{d_2} = \emptyset, \forall d_1 \neq d_2$。
+    *   **贪心启发式算法 (Greedy Heuristic)：** 考虑到NP-hard问题的计算复杂性，论文采用了一种高效的贪心算法：
+        1.  将所有注意力头按其预算大小降序排序。
+        2.  遍历排序后的头部，将每个头分配给当前负载最小的设备。
+        该算法的时间复杂度为 $O(N \log N + N \log K)$，其中 $N$ 是注意力头数量，$K$ 是设备数量，使其在实践中具有可行性。
+
+**实验评估**
+
+S-HPLB 在配备**8张A100 GPU**的服务器上进行了评估，使用了Llama-3.1-8B, Qwen2.5-7B, Qwen2.5-72B等主流LLM模型和RULER长上下文基准测试（上下文长度高达128K）。
+*   **对比基线：** FlashAttention（全注意力）、StreamingLLM 和 MInference（`top-k` 方法）、XAttention（`top-p` 方法）。
+*   **评估指标：** 模型精度（RULER得分）和平均注意力服务延迟（TTFT）。
+<img width="867" height="350" alt="image" src="https://github.com/user-attachments/assets/2681baa8-1679-4b2a-81d2-bb8559677f3f" />
+  
+<img width="857" height="497" alt="image" src="https://github.com/user-attachments/assets/7e857ea4-d8fb-4a3b-a9ba-20e6e2654436" />
+
+**实验结果：**
+*   **精度：** S-HPLB 始终优于其他稀疏注意力方法。相比于全注意力，在Llama-3.1-8B/Qwen2.5-7B/Qwen2.5-72B上，精度仅下降0.52%/1.37%/3.13%。与表现最佳的稀疏注意力基线XAttention相比，S-HPLB在各模型上分别提升了2.57%/2.94%/0.61%的精度。
+*   **延迟：** S-HPLB 相比全注意力在三个模型上分别实现了3.39倍/4.27倍/3.31倍的显著延迟降低。相比XAttention，延迟降低了2.09倍/2.22倍/2.88倍。与 `top-k` 方法的延迟性能相当。
+*   **敏感性分析：** 如图10所示，S-HPLB在精度-延迟权衡的帕累托前沿上始终占据更有利位置，提供了更好的性能权衡。
+*   **消融研究：** 如图11所示，头部并行负载均衡器本身在所有配置下都持续降低延迟，在不同并行度和上下文长度下分别实现了高达1.19倍和1.26倍的延迟降低。
+
+
+
 ## FlashSampling
 FlashSampling: Fast and Memory-Efficient Exact Sampling
 
