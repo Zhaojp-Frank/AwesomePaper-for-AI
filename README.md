@@ -1,6 +1,22 @@
 # AwesomePaper-for-AI
 Awesome or inspiring paper for AI
 
+## FlashSampling
+FlashSampling: Fast and Memory-Efficient Exact Sampling
+
+https://arxiv.org/pdf/2603.15854 LMU, 普林斯顿 王梦迪团队 2026.3.16
+
+https://github.com/FlashSampling/FlashSampling
+
+1. 💡 针对大型词汇表解码中采样操作在LM-head matmul后触发额外内存流量和内核的瓶颈，FlashSampling提出一种将精确采样**融合到LM-head matmul中的方法**，从而**避免将完整的logits张量实体化到HBM**。
+2. 🚀 该方法通过在芯片上**逐tiling计算logits、添加Gumbel noise**并仅保留每行每词汇瓦片的一个最大值，然后进行小规模归约，其精确性源于argmax在分区的分解以及分级分解的应用。
+3. ✨ 在多种GPUs（H100、H200、B200、B300）上显著加速了内核级解码工作负载，并在vLLM E2E 1.7b TPOT降低19%，模型更大加速～1%。
+<img width="786" height="237" alt="image" src="https://github.com/user-attachments/assets/96f7970a-f98f-4ad5-ac37-0b14a76311e4" />
+
+<img width="786" height="668" alt="image" src="https://github.com/user-attachments/assets/c942d0ef-b4fa-4dcd-b80b-37e8b8f80f18" />
+<img width="789" height="369" alt="image" src="https://github.com/user-attachments/assets/50231856-992b-469d-8318-af1cf7dda3ed" />
+<img width="720" height="261" alt="image" src="https://github.com/user-attachments/assets/9d29c7b6-86b4-435a-b875-fbe9d073bf6e" />
+
 ## SlideSparse
 SlideSparse: Fast and Flexible (2N-2):2N Structured Sparsity
 https://arxiv.org/abs/2603.05232 2026.3.6 北大 微软亚研院等 
