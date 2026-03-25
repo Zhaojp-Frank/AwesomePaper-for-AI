@@ -4,17 +4,22 @@ Awesome or inspiring paper for AI
 ## KVTC
 KV Cache Transform Coding for Compact Storage in LLM Inference
 
-https://arxiv.org/pdf/2511.01815 NV ICLR2026
+https://arxiv.org/pdf/2511.01815 NVIDA ICLR2026
 
 1. 🧠 针对LLM推理中KV缓存管理面临的**显存消耗和传输开销**挑战，本文提出了kvtc，一种**轻量级变换编码器**，旨在实现KV缓存的紧凑存储。
-2. 🌟 kvtc借鉴经典媒体压缩技术，通过结合基于**PCA的特征去相关**、利用**动态规划实现自适应量化**以及**熵编码（DEFLATE）**，仅需**一次简短的初始校准**，且不改变模型参数。
-3. 🚀 kvtc能够在保持推理和长上下文准确性的前提下，实现高达**20x（特定用例下可达40倍或更高）的压缩率**，并一致优于现有的推理时基线方法，显著降低了LLM服务的内存和传输成本。
+2. 🌟 kvtc借鉴经典媒体压缩技术，通过3个手段（前2者理论有损，最后一个无损压缩）：**基于PCA的SVD分解**、动态规划实现**自适应量化**以及**熵编码（DEFLATE压缩算法，GPU nvComp）**，仅需**一次校准**，且不改变模型参数。
+3. 🚀 Llama3.1-8b, Qwen2.5-7b（Deepseek-R1）, Mixtral-12b以及最大llama-70b，在保持推理和长上下文准确性前提下（+/- 1个点），实现**10x~20x**（特定用例下可达40倍或更高）的压缩率**，并一致优于现有的推理时基线方法，显著降低了LLM服务的内存和传输成本。
+- 基于HF transformer实现，是对**RoPE之前的KV**进行压缩；同时跳过特定token：包括最新window（128）和最初sink token（4）进行压缩。
+- 附录非常详细的细节分析。目前的实现降低cpu memory，没有降低HBM显存。
+  
 <img width="384" height="340" alt="image" src="https://github.com/user-attachments/assets/38954f5c-9006-4141-8b89-bd6b9b7cba68" />
 
 <img width="812" height="343" alt="image" src="https://github.com/user-attachments/assets/0efbfbdd-bf72-4679-9f67-469d88596fd7" />
 
 <img width="332" height="488" alt="image" src="https://github.com/user-attachments/assets/8abfca0a-5d66-428d-96c3-614ac7dd5912" />
 <img width="812" height="385" alt="image" src="https://github.com/user-attachments/assets/11de80f2-5004-4dda-84da-6f3e8f6a1b28" />
+<img width="380" height="332" alt="image" src="https://github.com/user-attachments/assets/afcdfa48-3a2a-44a9-81ec-1c1f67f2133f" />
+<img width="799" height="396" alt="image" src="https://github.com/user-attachments/assets/4b2bb7bf-a9df-4486-87e5-d83141d07d4b" />
 
 `kvtc` 是一种轻量级转换编码器，旨在解决大型语言模型（LLM）推理中键值（KV）缓存管理带来的存储和内存瓶颈问题。该方法通过压缩 KV 缓存，实现紧凑的 GPU 内存和卸载存储，从而提高 LLM 服务效率，尤其适用于迭代式对话和代码编辑等场景中缓存重用。
 
@@ -23,7 +28,7 @@ https://arxiv.org/pdf/2511.01815 NV ICLR2026
 `kvtc` 的核心是一个结合了经典媒体压缩技术的转换编码管道，主要包含三个阶段：
 
 1.  **特征去相关 (Feature Decorrelation)**：
-    *   **动机**：研究发现，不同注意力头（attention heads）产生的**键（keys）和值（values）在经过正交变换后**，可以**对齐到一个共享的潜在空间**（如图 3 所示），表明它们存在**高度相关性或低秩结构**。这为基于主成分分析（PCA）的降维提供了依据。
+    *   **动机**：研究发现，不同注意力头（attention heads）产生的键（keys）和值（values）在**经过正交变换后**，可以**对齐到一个共享的潜在空间**（如图 3 所示），表明它们存在**高度相关性或低秩结构**。这为基于主成分分析（PCA）的降维提供了依据。
     *   **校准过程**：这一步仅需**对每个模型和目标压缩比执行一次**。
         *   `kvtc` 首先使用**一个代表性的校准数据集** $\mathcal{C}$ 获取键和值缓存。
         *   对于每个序列，将缓存条目沿时间维度连接，形成一个全局位置池。
@@ -40,7 +45,7 @@ https://arxiv.org/pdf/2511.01815 NV ICLR2026
     *   **优化目标**：最小化 Frobenius 重构误差。由于右乘正交矩阵保留 Frobenius 范数，问题简化为最小化去相关域中的误差：
         $$\left\|D V^\top - D_{q_1,...,q_k} V^\top\right\|_F^2 = \left\|D - D_{q_1,...,q_k}\right\|_F^2$$
     *   **算法**：通过动态规划（Dynamic Programming, DP）算法解决约束下的比特分配问题。该算法维护两个表：(1) 在给定比特预算下，使用前 $i$ 个主成分可达到的最小重构误差；(2) 存储最优局部决策的回溯指针。
-    *   **细节**：受 Microscaling 数据格式启发，将连续的 PCA 坐标分组量化，每组共享 16 位移位和缩放因子。DP 算法同时优化每组的比特宽度和组大小（限制为 {1, 16, 64, 256, 1024} 个分量）。总预算包括所有坐标的有效载荷比特以及每组的移位和缩放因子。
+    *   **细节**：受 Microscaling 数据格式启发，将连续的PCA坐标**分组量化**，每组**共享 16bit移位和缩放因子**。DP 算法同时优化每组的比特宽度和组大小（限制为 {1, 16, 64, 256, 1024} 个分量）。总预算包括所有坐标的有效载荷比特以及每组的移位和缩放因子。
     *   **效果**：DP 分配的比特宽度随主成分指数的增加而单调递减，并且会为大量的尾部主成分分配零比特，这进一步支持了早期降维。
 
 3.  **熵编码 (Entropy Coding)**：
