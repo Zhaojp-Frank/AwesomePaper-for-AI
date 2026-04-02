@@ -7,7 +7,12 @@ To Mix or To Merge: Toward Multi-Domain Reinforcement Learning for Large Languag
 
 https://arxiv.org/pdf/2602.12566 2026.3.11 三星研究院 北大等
 
+https://github.com/Mosi-AI/M2RL
+
 作者深入探讨了如何为大型语言模型（LLMs）实现多领域强化学习（RLVR），以构建一个通用的领域专家模型。
+<img width="677" height="544" alt="image" src="https://github.com/user-attachments/assets/a052da63-4e42-452e-8f63-73cc2d3182a3" />
+<img width="737" height="431" alt="image" src="https://github.com/user-attachments/assets/c651034f-a426-4d8e-abee-920f17b416f3" />
+<img width="740" height="667" alt="image" src="https://github.com/user-attachments/assets/e6f31b99-1e76-4506-9989-954fe03e923f" />
 
 **场景与具体问题**
 
