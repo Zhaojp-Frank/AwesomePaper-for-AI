@@ -1,6 +1,90 @@
 # AwesomePaper-for-AI
 Awesome or inspiring paper for AI
 
+## ScoutAttention
+ScoutAttention: Efficient KV Cache Offloading via Layer-Ahead CPU Pre-computation for LLM Inference
+https://arxiv.org/pdf/2603.27138 DAC2026 华中科大等
+
+1. 🚀 ScoutAttention 针对 LLM 推理中长上下文导致的 GPU 显存容量瓶颈和 KV cache 消耗问题，提出了一种高效的 KV cache 卸载框架，解决了现有方法因频繁数据传输或 CPU 计算导致 GPU 利用率低下的痛点。
+2. 💡 核心方法是 GPU-CPU 协同分块稀疏注意力机制，通过“超前一层 CPU 预计算”隐藏 CPU 侧计算延迟，并利用“异步周期性 KV cache 回调”机制，显著减少 CPU 计算负担并保持较低的 CPU 计算负载。
+3. ⚡️ 该框架基于 SGLang 实现，并与 FullKV、InfiniGen 和 HGCA 等基线进行对比，在平均精度下降不超过 2.1% 的前提下，解码吞吐量达到了 FullKV 的 5.1 倍和现有卸载方法的 2.1 倍。
+
+ScoutAttention 提出了一种高效的 KV cache 卸载框架，旨在解决大型语言模型 (LLMs) 长上下文推理过程中 GPU 内存容量受限，导致 KV cache 消耗过大，进而限制解码批处理大小的问题。
+<img width="426" height="292" alt="image" src="https://github.com/user-attachments/assets/c5554f96-817d-4051-94ef-65a7d1f80355" />
+<img width="412" height="309" alt="image" src="https://github.com/user-attachments/assets/c6607cb7-99ea-4d4c-8fb7-3e6bd7e8c221" />
+<img width="844" height="353" alt="image" src="https://github.com/user-attachments/assets/9eafd638-41a7-4bc1-9143-323b28e52291" />
+<img width="405" height="134" alt="image" src="https://github.com/user-attachments/assets/3a082d67-e95c-4d99-ad1c-636f52b43615" />
+<img width="844" height="282" alt="image" src="https://github.com/user-attachments/assets/2f59281b-92ae-48d6-ad1f-4424f5f46236" />
+
+
+**场景与具体问题：**
+LLM 在长上下文推理中面临显著的 GPU 内存瓶颈。特别是在解码阶段，KV cache 的内存消耗随着上下文长度的增加而急剧增长，这严重限制了 GPU 的批处理大小，从而降低了吞吐量和利用率。传统的训练时扩展 (train-time scaling) 效果渐微，当前的趋势是推理时扩展 (inference-time scaling)，通过如思维链 (Chain-of-Thought, CoT) 推理和上下文工程 (context engineering) 技术来处理更长的输入和生成更长的输出。这使得解码阶段的 GPU 内存压力尤为突出。
+
+**业界存在哪些不足：**
+1.  **基于召回的卸载方法 (Recall-based offloading)：** 例如 InfiniGen，通过将不重要的 KV token 卸载到 DRAM 来缓解 GPU 内存限制。然而，这些方法引入了严重的 I/O 瓶颈。即使采用提前预取机制，GPU 仍需频繁等待慢速的 PCIe 数据传输，导致 GPU 大量空闲 (InfiniGen 在测试中导致 GPU 空闲时间达到 61%)，性能显著下降。
+2.  **协同注意力方法 (Co-attention approaches)：** 例如 HGCA，避免了 KV token 召回，直接在 CPU 上计算部分注意力。这种方法消除了 I/O 瓶颈，但引入了新的 CPU 计算瓶颈。由于 GPU 和 CPU 之间的计算能力巨大差异 (解码阶段 GPU 比 CPU 快约 20 倍)，并行执行仍导致 GPU 空闲 (HGCA 在测试中导致 GPU 空闲时间达到 57%)，因为 GPU 必须等待 CPU 完成计算。
+
+**关键观察与假设：**
+1.  **CPU 计算吞吐量优于 PCIe 传输带宽：** 研究发现，尽管 CPU 计算速度慢于 GPU，但 CPU 侧的注意力计算（基于 KV cache 大小除以计算时间）的有效吞吐量远高于 PCIe 数据传输 KV cache 的吞吐量（例如，36 核 CPU 可达 100 GB/s，而 PCIe 4x16 接口对 KV cache 传输仅约 15 GB/s）。这表明协同计算优于频繁数据传输。
+2.  **KV cache 块的重要性具有强时间局部性：** 相邻的解码 token 通常会关注高度重叠的重要 KV cache 块集合。这意味着 CPU 只需要处理少量不在 GPU 上的 top-k 块。
+3.  **相邻层输入的高度相似性：** 由于残差连接 (residual connections)，连续 Transformer 层的输入高度相似。这一观察使得预测下一层的查询 (query) 成为可能，从而实现 CPU 侧的提前计算。实验验证了预测查询与真实查询之间的余弦相似度保持在 0.93-0.97 的高水平。
+
+**方法核心思路和主要步骤：**
+ScoutAttention 提出 GPU-CPU 协同的稀疏注意力机制，其设计基于三个核心原则：
+1.  **GPU-CPU 协同注意力 (GPU-CPU Co-attention)：** 采纳协同计算而非召回机制，以缓解 PCIe 带宽瓶颈。
+2.  **CPU 侧提前预计算 (CPU-side Pre-computation)：** 引入流水线机制，将 CPU 计算与 GPU 计算重叠，有效隐藏 CPU 计算延迟。
+3.  **结合块级稀疏注意力 (Block-wise Sparse Attention)：** 采用 Quest 等块级稀疏化方法，仅将最重要的 KV cache 块保留在 GPU 上，并将大部分不重要的块卸载到 DRAM，从而显著降低 CPU 的计算负担。
+
+**主要步骤：**
+*   **GPU-CPU 协同块级稀疏注意力：**
+    *   在解码阶段，ScoutAttention 将大部分不重要的 KV 块卸载到 DRAM，仅在 GPU 上保留紧凑的块摘要 (block digests) 和一小组关键块。
+    *   注意力计算时，GPU 首先通过计算查询 $Q$ 与每个块摘要 $K_{digest}$ 的点积来识别 top-k 块。
+    *   GPU 处理驻留在其内存中的 top-k 块。
+    *   不在 GPU 上的 top-k 块由 CPU 计算。
+    *   最后，GPU 使用 FlashAttention 算法合并来自 GPU 和 CPU 的中间结果，生成最终注意力输出。
+    *   受益于 KV 块的重要性时间局部性，CPU 通常只需处理一小部分 top-k 块，大幅减少了计算开销。
+*   **超前一层 CPU 预计算 (Layer-Ahead CPU Pre-computation)：**
+    *   为了防止 CPU 成为瓶颈，ScoutAttention 采用流水线执行策略。
+    *   当 GPU 计算第 $i$ 层的注意力时，它会首先预测下一层（第 $i+1$ 层）的查询表示 $Q_{i+1}^{pred}$。这通过将下一层的查询投影矩阵 $W^Q_{i+1}$ 应用于当前层的输入 $X_i$ 来实现，即 $Q_{i+1}^{pred} = W^Q_{i+1} X_i$。
+    *   利用 $Q_{i+1}^{pred}$ 和第 $i+1$ 层的摘要键 $K_{i+1}^{digest}$，模型识别出第 $i+1$ 层的预测 top-k 块 $B_{i+1}^{pred}$。
+    *   将 $B_{i+1}^{pred}$ 中不在 GPU 内存中的块 $B_{i+1}^{cpu} = B_{i+1}^{pred} \setminus B_{i+1}^{gpu}$，异步触发 CPU 侧的注意力预计算。
+    *   完成第 $i+1$ 层 CPU 侧预计算的设置后，GPU 继续执行第 $i$ 层的注意力计算，产生 $A_{i}^{gpu}$。
+    *   随后，将 $A_{i}^{gpu}$ 与在上一层（第 $i-1$ 层）预计算的 CPU 侧结果 $A_{i}^{cpu}$ 合并，得到最终的注意力输出 $A_i$。
+    *   这种机制将 CPU 操作窗口扩展至整个 Transformer 层处理窗口（包括 GPU 侧注意力、FFN 和 QKV 投影），提供了比并行计算方法多 3 倍的 CPU 处理时间，有效消除了 GPU 空闲。
+*   **异步周期性 KV cache 召回 (Asynchronous Periodic KV Cache Recall)：**
+    *   随着解码的进行，重要 KV cache 块的集合会逐渐漂移，导致 CPU 需要处理的 token 比例增加。
+    *   为了缓解性能下降，ScoutAttention 引入异步周期性召回机制，在固定间隔刷新 GPU 上的上下文，将重要的块从 DRAM 召回 GPU。
+    *   召回是异步的，当系统决定在解码步骤 $m$ 的第 $i$ 层触发召回时，I/O 操作在第 $i$ 层的注意力计算完成后启动。
+    *   召回的块直到下一个解码步骤 $m+1$ 的第 $i$ 层才被 GPU 需要，提供了充足的时间窗口（通常超过 20ms），确保 GPU 不会因 I/O 而停顿。
+    *   召回间隔通过离线分析确定，目标是保持 CPU 计算负载在一个可接受的阈值（例如 12%）之下。
+
+**实验设置：**
+*   **实现：** ScoutAttention 实现于 SGLang 推理框架。
+*   **硬件：** 实验使用的 GPU 型号未明确说明，但提到了 80GB HBM GPU。CPU 侧注意力计算使用了 IPEX (Intel Extension for PyTorch) 进行优化。
+*   **模型：** 精度测试使用 Qwen 3 8B 模型，性能评估使用 Qwen 3 14B 模型。
+*   **负载：** 长上下文推理，输入长度从 8K 到 64K token 不等。批处理大小 (Batch Size) 从 16 到 64。
+*   **对比基线：**
+    *   **FullKV：** 香草 Transformer (Vanilla Transformer)，不进行 KV cache 卸载。
+    *   **InfiniGen：** 基于召回的 KV cache 卸载方法。
+    *   **HGCA：** 基于协同注意力的 KV cache 卸载方法。
+*   **参数：** 稀疏预算 (sparse budget) 固定为 2,048 token，块大小 (block size) 在 ScoutAttention 中设置为 32。
+
+**关键对比结果：**
+*   **精度：** 在 LongBench 基准测试集上（包括 8 个数据集），ScoutAttention 相较于完全注意力 (Full Attention) 的平均精度下降小于 2.1% (稀疏预算为 2048 token 时)，且与 InfiniGen 精度接近。预测查询的引入和 CPU 侧计算占比小（仅 8%）使得精度损失很小。
+*   **吞吐量：**
+    *   在不同输入长度下，ScoutAttention 始终保持最高吞吐量。
+    *   在 64k 输入长度下，ScoutAttention 相较于 FullKV 实现了 5.1 倍的加速。
+    *   相较于现有卸载方法 (HGCA 和 InfiniGen)，ScoutAttention 实现了高达 2.1 倍的加速。HGCA 和 InfiniGen 在长上下文下吞吐量表现不佳，甚至在 8k 输入长度时低于 FullKV，主要因为严重的 GPU 空闲。
+*   **批处理大小扩展性：** ScoutAttention 展现出更好的吞吐量扩展性。当批处理大小从 16 增加到 32 时，实现了 1.78 倍的加速；从 32 到 64，实现了 1.48 倍的加速。而 HGCA 和 InfiniGen 的扩展性较差，受限于 CPU 计算和 I/O 瓶颈。
+*   **延迟分解：** ScoutAttention 将 GPU 空闲时间（由于 CPU 计算依赖或 PCIe 数据传输）显著降低到仅 6%，而 HGCA 和 InfiniGen 分别为 57% 和 61%。
+*   **消融实验：** 层级预计算 (PC) 带来了 1.39 倍的加速；异步周期性 KV cache 召回 (PR) 额外带来了 1.20 倍的加速，两者共同验证了 ScoutAttention 各优化组件的有效性。
+<img width="842" height="360" alt="image" src="https://github.com/user-attachments/assets/49b4ef22-b42f-4852-afcb-41f68d2c706d" />
+
+**潜在局限或不足：**
+*   **稀疏预算选择：** 稀疏预算 (sparse budget) 对精度和性能有影响，选择最佳预算需要权衡。
+*   **块大小敏感性：** 块大小的选择影响 digest cache 的大小和整体吞吐量，需要根据实际模型和硬件进行调优。
+*   **CPU 计算能力依赖：** 尽管 ScoutAttention 优化了 CPU 负载，但其性能仍依赖于 CPU 的多核处理能力和 IPEX 优化效果。对于 CPU 性能较低的系统，收益可能减小。
+*   **预测准确性：** 尽管预测查询的余弦相似度很高，但在极端情况下，预测误差可能对某些特定查询的精度产生微小影响。
 
 ## To Mix or To Merge
 To Mix or To Merge: Toward Multi-Domain Reinforcement Learning for Large Language Models
