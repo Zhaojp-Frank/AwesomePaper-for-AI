@@ -3,6 +3,7 @@ Awesome or inspiring paper for AI
 
 ## ScoutAttention
 ScoutAttention: Efficient KV Cache Offloading via Layer-Ahead CPU Pre-computation for LLM Inference
+
 https://arxiv.org/pdf/2603.27138 DAC2026 华中科大等
 
 1. 🚀 ScoutAttention 针对 LLM 推理中长上下文导致的 GPU 显存容量瓶颈和 KV cache 消耗问题，提出了一种高效的 KV cache 卸载框架，解决了现有方法因频繁数据传输或 CPU 计算导致 GPU 利用率低下的痛点。
@@ -10,10 +11,15 @@ https://arxiv.org/pdf/2603.27138 DAC2026 华中科大等
 3. ⚡️ 该框架基于 SGLang 实现，并与 FullKV、InfiniGen 和 HGCA 等基线进行对比，在平均精度下降不超过 2.1% 的前提下，解码吞吐量达到了 FullKV 的 5.1 倍和现有卸载方法的 2.1 倍。
 
 ScoutAttention 提出了一种高效的 KV cache 卸载框架，旨在解决大型语言模型 (LLMs) 长上下文推理过程中 GPU 内存容量受限，导致 KV cache 消耗过大，进而限制解码批处理大小的问题。
+
 <img width="426" height="292" alt="image" src="https://github.com/user-attachments/assets/c5554f96-817d-4051-94ef-65a7d1f80355" />
+
 <img width="412" height="309" alt="image" src="https://github.com/user-attachments/assets/c6607cb7-99ea-4d4c-8fb7-3e6bd7e8c221" />
+
 <img width="844" height="353" alt="image" src="https://github.com/user-attachments/assets/9eafd638-41a7-4bc1-9143-323b28e52291" />
+
 <img width="405" height="134" alt="image" src="https://github.com/user-attachments/assets/3a082d67-e95c-4d99-ad1c-636f52b43615" />
+
 <img width="844" height="282" alt="image" src="https://github.com/user-attachments/assets/2f59281b-92ae-48d6-ad1f-4424f5f46236" />
 
 
