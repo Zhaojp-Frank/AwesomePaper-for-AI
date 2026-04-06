@@ -1,14 +1,104 @@
 # AwesomePaper-for-AI
 Awesome or inspiring paper for AI
 
-##
-Agentic Context Engineering: Evolving Contexts for Self-Improving Language Models
+## 斯坦福ACE
+**Agentic Context Engineering**: Evolving Contexts for Self-Improving Language Models
 
-https://arxiv.org/abs/2510.04618 ICLR26 斯坦福/伯克利等，最后更新 2026.3.29
+paper: https://arxiv.org/abs/2510.04618 ICLR26 斯坦福/伯克利等，最后更新 2026.3.29
+
+code： https://github.com/ace-agent/ace
 
 中文解读：https://mp.weixin.qq.com/s/Hsk0V7XVy0LYVj3S30nykA
 
+1. 针对大型语言模型（LLMs）应用中上下文适应存在的简洁性偏差（brevity bias）和上下文崩溃（context collapse）问题，该研究观察到LLM在处理详细上下文时能更有效提取相关信息。
+2. 提出了ACE（Agentic Context Engineering）框架，**认为context应该足够详细和全面**，通过三角色：Generator生成、Reflector反思-总结，和Curator整合结构化更新，**将context视为不断演进的playbook/skills**，并通过**delta更新和“增长-提炼Grow-and-Refine”机制**来累积和组织策略。
+3. 实验结果显示，ACE在agent任务上平均性能提升10.6%，在金融等领域任务上提升8.6%，**且无需标注监督**即可有效自适应，并显著降低token# ～80%。
 
+本研究论文旨在通过上下文工程（context engineering）提升大型语言模型（LLM）驱动的应用（如LLM代理和领域特定推理）的性能。
+<img width="809" height="275" alt="image" src="https://github.com/user-attachments/assets/8fa41ccb-bd18-42bd-a3ef-6df4813ab463" />
+<img width="798" height="289" alt="image" src="https://github.com/user-attachments/assets/991fd6f7-1794-4336-af91-1a1500f75b6d" />
+
+**场景与具体问题**
+LLM应用的性能日益依赖于上下文适应（context adaptation），即通过修改输入而不是模型权重来改进模型行为。这种适应性调整包括澄清指令、提供结构化推理步骤或领域特定输入格式。当前LLM代理和知识密集型应用（如金融分析、医学诊断、代码生成等）需要保留详细、任务特定的知识。然而，现有方法面临两大挑战：
+● Reflexion：通过反思失败来改进 Agent 的规划能力。**失败了就写一段「反思日记」**，下次做同类任务时带上这段反思
+● TextGrad：通过类梯度的文本反馈来优化 Prompt。把自然语言反馈当成「梯度」，对 Prompt 进行迭代更新
+● GEPA（Genetic-Pareto）：基于反思式 Prompt 进化的方法。收集执行轨迹，用自然语言反思来诊断错误、分配功劳、提议更新。维护一个 Pareto 前沿来避免局部最优。在部分场景下甚至超越了强化学习方法
+● Dynamic Cheatsheet (DC)：**构建一个外部记忆（cheatsheet），持续积累成功和失败的策略和代码片段** （有成功 有失败）。这是一种测试时学习（test-time learning）方法，不需要标签数据
+- ACE 正是在 DC 的基础上发展而来的。DC 的核心思想是在推理过程中维护一个「小抄本」，把每次任务中学到的经验记下来，下次遇到类似问题就能直接参考。ACE 继承了这个思路，但解决了 DC 在规模化场景下的关键缺陷。
+
+1.  **简短偏见 (Brevity Bias)**：许多提示优化器倾向于生成简洁的指令，导致重要的领域特定启发式规则、工具使用指南或常见失败模式在优化过程中被忽略或压缩，从而影响了需要丰富细节的应用性能。
+2.  **上下文崩溃 (Context Collapse)**：当LLM负责迭代地完全重写上下文时，随着时间的推移，累积的详细信息会退化为更短、信息更少的摘要，导致性能急剧下降，甚至不如没有适应性的基线模型。
+
+**业界存在哪些不足**
+虽然上下文适应具有可解释性、运行时快速集成新知识以及跨模型或模块共享等优势，且长上下文LLM和KV缓存复用等技术使其更具可行性，但上述简短偏见和上下文崩溃限制了现有方法的鲁棒性和可伸缩性。例如，GEPA等方法虽然强调简洁性为优势，但在实践中可能牺牲了关键细节；依赖整体重写的动态作弊本（Dynamic Cheatsheet）等方法也可能遭遇上下文崩溃。
+
+**关键观察与假设**
+本研究的核心观察和假设是：
+1.  LLM上下文**不应仅仅是简洁的摘要**，**而应是详细、包容且富含领域见解**的**全面结构化“剧本”（playbook）**。
+2.  与人类通常受益于简洁概括不同，**LLM在接收长而详细的上下文时表现更佳**，并能自主地提炼出相关性信息。
+3.  因此，**上下文应保留而非压缩领域特定的启发式方法和策略，**允许模型在推理时自行决定重要信息。
+<img width="819" height="556" alt="image" src="https://github.com/user-attachments/assets/66b06c74-5190-40ef-af0b-ad0c5f698404" />
+
+**方法核心思路和主要步骤**
+ACE（Agentic Context Engineering）框架将上下文视为持续积累、提炼和组织策略的“演进剧本”。它引入了一个模块化的工作流程，并遵循“增长与提炼”（grow-and-refine）原则，通过结构化、增量式的更新来防止上下文崩溃，并保留详细的领域特定知识。
+
+ACE框架包含三个专业组件，模仿人类学习过程：
+1.  **Generator（生成器）**：接收当前查询和Playbook上下文，生成推理轨迹以解决问题。在此过程中，它**会标记哪些Playbook条目是“有用的”或“有害的”**，为后续步骤提供反馈。
+2.  **Reflector（反思器）**：批**判性地分析Generator的推理轨迹、执行反馈**（例如，代码执行成功/失败、单元测试结果）以及与真实结果的差异。其任务是从成功和错误中**提取具体的见解**，并可选地进行多轮迭代精炼以提高见解质量。
+3.  **Curator（策展人）**：将**Reflector提炼出的见解合成为紧凑的**“增量上下文（delta context）”或（bullet），并将**其确定性地整合到现有Playbook中**。
+
+ACE通过三项关键创新解决现有方法的局限性：
+*   **专用Reflector**：将评估和见解提取与策展过程分离，提高上下文质量和下游性能。Reflector能够将模糊的执行结果转化为具体的、可操作的知识，并标注Playbook中现有条目的有用性。
+*   **增量增量更新 (Incremental Delta Updates)**：**上下文被表示为结构化、项目化的bullet集合**。Curator**只生成和合并小的、局部的“delta”append**，。每个子弹点包含**元数据（如唯一ID和有用/有害计数器）和内容**。这种设计实现了**本地化更新、细粒度检索和高效增量适应**，显著降低了计算成本和延迟，同时确保了历史知识的保留。
+*   **增长与提炼机制 (Grow-and-Refine Mechanism)**：ACE通过定期/lazy提炼来保持上下文的紧凑性和相关性。新的bullet append，现有bullet原地++计数。去重：**通过语义嵌入比较bullet，剪除冗余信息**。这确保了上下文在扩展的同时保持可解释性，并避免了整体上下文重写引入的潜在方差。
+ACE 的 **bullet增加了元数据（特别是 helpful/harmful 计数器），形成了一套完整的反馈闭环**。Generator 在**解题时会标记哪些 bullet 有用、哪些误导**，这些反馈又会指导 Reflector 提出纠正性更新
+
+**实验设置**
+*   **实现基础**：所有基线和ACE方法均基于AppWorld官方ReAct实现（Yao et al., 2023）构建。
+*   **核心LLM**：主要实验采用DeepSeek-V3.1-671B作为基础LLM，并确保Generator、Reflector和Curator**使用相同的LLM模型以隔离上下文构建的益处**。附录中也验证了对GPT-OSS-120B、GPT-5.1和Llama-3.3-70B-Instruct的泛化性。
+*   **适应模式**：支持离线（系统提示优化）和在线（测试时内存适应）两种模式。
+*   **批处理大小**：默认为1，即**从每个样本构建一个delta上下文**。
+*   **超参数**：Reflector精炼轮次和离线适应中的epoch数最大设为5。
+*   **数据集与任务**：
+    *   **LLM代理**：AppWorld（Trivedi et al., 2024），涉及API理解、代码生成和环境交互，包含普通和挑战两种难度。评估指标为任务目标完成率（TGC）和场景目标完成率（SGC）。
+    *   **领域特定推理**：
+        *   金融分析：FiNER（Loukas et al., 2022）和Formula（Wang et al., 2025a），涉及XBRL格式的金融文档实体识别和数值推理。
+        *   医学推理：DDXPlus（Fansi Tchango et al., 2022），来自StreamBench（Wu et al., 2024）。
+        *   文本到SQL：BIRD-SQL（Li et al., 2023），来自StreamBench。
+    *   **评估指标**：AppWorld使用TGC和SGC；FiNER、Formula、DDXPlus使用准确率（Accuracy）；BIRD-SQL使用GPT-4o-mini作为评判（LLM-as-a-judge）。
+    *   **数据划分**：遵循原始数据集的训练/验证/测试划分。离线适应在训练集上优化，在测试集上评估；在线适应在测试集上顺序评估，模型在每个样本预测后更新上下文。
+*   **对比基线**：
+    *   Base LLM：直接在基准上评估，无上下文工程。
+    *   In-Context Learning (ICL)：在输入提示中提供任务示例。
+    *   MIPROv2：基于贝叶斯优化的提示优化器。
+    *   GEPA：基于反射式提示进化的样本高效提示优化器，通过执行轨迹和自然语言反射诊断错误并更新提示。
+    *   **Dynamic Cheatsheet (DC)：测试时学习方法**，积累可重用策略和代码片段的自适应外部内存。
+<img width="807" height="432" alt="image" src="https://github.com/user-attachments/assets/e5f0dff8-aee9-43f5-af73-e2fc7830d407" />
+<img width="807" height="310" alt="image" src="https://github.com/user-attachments/assets/330eae7d-e24a-40d0-b6c2-302fc79f2df2" />
+
+**关键对比结果**
+*   **AppWorld代理基准**：
+    *   ACE持续优于强基线，平均提升**10.6%**。
+    *   在离线设置中，ReAct + ACE比ReAct + ICL和ReAct + GEPA分别高出12.3%和11.9%。
+    *   在在线设置中，ACE比Dynamic Cheatsheet平均高出7.6%。
+    *   ACE无需标签监督即可有效适应，仅利用执行反馈（如代码执行成功/失败），在无标签设置下相对ReAct基线平均提升14.8%。
+    *   在AppWorld排行榜上，ReAct + ACE (59.4%) 与顶级生产级Agent IBM-CUGA (60.3%) 相当，后者使用GPT-4.1而ACE使用更小的开源模型DeepSeek-V3.1。在线适应时，ACE在测试挑战集上甚至超越IBM-CUGA，TGC高出8.4%，SGC高出0.7%。
+*   **领域特定基准（以金融为例）**：
+    *   ACE在金融分析基准上取得显著提升，平均性能增益**8.6%**。
+    *   在离线设置中，有GT标签时，ACE比ICL、MIPROv2和GEPA平均高出10.9%。
+    *   在在线设置中，有GT标签时，ACE比DC平均高出6.2%。
+    *   在医学推理（DDXPlus）和文本到SQL（BIRD-SQL）任务上也观察到一致的提升。
+*   **成本和延迟**：
+    *   ACE显著降低了适应延迟和滚动次数。在AppWorld的离线适应中，ACE相比GEPA减少了82.3%的适应延迟和75.1%的滚动次数。
+    *   在FiNER的在线适应中，ACE相比DC减少了91.5%的适应延迟和83.6%的token美元成本。
+    *   细粒度成本分析显示，ACE在适应阶段的输入/输出token使用量比GEPA低80.8%/83.6%。
+    *   尽管ACE生成更长的上下文，但得益于KV缓存复用，评估阶段的实际计费成本大幅降低（在OpenAI API测试中，91.8%的输入token可从缓存提供，计费输入token成本降低82.6%）。
+
+**潜在局限或不足**
+1.  **Reflector的质量依赖**：ACE的效果在一定程度上依赖于Reflector从执行轨迹和结果中提取有意义见解的能力。**如果Reflector无法提取有用见解，构建的上下文可能变得嘈杂甚至有害**。在缺乏可靠反馈信号（如真实标签或执行结果）的领域特定任务中，ACE和D C等自适应方法可能会性能下降。
+2.  **适用场景**：ACE**最适用于需要详细领域知识、复杂工具使用或环境特定策略的场景**。对于HotPotQA等任务（更侧重检索和合成证据）或Game of 24等固定策略游戏（仅需一个可重用规则），额外的详细上下文可能显得冗余，且收益不明显。
+
+   
 ## 微软 OEL
 Online Experiential Learning for Language Models
 
