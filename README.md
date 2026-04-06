@@ -1,6 +1,147 @@
 # AwesomePaper-for-AI
 Awesome or inspiring paper for AI
 
+## SSD 自蒸馏
+Embarrassingly Simple Self-Distillation Improves Code Generation
+
+https://arxiv.org/pdf/2604.01193 apple 2026.4.2
+
+https://github.com/apple/ml-ssd
+
+中文解读：https://mp.weixin.qq.com/s/Obh-QHIlbKqBnedskJjSPw
+
+1. 💡 提出了简单自蒸馏（SSD）方法，使大型语言模型仅利用自身原始输出即可显著提升代码生成能力，无需依赖验证器、教师模型或强化学习。
+2. 🔬 发现LLM解码存在“精度-探索冲突”，SSD通过高温采样控制 context相关动态地重塑token分布，在**需要精度时抑制干扰尾部**，在**需要探索时保留有用多样性**，从而解决了这一冲突。
+3. 🚀 SSD使Qwen3-30B-Instruct在**LiveCodeBench v6上的pass@1指标从42.4%提升至55.3%**，在**hard问题上收益尤其显著（pass@1 +15.9； pass@5 +23）**，并可泛化到**不同规模和类型的Qwen4b～30与Llama**模型，包括thinking(也有提升 但少)。
+   代表超参：Qwen3-30B-A3B-Instruct，**采样温度=2.0(原始分布被拉得更平坦 多样性更高，对应fork类型问题)，Top-k=10（向头部集中，截断尾部，对应lock类问题）**，二者拉扯，最终LCBv6 pass@1平均**+12.9pp**。
+B200*8, 1万条代码prompt；Megatron-LM 最长64K, AdamW + cosine decay peak LR:5*e-6, vLLM 最长128K,标准的SFT（预测下一个token）
+
+**论文的核心观察/假设**：现代顶尖模型预训练后已经具备很强的代码生成的“能力”—后训练关键在于激发出来；目前的卡点（至少之一）是**decode概率分布不适合解码，在代码生成任务中容易出现“Lock 位置的尾部过长，Fork 位置的头部过尖”**。论文SSD本质是**重塑概率分布形状（而非学习新知识）**，SSD训练后的模型权重在线推理时**基于一个固定温度设置能更好的同时满足精度和探索需求**
+
+**Lock时刻（落笔）**：当写下**if n==**之后，下一个token几乎没有悬念——必须是某个具体的数值。此时应该增强确定性，摈弃干扰选项。
+
+**“Fork时刻（岔路口）”**：当开始构思一个排序函数时，面前有多条选择—写快排？归并排？堆排？每条路都可能通向正确答案。此时需要是探索/反思，不能一条路走到黑。
+论文提出了“极简自蒸馏”（Embarrassingly Simple Self-Distillation, SSD），仅利用LLM自身的原始输出来提升其代码生成能力。3步骤非常简单：（1）用冻结模型配置高温(2.0)+截断采样；（2）对这些未筛选样本上做标准SFT；（3）推理时用另一个正常温度(~0.6)生成。
+
+<img width="930" height="421" alt="image" src="https://github.com/user-attachments/assets/2e0fd22e-842d-43ed-aedd-240a4e6bb1fb" />
+
+<img width="1001" height="576" alt="image" src="https://github.com/user-attachments/assets/440d7e3d-9f79-4171-a8b1-0aa59f8ead1d" />
+
+<img width="911" height="405" alt="image" src="https://github.com/user-attachments/assets/80148e70-aa42-4431-820d-24ad4fd95df9" />
+
+LCBv6 vs LCBv5, Qwen模型中LCB5上中等难度提升大，在LCBv6难问题提升大。对于LCBv6：
+
+- Pass@1 和5 都有提升
+- thinking模型也有提升 但幅度没有instruct高：hard问题 +5 vs +15
+- Qwen模型hard问题提升更大；llama模型easy问题提升更大
+
+解决的根本问题？ 传统的解码策略（调温度、top-k、top-p）只能对一个固定分布做全局缩放或截断。它们**无法在不同上下文中做出不同的调整**。SSD改变了模型本身的分布，让简单解码策略变得足够好。可能的质疑：
+<img width="928" height="339" alt="image" src="https://github.com/user-attachments/assets/627d240a-91a1-4dce-8f1b-1da2a0d97b2e" />
+
+• “训练数据里大部分是错的，为什么还能有效？” 这恰恰是本文最令人惊讶的发现之一；证明了**SSD的收益不主要来自“学习正确的代码”**，**而是来自分布重塑本身**。
+• “这不就是自己学自己的噪声吗？” **关键在于温度偏移和截断**。他们使得**样本分布与原始模型分布是不同的**——它**隐式地进行了尾部修剪和头部均匀化**。
+
+### 场景与具体问题
+在代码生成领域，随着LLM被部署到日益复杂的任务中，高质量的监督信号变得稀缺。人工编写的解决方案成本高昂。而合成数据流水线通常需要更强的教师模型进行蒸馏或对每个训练问题进行基于执行的验证。
+这引发了一个核心问题：一个模型是否能在不利用任何外部标注数据或验证的情况下，通过自身改进？
+
+### 业界存在哪些不足
+1.  **数据稀缺与成本高昂**：高质量人工标注代码解决方案稀缺且获取成本极高。
+2.  **教师模型依赖**：基于教师模型的蒸馏方法，其性能上限受限于教师模型的能力。
+3.  **验证复杂性**：需要对每个合成样本进行执行验证的流水线在操作上复杂且不稳定，即便在最新的强化学习（RL）推理和编码流水线中也面临挑战。
+4.  **无监督方法的局限**：使用内部奖励（如多数投票、熵最小化）的无监督替代方法在长期训练下可能面临**奖励欺骗（reward hacking）和模型崩溃（collapse）的风险**（Zhang et al., 2025）。
+5.  **缺乏通用性**：现有许多方法依赖于“特权信息”（Privileged Info），如表1所示，而SSD的目标是摆脱这些依赖。
+   
+<img width="740" height="259" alt="image" src="https://github.com/user-attachments/assets/f66bf58f-6be6-46f2-9f24-6504015c8710" />
+
+### 关键观察与假设
+**关键观察**：LLM能够在仅使用自身原始、未经验证的输出来进行微调后，显著提升代码生成性能。
+**核心假设（精度-探索冲突，Precision-Exploration Conflict）**：代码生成中存在两种截然不同的上下文位置，对解码温度提出矛盾的需求：
+1.  **锁定位置（Lock Positions）**：语法和语义几乎没有歧义，模型应该生成特定值。此时概率分布高度集中，但仍存在低概率的“干扰尾部”（distractor tail）。这些位置需要**精度**，即抑制干扰尾部，聚焦主导token。
+2.  **分叉位置（Fork Positions）**：存在多种真正可行的延续，可能导致不同的解决方案途径。此时概率分布分散。这些位置需要**探索**，即在多种可行候选中分配概率质量，避免错过好的路径。
+**冲突点**：单一的全局解码温度 $T_{eval}$ 无法同时满足这两种需求。降低 $T_{eval}$ 有助于锁定位置的精度，但会牺牲分叉位置的多样性；提高 $T_{eval}$ 有助于分叉位置的探索，但会使干扰尾部在锁定位置重新浮现，降低精度。最佳全局设置必然是一种妥协。
+**SSD的作用**：SSD通过在训练时使用温度偏移（$T_{train}$) 和截断配置（$\rho_{train}$）采样来隐式地重塑模型的分词分布。它在精度至关重要的锁定位置最积极地抑制干扰尾部，同时在探索至关重要的分叉位置保留有用的多样性。
+<img width="923" height="528" alt="image" src="https://github.com/user-attachments/assets/a872a1b4-e2a7-4b1a-ac81-dbe4a6c9d2f2" />
+
+### 方法核心思路和主要步骤
+SSD方法的核心在于：从基础模型中采样解决方案，然后使用这些原始、未经验证的样本进行标准监督微调（SFT）。
+1.  **数据合成（Data Synthesis）**：
+    *   给定冻结的预训练LLM $p_\theta$ 和一组问题提示 $X$。
+    *   为每个问题 $x \in X$ 采样 $N$ 个候选解决方案：
+        $y \sim \text{Decode}_{T_{train}, \rho_{train}}[p_\theta(\cdot | x)]$
+    *   这些解决方案不经过任何验证（无执行、无测试用例、无正确性过滤）。
+    *   这些原始输出构成了“极简自蒸馏数据集” $D_{SSD}$。
+    *   在实践中，即便每个提示只采样一个解决方案 ($N=1$) 也足够有效。
+    *   截断配置 $\rho_{train}$ 包含 $top-k$ 和 $top-p$。解码管道顺序为：温度缩放 $\rightarrow$ $top-k$ 过滤 $\rightarrow$ $top-p$ 过滤 $\rightarrow$ Gumbel-max 采样。
+2.  **训练（Training）**：
+    *   使用标准监督微调（SFT）在 $D_{SSD}$ 上微调模型：
+        $\mathcal{L}(\theta) = - \mathbb{E}_{(x,y) \sim \mathcal{D}_{SSD}} \left[ \frac{1}{|y|} \sum_{t=1}^{|y|} \log p_\theta(y_t | x, y_{<t}) \right]$
+    *   **目标函数分解**：核心在于，SSD拟合的是经过训练时温度 $T_{train}$ 和截断 $\rho_{train}$ 诱导的分布，而非原始分布。在任何上下文 $s$，损失函数可以被分解为：
+        $\mathcal{L}_s(\theta) = - \log \text{KeptMass}_\theta(s) + (1 - T) H_{1/T}[p_\theta(\cdot | s, \mathcal{S}_s)] + T \cdot \text{KL}[q_s \parallel \text{Temper}_T[p_\theta(\cdot | s, \mathcal{S}_s)]] + \text{const}$
+        其中：
+        *   $\mathcal{S}_s$ 是教师模型在上下文 $s$ 下保留的token集合（通过 $T_{train}$ 和 $\rho_{train}$ 确定）。
+        *   $\text{KeptMass}_\theta(s) = \sum_{v \in \mathcal{S}_s} p_\theta(v | s)$ 表示模型在保留集合上的概率质量。
+        *   第一项 $-\log \text{KeptMass}_\theta(s)$ 驱动**支持压缩（Support Compression）**，将概率质量集中到保留的token集合，抑制扩散的尾部。
+        *   第二项 $(1 - T) H_{1/T}[p_\theta(\cdot | s, \mathcal{S}_s)]$ 驱动**支持内重塑（Within-Support Reshaping）**。对于 $T_{train} > 1$，它鼓励在保留集合内平滑分布，提高有效token间的探索性。
+        *   第三项 $T \cdot \text{KL}[q_s \parallel \text{Temper}_T[p_\theta(\cdot | s, \mathcal{S}_s)]]$ 保持重塑后的分布与教师模型在保留集合内的相对偏好对齐。
+    *   **梯度分析**：在logit层面，对 $\mathcal{S}_s$ 之外的token，梯度为 $+p_\theta(v|s)$，这意味着梯度下降会直接压低这些logit，从而实现尾部抑制。
+3.  **推理（Inference）**：
+    *   微调后的模型 $p_{\theta^*}$ 使用评估时解码配置 ($T_{eval}, \rho_{eval}$) 进行部署：
+        $\hat{y} \sim \text{Decode}_{T_{eval}, \rho_{eval}}[p_{\theta^*}(\cdot | x)]$
+    *   在理想拟合下，推理时的有效温度 $T_{eff} = T_{train} \cdot T_{eval}$。
+
+### 实验设置
+*   **实现基础**：基于 Megatron-LM 实现微调训练，利用 vLLM（v0.11.0, commit b8b302c）进行数据生成和评估时的解码。
+*   **硬件条件**：训练在 8 张 NVIDIA B200 GPU 上进行，对于MoE模型，专家并行（EP）设置为 8。
+*   **训练负载**：
+    *   **数据来源**：从 rSTARcoder 数据集（Liu et al., 2025）的种子子集进行去重，得到约 10K 个独特的竞技编程问题，作为无标签提示池。
+    *   **数据生成**：每个提示从基础模型采样一个解决方案，解码配置见表3。仅进行最小限度的句法过滤（移除空响应或单行桩），不进行任何正确性验证。
+    *   **优化器**：AdamW ($\beta_1=0.9, \beta_2=0.95$, 权重衰减 $0.1$）。
+    *   **学习率**：峰值学习率 $5 \times 10^{-6}$，余弦衰减至 $1 \times 10^{-6}$。
+    *   **批大小**：全局批大小 32。
+    *   **序列长度**：65,536。
+    *   **训练迭代**：Instruct 模型训练 2,500 次迭代，Thinking 模型训练 300 次迭代。学习率分别预热 250 和 50 次迭代。检查点分别每 250 和 50 次迭代保存。
+*   **评估基准**：
+    *   **主要基准**：LiveCodeBench v6 (LCB v6; 2025年2月-5月，131个问题），按难度（easy/medium/hard）分层。
+    *   **次要基准**：LiveCodeBench v5 (LCB v5; 2024年8月-2025年2月，374个问题）。
+    *   **主要指标**：pass@1，辅以 pass@5 和分难度报告。所有 pass@k 估计均使用每个问题 10 个独立样本。
+    *   **模型**：Llama-3.1-8B-Instruct, Qwen3-4B-Instruct, Qwen3-4B-Thinking, Qwen3-30B-Instruct, Qwen3-30B-Thinking。
+    *   **基线对比**：基础模型使用其官方推荐的采样参数（表4）；SSD模型使用表3中的评估时解码参数。
+*   **OOD 评估**：在数学推理（AIME）、通用代码生成（HumanEval）、代码理解（CruxEval）和通用知识（MMLU）基准上评估域外迁移能力。
+
+### 关键对比结果
+<img width="910" height="524" alt="image" src="https://github.com/user-attachments/assets/b9970b69-b6ae-49e6-bba6-62a05a916b2f" />
+
+*   **LiveCodeBench 性能显著提升**：
+    *   Qwen3-30B-Instruct 在 LCB v6 上的 pass@1 从 42.4% 提升至 55.3%（绝对值增加 12.9pp，相对提升 30.4%）。
+    *   所有评估模型均有提升：Llama-8B 提升 3.5pp，Qwen3-4B-Instruct 提升 7.5pp，Qwen3-4B-Thinking 提升 3.3pp，Qwen3-30B-Thinking 提升 2.1pp。
+    *   在更大的 LCB v5 上也观察到显著提升（Qwen3-30B-Instruct 提升 8.5pp）。
+*   **对困难问题提升最大**：
+    *   Qwen3-30B-Instruct 在 LCB v6 上，pass@1 在简单问题提升 6.5pp，中等问题提升 14.2pp，困难问题提升 15.3pp。
+    *   pass@5 提升更大，困难问题提升 23.0pp。
+*   **保留并提升多样性**：
+    *   pass@5 的提升通常大于 pass@1，表明 SSD 保留甚至提升了生成多样性，在困难问题上尤为明显。
+*   **无法通过简单调整解码策略达到**：
+    *   即便对基础模型进行全面的温度扫描，SSD的性能仍远超最佳的解码策略。例如，Qwen3-30B-Instruct 在 pass@1 上仍有 +11.8pp 的优势，在困难问题 pass@5 上甚至有 +19.4pp 的优势。这表明 SSD 改变了模型本身，而非仅仅改变了解码方式。
+*   **超参数交互**：
+    *   训练和评估温度通过“有效温度” $T_{eff} = T_{train} \cdot T_{eval}$ 相互作用，性能在一定有效温度范围内表现稳定。
+    *   训练时的截断（如 $top-k$）配置能进一步提高性能上限。
+<img width="331" height="768" alt="image" src="https://github.com/user-attachments/assets/af99e67f-ffed-426f-b01f-eae4babf96ae" />
+
+*   **“坏数据，好结果”的健壮性**：
+    *   即使在极端情况下（$T_{train}=2.0$ 且无截断），合成数据大部分是乱码，SSD 训练后的模型仍然能显著提升性能（Qwen3-30B-Instruct 的 pass@1 提升 5.7pp），表明其从 token 概率重塑中提取有用的学习信号，而非主要依赖样本的正确性。
+<img width="919" height="283" alt="image" src="https://github.com/user-attachments/assets/452819f6-e0a3-4b62-8845-cbe3b6dd5e69" />
+
+### 潜在局限或不足
+*   **域外性能折衷**：对于30B模型，**编程领域外的性能保持大致稳定**。但对于较小模型（如 Llama-3.1-8B-Instruct, Qwen3-4B-Instruct, Qwen3-4B-Thinking），**SSD训练可能导致域外性能出现不均衡的下降**。例如，Llama-3.1-8B-Instruct 在 AIME 上的表现显著下降。这表明在小模型上，专有领域训练可能带来泛化能力的损失。
+<img width="926" height="686" alt="image" src="https://github.com/user-attachments/assets/98b7412d-266f-4d36-9c7a-96c0c7bee429" />
+<img width="552" height="337" alt="image" src="https://github.com/user-attachments/assets/8d44abd7-8b96-4f0f-b742-88e6e65cc92c" />
+
+*   **对训练数据质量的敏感性（尽管有“坏数据，好结果”案例）**：虽然论文展示了在极端低质量数据下仍能工作，但主实验结果仍依赖于合理采样参数下的数据。在极端高温且无截断时，性能提升虽有但不如在截断设置下的headline结果，这说明截断对于充分发挥SSD的潜力仍然重要。
+*   **机制的复杂性**：尽管论文提供了详尽的理论分析来解释“精度-探索冲突”和目标函数的分解，但LLM的实际行为仍可能涉及更复杂的非线性交互，理论分析在实际应用中可能仍需进一步验证和细化。
+*   **计算成本**：虽然SSD无需验证器或RL，但仍然需要进行一次大规模的数据合成和一次完整的模型微调，这对于大型模型而言仍是显著的计算开销。
+<img width="922" height="577" alt="image" src="https://github.com/user-attachments/assets/30e0ad75-452d-4831-96fe-6651b5cd9614" />
+
 ## ScoutAttention
 ScoutAttention: Efficient KV Cache Offloading via Layer-Ahead CPU Pre-computation for LLM Inference
 
