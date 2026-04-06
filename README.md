@@ -1,7 +1,15 @@
 # AwesomePaper-for-AI
 Awesome or inspiring paper for AI
 
-## OEL
+##
+Agentic Context Engineering: Evolving Contexts for Self-Improving Language Models
+
+https://arxiv.org/abs/2510.04618 ICLR26 斯坦福/伯克利等，最后更新 2026.3.29
+
+中文解读：https://mp.weixin.qq.com/s/Hsk0V7XVy0LYVj3S30nykA
+
+
+## 微软 OEL
 Online Experiential Learning for Language Models
 
 paper: https://arxiv.org/abs/2603.16856 微软 2026.3.17
@@ -9,14 +17,32 @@ paper: https://arxiv.org/abs/2603.16856 微软 2026.3.17
 code: https://aka.ms/oel-code 
 
 中文解读：https://mp.weixin.qq.com/s/9JWCxh6mwb4_H2_5jZMf5Q
+持续在线学习，亮点不需要client端环境，不需要reward model/验证 
 
-  - 持续在线学习，不需要client端环境，不需要reward model/验证
-1. 💡 为解决大型语言模型部署后无法从真实世界交互中持续学习的问题，本文提出在线经验学习（OEL）框架，旨在通过利用部署经验实现模型的持续改进。
-2. ⚙️ OEL核心在于两阶段迭代循环：首先从用户侧交互轨迹中提取可迁移的经验知识，随后通过无服务器端环境访问的在策略上下文蒸馏技术，将这些知识整合入模型参数。
-3. 基于verl实现，最大8b模型，2个文本游戏任务；均能持续提升**任务准确性并且降低token消耗**，同时有效缓解了灾难性遗忘，且研究发现提取的经验知识和在策略一致性对学习效果至关重要。
+1. 为解决大型语言模型部署后无法从真实世界交互中持续学习的问题，本文提出在线经验学习（OEL Online Experiential Learning）框架，旨在通过利用部署经验实现模型的持续改进。
+2. OEL核心在于两阶段迭代循环：首先从用户侧交互轨迹中提取可迁移的经验知识，随后通过无服务器端环境访问的在策略上下文蒸馏技术，将这些知识整合入模型参数。
+3. 基于verl实现，qwen1.7b～8b模型，2个文本游戏任务（没有明确的规则 需要模型自主探索）；持续提升**任务准确性 且 显著降低token消耗**，同时**有效缓解了灾难性遗忘（包括OOD）**，且研究发现提取的经验知识和在策略一致性对学习效果至关重要。
+
+主要2个步骤：1）按模版，从过往token中提前经验expereience；2）训练内化更新权重 同策略上下文蒸馏（On-policy Context Distillation）。
+提前经验发生在服务端（不需要client端环境，不依赖reward），通常由模型自己充当提取者的角色，按Prompt 模板作摘要总结动作，将token转成一定的experience。如果thinking模式，只保留 answer 部分作为经验知识，去掉reasoning部分。
+经验支持2种形式：结构化格式（Structured）：提取模型被要求以列表形式输出，每条前缀为 “- EXPERIENCE ITEM:”，只保留符合格式的条目。轨迹数25～50，最大生成长度8Ktokens。
+非结构化格式（Unstructured）：提取模型自由生成，无格式约束。轨迹数10，最长2K token。
+
+固化阶段：每轮：20～100 steps，每step 64个样本。用提取的经验中的partial rollout prefix作训练集：每个 prefix 捕捉了截止到第j轮环境反馈为止的所有交互历史（不包含第j轮的模型响应）。
+
+训练学生模型（不带经验知识）使其行为与带经验知识的教师模型匹配。本文将冻结的初始模型作为teacher​；令牌级 **reverse KL divergence** 作为优化目标（mode-seeking，**鼓励学生专注于teacher分布中概率最高的那部分**，更适合「将知识压缩进小模型」的场景。）
+学生模型：仅基于prefix生成响应，看不到经验知识。
+教师模型：输入经验知识 和prefix，**输出下一个token的概率分布**。实质上**充当了一个「效果等价的奖励模型」**。它提供的是密集的、token级别的训练信号，而这些信号**完全来自于用户侧收集的文本环境反馈**——不需要任何标量奖励。
+
+模型从自己的分布出发学习，而不是被迫去模仿 teacher 的分布——这是缓解灾难性遗忘的关键。
+学生模型潜在能够超越teacher的in-context learning能力。teacher只能在经验知识作为上下文时表现更好，而**学生通过将知识直接固化到参数中**，**在不需要上下文的情况下达到甚至超过 teacher 的水平**。
+原因很直觉：teacher 受限于上下文窗口长度，而参数化的知识没有这个约束。
+
+
 <img width="671" height="490" alt="image" src="https://github.com/user-attachments/assets/d731620c-5995-45c3-9272-a09a21fa4dba" />
 
 <img width="659" height="325" alt="image" src="https://github.com/user-attachments/assets/fa04cafe-088e-407d-9b87-eaa5664527d4" />
+<img width="662" height="403" alt="image" src="https://github.com/user-attachments/assets/a67f6e81-aba6-4b72-a84c-836a2c187fba" />
 
 本文提出了一种名为在线经验学习（Online Experiential Learning, OEL）的框架，旨在解决大型语言模型（LLMs）在部署后无法从实际交互中持续改进的局限性。当前LLM的改进范式主要依赖于离线训练，即通过人工标注或模拟环境进行监督微调或强化学习。然而，这种“封闭世界”的训练方式使其性能受限于预先策划的数据分布，且在真实世界的开放式、不断变化的场景中，模型无法利用其在部署过程中积累的丰富经验，也难以获取可验证的奖励信号或访问用户侧环境。
 
