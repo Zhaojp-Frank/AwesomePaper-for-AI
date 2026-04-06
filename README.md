@@ -1,6 +1,101 @@
 # AwesomePaper-for-AI
 Awesome or inspiring paper for AI
 
+## NV LLM router with prefill activations
+LLM Router: Rethinking Routing with Prefill Activations 
+
+paper: https://arxiv.org/pdf/2603.20895 NV 2026.3.31
+code: 
+
+1. 针对大型语言模型（LLM）路由中**语义信号无法捕捉模型特有故障和内在任务难度**的问题，该研究提出了一种**利用模型内部prefill激活信号进行预测**的路由方法，并发现**开源Encoder可以有效预测闭源Target模型的性能**。
+2. 核心方法是"Encoder-Target Decoupling"，通过分离信号生成模型（Encoder）和被预测模型（Target），并使用SharedTrunkNet这一**联合多输出MLP来整合Encoder的prefill激活特征**，同时预测多个候选LLM的正确性概率。
+3. 🚀 实验结果表明，该方法在各类模型池中均显著优于传统的语义基线，尤其在**Frontier模型池中，成功缩小了最强独立模型与理论最优模型之间45.58%**的准确率差距，并实现了**74.31%的成本节约**。
+
+<img width="984" height="483" alt="image" src="https://github.com/user-attachments/assets/8fe1d30c-067b-43ab-a1f9-cce82a64d4cb" />
+<img width="1205" height="649" alt="image" src="https://github.com/user-attachments/assets/fd241bac-14fc-4144-97fd-b2894016700c" />
+
+提出了一种基于预填充（prefill）激活的LLM路由新方法，旨在通过预测模型在生成前的正确性来提高路由性能并优化成本。
+
+**场景与具体问题：**
+大型语言模型（LLMs）通常在平均基准准确率上表现相似，但**在处理不同子集查询时展现出互补的优势**。这表明，通过查询特定的模型选择，**路由策略可以超越任何单一模型的表现**。当前业界主要依赖语义或意图信号进行LLM路由，即根据查询的嵌入特征或领域描述来选择模型。然而，这种方法存在局限性，因为它**难以捕获模型特有的失败模式或查询本身的内在难度**，且在所有候选模型行为相似的“一致性”情况下，路由评估可能被夸大。
+
+**业界存在不足：**
+1.  **缺乏机制解释：** 现有路由方法（如基于语义或意图的路由）未能深入理解模型内部的生成限制。
+2.  **无法捕捉模型特有缺陷：** 语义相似性不能保证与模型特定的失败模式或内在查询难度对齐。
+3.  **“一致性”案例的误导：** 当所有候选模型表现相似时，路由评估结果可能被不当提升。
+4.  **级联方法的效率问题：** 顺序引导查询通过模型（从简单到复杂）的方法对于复杂查询会产生过高的累积延迟。
+5.  **黑盒限制：** 大多数语义路由器在生成前选择LLM，不利用模型内部状态。
+
+**关键观察与假设：**
+1.  **预填充激活作为预测信号：** 内部**prefill激活可以在生成开始前作为预测模型正确性**的可靠信号。
+2.  **解耦的可能性：** 这些信号可以从一个模型中提取，用于预测另一个模型的性能，从而实现解耦的路由框架。
+3.  **“外部”编码器的优势：** 开源编码器（如Qwen-35B/122B）在预测目标模型的正确性方面，甚至能持续优于目标模型自身的内部状态。这暗示了预测信号的鲁棒性取决于信号的维度、各向同性（isotropy）和线性可分离性。
+4.  **Fisher可分离性（J）的重要性：** Fisher J是识别可分离层的最实用准则，与经验性探测结果高度匹配。
+
+**方法核心思路和主要步骤：**
+将路由分解为两个核心信号：模型**正确性的估计** $\hat{p}_k(q)$ 和推理成本的估计 $C_{k,q}$。路由的目标是选择使评分 $s_{k,q} = \lambda \hat{p}_k(q) - (1 - \lambda) eC_{k,q}$ 最大化的模型，其中 $eC_{k,q}$ 是归一化成本，$\lambda$ 平衡准确性与成本。
+
+核心方法包括：
+1.  **Encoder-Target Decoupling（编码器-目标解耦）：**
+    *   区分 **编码器LLM (Encoder LLM)** 和 **目标LLM (Target LLM)**。编码器LLM负责提供隐状态信号，而目标LLM是其性能被预测的模型。
+    *   这种解耦允许使用开源（open-weight）编码器来近似闭源（closed-source）模型的性能。研究评估了三种操作模式：per model（固定分配）、single（所有目标共享一个编码器）和 auto（每个目标使用最优编码器）。
+
+2.  **Layer Selection via Geometric Probes（通过几何探测进行层选择）：**
+    *   为了从编码器中提取有效的预填充激活信号，研究评估了三种几何诊断指标：
+        *   **有效维度 (Effective dimensionality, $d_{eff}$):** 表示信息分布的广度，通过协方差特征值的平方和来衡量：$d_{eff} = \frac{(\sum_i \sigma_i)^2}{\sum_i \sigma_i^2}$。较高的 $d_{eff}$ 表明信息分布广泛，减少了PCA信息损失。
+        *   **表征各向异性 (Representational anisotropy, $\alpha$):** 衡量隐状态向量之间的成对余弦相似度：$\alpha = \frac{2}{n(n-1)} \sum_{i<j} \cos(h_i, h_j)$。较低的 $\alpha$（较高的各向同性）有助于避免“窄锥”问题，防止异常维度主导并导致类别区分差异崩溃。
+        *   **Fisher可分离性 (Fisher Separability, J):** 衡量正确和不正确响应类别在PCA降维后的特征空间中的线性可分离性：$J = \frac{\|\mu_1 - \mu_0\|^2}{tr(\Sigma_0) + tr(\Sigma_1)}$。其中 $\mu_0, \mu_1$ 是两类均值，$\Sigma_0, \Sigma_1$ 是两类协方差。与 $d_{eff}$ 和 $\alpha$ 不同，J 是一个依赖于标签的任务特定可分离性度量。
+    *   研究发现，基于Fisher J 的层选择与经验性探测结果最匹配，为识别信息层提供了一种可解释且高效的启发式方法。提取信号时，通常从编码器Transformer层的上半部分（L/2到L）提取隐状态，并选择最后一token的激活或进行平均池化，然后通过PCA进行维度降低（$d \in \{50, \dots, 300\}$）。
+
+3.  **SharedTrunkNet：**
+    *   SharedTrunkNet是一个联合多输出MLP，它将所有目标模型的PCA降维后的连接特征向量 $x = [f_1 | f_2 | \cdots | f_K]$ 映射到同时预测所有K个目标模型正确性概率的估计。
+    *   通过单次前向传播，该网络可以同时预测所有目标模型的正确性概率。
+    *   采用 BCEWithLogitsLoss 和 Adam 优化器进行训练，并使用早停。联合优化提供了跨模型的上下文信息，并确保输出在可比较的尺度上。
+
+**实验设置：**
+*   **数据集：** 除了 LLMRouterBench 数据集外，还自行构建了轻量级评估工具。
+    *   **基准测试：** MMLU-Pro, Humanity’s Last Exam (HLE), LiveCodeBench (LCB)。
+    *   **模型池：** Frontier Pool（11个模型，9,626个条目/模型）、Small Pool（20个模型，7B–9B，13,988个条目/模型）、Mixed Pool（9个模型，包含Claude Opus 4.6, OpenAI GPT-5.4/5.2, Qwen 3.5 122B/35B等，14,469个条目/模型）。
+    *   **数据划分：** 85-15% 训练/测试集，或 75-10-15% 训练/校准/测试集，按模型一致性和基准领域分层。
+*   **模型查询：** 通过 OpenAI 兼容的流式端点，使用提供商推荐的采样设置和最高推理努力（例如，Claude和GPT-OSS的“high”推理努力，Qwen和Nemotron的“enable thinking”）。最大token限制为128,000。
+*   **评分：** MMLU-Pro采用精确匹配，HLE采用GPT-4o作为判官，LCB采用沙盒执行的pass@1。所有评估器生成统一的二元正确性标签作为真值。
+*   **对比基线（Semantic Router）：**
+    *   **特征提取：**
+        *   稠密查询嵌入 (llama-nemo-v2, PCA降维)。
+        *   kNN统计 (FAISS，K $\in$ {5, 10, 25, 50, 100})：邻居正确率、距离加权正确性、类别条件距离均值。
+        *   手工文本复杂度指标：可读性（Flesch-Kincaid）、词汇多样性（type-token ratio）、结构信号（否定计数、数学/代码存在、括号嵌套深度）、信息论指标（字符熵、zlib压缩比）。
+        *   GPT-2信号：平均对数概率、困惑度、token级熵。
+    *   **核心架构：**
+        *   基于规则的kNN路由器（kNN Majority Vote, kNN Score）。
+        *   每模型学习分类器（Logistic Regression, XGBoost, MLP, Multi-Task NN）。
+        *   统一网络（Shared backbone）。
+        *   端到端文本模型 (LoRA微调的DeBERTa-v3-base)。
+    *   **训练：** 多种子初始化，Adam/AdamW优化器，早停，通过平均校准集AUC选择最佳模型。原始预测通过校准套件处理（Platt scaling, isotonic regression, percentile mapping, z-score normalization）。
+*   **评估指标：**
+    *   **每LLM层面：** Per-model AUC（预测P(correctk)与真值间的ROC-AUC）、Brier score（预测概率与二元结果间的均方误差）、Routing delta（路由到/未路由到的准确性和成本）。
+    *   **全局路由层面：**
+        *   Padded Area Under the Cost Coverage Curve (P-AUCCC): 归一化反成本空间中的曲线下面积，高者优。
+        *   Model Delta Padded AUCCC (MDP-AUCCC): 相对于仅模型的Pareto前沿的路由增益。
+        *   Oracle Distance: 到理论Oracle点的欧氏距离，低者优。
+*   **成本模型：** 使用OpenRouter API（2026年3月19日）的定价率，近似成本 $C_{k,q} = \frac{n_{in,q}}{10^6} \cdot r_{in,k} + \frac{\tilde{n}_{out,k}}{10^6} \cdot r_{out,k}$，其中 $\tilde{n}_{out,k}$ 是模型k的训练集输出token中位数作为冗余代理。
+
+**关键对比结果：**
+*   **编码器-目标性能：** Qwen3.5-122B在所有目标模型上均表现出最高的AUC，表明大型开源编码器可以作为强大的预测器，包括对闭源目标模型。有时，不同模型的隐藏状态甚至优于目标模型自身的隐藏状态。
+*   **Mechanistic interpretation (per LLM)：** SharedTrunkNet在所有评估指标上均领先：最高的平均每模型AUC，最低的平均Brier score，以及最高的加权路由到准确率。这反映了联合多目标优化和跨模型上下文的优势。
+*   **Global Router Evaluation（全局路由评估）：**
+    *   SharedTrunkNet在P-AUCCC、MDP-AUCCC和Oracle Distance方面均取得了最强的整体路由性能，持续有效降低了与理论Oracle之间的距离。
+    *   **Frontier Pool：** SharedTrunkNet 将最强独立模型与理论Oracle之间的准确率差距缩小了 **45.58%**，相对于最高成本模型实现了 **74.31%** 的成本节省，Oracle Distance 降低了 **53.62%**，P-AUCCC比仅模型的Pareto前沿增加了 **14.67%**。
+    *   **Small Pool：** SharedTrunkNet 将准确率差距缩小了 **20.4%**，成本节省 **64.2%**。
+    *   **Mixed Pool：** 由于超过一半的查询所有模型都能正确回答，路由空间较小，但SharedTrunkNet 仍将准确率差距缩小了 **17.3%**，成本节省 **29.3%**。
+    *   结果表明，内部激活几何提供了比评估的语义基线更强的路由信号。
+
+**潜在局限或不足：**
+1.  **成本模型简化：** 研究使用的部分成本模型通过中位数输出长度近似输出成本，而不是对每个查询的输出进行预测。这可能导致成本估算不够精确。
+2.  **归一化反成本指标的鲁棒性：** 全局路由评估依赖于一套归一化的反成本指标，其鲁棒性需要进一步分析。
+3.  **未评估其他几何探针：** 尽管Fisher J被认为是最佳选择，但未来可以探索更多不同的几何探针来进一步优化层选择。
+4.  **未考虑推理延迟：** 成本模型主要关注API定价，未详细考虑本地部署情况下的推理延迟等因素。
+5.  **有限的评估基准：** 虽然使用了三个基准，但LLM的实际应用场景远不止这些，模型的通用性可能需要更广泛的测试。
+
 ## 斯坦福ACE
 **Agentic Context Engineering**: Evolving Contexts for Self-Improving Language Models
 
