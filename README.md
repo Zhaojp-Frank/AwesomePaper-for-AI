@@ -5,11 +5,12 @@ Awesome or inspiring paper for AI
 LLM Router: Rethinking Routing with Prefill Activations 
 
 paper: https://arxiv.org/pdf/2603.20895 NV 2026.3.31
-code: 
+
+code: https://github.com/NVIDIA-AI-Blueprints/llm-router ??
 
 1. 针对大型语言模型（LLM）路由中**语义信号无法捕捉模型特有故障和内在任务难度**的问题，该研究提出了一种**利用模型内部prefill激活信号进行预测**的路由方法，并发现**开源Encoder可以有效预测闭源Target模型的性能**。
 2. 核心方法是"Encoder-Target Decoupling"，通过分离信号生成模型（Encoder）和被预测模型（Target），并使用SharedTrunkNet这一**联合多输出MLP来整合Encoder的prefill激活特征**，同时预测多个候选LLM的正确性概率。
-3. 🚀 实验结果表明，该方法在各类模型池中均显著优于传统的语义基线，尤其在**Frontier模型池中，成功缩小了最强独立模型与理论最优模型之间45.58%**的准确率差距，并实现了**74.31%的成本节约**。
+3. 实验结果表明，该方法在各类模型池中均显著优于传统的语义基线，尤其在**Frontier模型池中，成功缩小了最强独立模型与理论最优模型之间45.58%**的准确率差距，并实现了**74.31%的成本节约**。
 
 <img width="984" height="483" alt="image" src="https://github.com/user-attachments/assets/8fe1d30c-067b-43ab-a1f9-cce82a64d4cb" />
 <img width="1205" height="649" alt="image" src="https://github.com/user-attachments/assets/fd241bac-14fc-4144-97fd-b2894016700c" />
