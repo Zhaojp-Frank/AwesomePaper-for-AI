@@ -4,22 +4,25 @@ Awesome or inspiring paper for AI
 ## SSD 自蒸馏
 Embarrassingly Simple Self-Distillation Improves Code Generation
 
-https://arxiv.org/pdf/2604.01193 apple 2026.4.2
+paper: https://arxiv.org/pdf/2604.01193 apple 2026.4.2
 
-https://github.com/apple/ml-ssd
+code: https://github.com/apple/ml-ssd
 
 中文解读：https://mp.weixin.qq.com/s/Obh-QHIlbKqBnedskJjSPw
 
-1. 💡 提出了简单自蒸馏（SSD）方法，使大型语言模型仅利用自身原始输出即可显著提升代码生成能力，无需依赖验证器、教师模型或强化学习。
-2. 🔬 发现LLM解码存在“精度-探索冲突”，SSD通过高温采样控制 context相关动态地重塑token分布，在**需要精度时抑制干扰尾部**，在**需要探索时保留有用多样性**，从而解决了这一冲突。
-3. 🚀 SSD使Qwen3-30B-Instruct在**LiveCodeBench v6上的pass@1指标从42.4%提升至55.3%**，在**hard问题上收益尤其显著（pass@1 +15.9； pass@5 +23）**，并可泛化到**不同规模和类型的Qwen4b～30与Llama**模型，包括thinking(也有提升 但少)。
+1. 提出了简单自蒸馏（SSD）方法，使大型语言模型仅利用自身原始输出即可显著提升代码生成能力，无需依赖验证器、教师模型或RL。
+2. 发现LLM解码存在“精度-探索冲突”，SSD通过高温采样控制 context相关动态地重塑token分布，在**需要精度时抑制干扰尾部**，在**需要探索时保留有用多样性**，从而解决了这一冲突。
+3. Qwen3-30B-Instruct在**LiveCodeBench v6上的pass@1指标从42.4%提升至55.3%**，在**hard问题上收益尤其显著（pass@1 +15.9； pass@5 +23）**，并可泛化到**不同规模和类型的Qwen4b～30与Llama**模型，包括thinking(也有提升 但少)。
+
    代表超参：Qwen3-30B-A3B-Instruct，**采样温度=2.0(原始分布被拉得更平坦 多样性更高，对应fork类型问题)，Top-k=10（向头部集中，截断尾部，对应lock类问题）**，二者拉扯，最终LCBv6 pass@1平均**+12.9pp**。
+   
 B200*8, 1万条代码prompt；Megatron-LM 最长64K, AdamW + cosine decay peak LR:5*e-6, vLLM 最长128K,标准的SFT（预测下一个token）
 
-**论文的核心观察/假设**：现代顶尖模型预训练后已经具备很强的代码生成的“能力”—后训练关键在于激发出来；目前的卡点（至少之一）是**decode概率分布不适合解码，在代码生成任务中容易出现“Lock 位置的尾部过长，Fork 位置的头部过尖”**。论文SSD本质是**重塑概率分布形状（而非学习新知识）**，SSD训练后的模型权重在线推理时**基于一个固定温度设置能更好的同时满足精度和探索需求**
+**论文的核心观察/假设**：现代顶尖模型预训练后已经具备很强的代码生成的“能力”—后训练关键在于激发出来；目前的卡点（至少之一）是**decode概率分布不适合解码，在代码生成任务中容易出现“Lock 位置的尾部过长，Fork 位置的头部过尖”**。
+
+论文SSD本质是**重塑概率分布形状（而非学习新知识）**，SSD训练后的模型权重在线推理时**基于一个固定温度设置能更好的同时满足精度和探索需求**
 
 **Lock时刻（落笔）**：当写下**if n==**之后，下一个token几乎没有悬念——必须是某个具体的数值。此时应该增强确定性，摈弃干扰选项。
-
 **“Fork时刻（岔路口）”**：当开始构思一个排序函数时，面前有多条选择—写快排？归并排？堆排？每条路都可能通向正确答案。此时需要是探索/反思，不能一条路走到黑。
 论文提出了“极简自蒸馏”（Embarrassingly Simple Self-Distillation, SSD），仅利用LLM自身的原始输出来提升其代码生成能力。3步骤非常简单：（1）用冻结模型配置高温(2.0)+截断采样；（2）对这些未筛选样本上做标准SFT；（3）推理时用另一个正常温度(~0.6)生成。
 
