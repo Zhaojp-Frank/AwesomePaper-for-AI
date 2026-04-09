@@ -1,6 +1,79 @@
 # AwesomePaper-for-AI
 Awesome or inspiring paper for AI
 
+## Cusor Composer2
+https://arxiv.org/pdf/2603.24477 2026.3.26
+
+1. 🚀 Composer 2 是一款专为智能软件工程设计的模型，通过持续预训练提升编码知识和潜在能力，并结合大规模强化学习优化端到端性能，旨在解决长周期真实世界编码问题。
+2. 💡 针对现有公开基准的局限性，团队引入了CursorBench——一个基于内部工程团队真实编码会话构建的评估套件，它更好地反映了复杂、不明确的实际任务。
+3. 🥇 Composer 2 在CursorBench上实现了61.3%的准确率，比之前版本有显著提升，在公共基准如SWE-bench Multilingual和Terminal-Bench上也表现出色，达到了与最强前沿模型相当的性能，同时具有更低的推理成本。
+
+Composer 2 技术报告的总结如下：
+
+### 摘要
+
+Composer 2 是一款专为智能体软件工程设计的专业模型，旨在解决传统模型在处理复杂、长周期软件开发任务时的局限性，并提高真实世界编码场景下的性能和效率。
+
+**场景与具体问题：**
+软件工程领域对能够自主导航代码库、解决复杂工程任务的智能体模型需求日益增长。现有的代码生成模型虽有进展，但仍难以满足真实世界中对长期规划、高编码智能以及与用户高效交互的需求。Composer 2 的目标是提供一个在该领域达到前沿水平的模型，特别是针对那些涉及大型代码库、模糊任务描述和多步骤执行的实际软件工程问题。
+
+**业界存在哪些不足：**
+1.  **领域不匹配 (Domain Mismatch)**：公共基准测试（如 SWE-bench）多关注孤立的 bug 修复，而真实开发工作流程更广，包括大规模重构、功能开发等。
+2.  **提示过规范化 (Prompt Over-specification)**：公共基准测试的提示通常高度明确，与实际开发中任务描述含糊不清、需要模型自行推断意图的情况不符。
+3.  **数据污染与过拟合 (Data Contamination and Overfitting)**：公共基准测试数据常泄漏到模型训练数据中，导致分数虚高，无法真实反映模型能力。
+4.  **评估范围狭窄 (Narrow Evaluation Scope)**：现有评估主要侧重功能正确性，忽略了代码质量、可读性、延迟、成本及智能体交互行为等重要方面。
+5.  **强化学习的收敛性问题 (RL Convergence Issues)**：在异步大规模 RL 训练中，如何有效管理 policy staleness、如何处理长序列 rollouts 的稳定性、如何选择 KL 散度估计器以避免方差爆炸，以及如何确保 RL 不仅优化“最佳”路径而是拓宽可达的正确解集合，都是业界挑战。
+
+**关键观察与假设：**
+1.  **领域专业化 (Domain Specialization)**：通过持续预训练和大规模强化学习，可以大幅提升模型在特定领域的性能，超越通用模型。
+2.  **仿真真实世界 (Emulating Real-world Challenges)**：最小化训练与测试之间的不匹配至关重要。通过在与部署模型相同的 Cursor 环境中训练，并使用匹配真实问题的环境和工具，可以更准确地衡量和提升模型能力。
+3.  **长尾与模糊性 (Long-tail and Ambiguity)**：真实世界的软件工程任务具有长尾效应和高度模糊性，评估模型需要能够处理这些复杂性。
+4.  **评估指标的全面性 (Comprehensive Evaluation Metrics)**：除了功能正确性，评估还需包含效率、成本、代码质量和用户体验等维度。
+5.  **持续改进 (Continuous Improvement)**：模型能力和用户工作流程不断演进，基准测试也需持续更新以保持相关性。
+
+**方法核心思路和主要步骤：**
+Composer 2 的训练分为两个阶段：
+1.  **持续预训练 (Continued Pretraining)**：旨在提升模型在编码领域的知识和潜在编码能力。
+    *   **基座模型选择**：基于内部评估（代码库困惑度、编码知识、状态跟踪），选择 Kimi K2.5 (1.04T 参数/32B 活跃参数的 Mixture-of-Experts 模型) 作为基座。
+    *   **训练阶段**：分为三阶段，主要计算资源投入在 32k token 序列长度，接着是 256k 序列长度的短时长上下文扩展，最后是针对性编码任务的短时 SFT (Supervised Fine-tuning) 阶段。
+    *   **多 Token 预测 (Multi-Token Prediction, MTP)**：为加速生产推理，训练额外的 MTP 层并与主 LM head 一起进行 self-distillation 训练。
+
+2.  **大规模强化学习 (Large-Scale Reinforcement Learning, RL)**：旨在通过更强的推理、准确的多步执行和长周期任务的一致性来提升端到端编码性能。
+    *   **任务分布**：构建反映最常见用例的问题分布（图 3），包括功能迭代、调试、新功能开发、重构、代码理解、文档、测试、代码审查、优化、DevOps、迁移、删除等。
+    *   **异步 RL 训练**：
+        *   **策略梯度算法**：使用基于多个样本的策略梯度算法，并在单 epoch 机制下操作。采用 Adam 优化器更新全部参数。
+        *   **梯度偏置最小化**：借鉴 Dr. GRPO 经验，移除 GRPO 中的长度标准化项，不通过标准差归一化组优势，以避免小行为差异被过度加权。
+        *   **长序列稳定性**：最小化样本的 off-policy 程度，通过快速权重同步和 in-flight 权重更新，使 rollout 后期 token 趋于 on-policy。
+        *   **MoE 路由回放 (Router Replay)**：为了解决 MoE 模型中推理引擎与训练前向传播在专家选择上的数值差异，inference 阶段返回选定的专家索引，训练时强制匹配，并过滤掉分数低于 plausibility threshold 的回放专家。
+        *   **KL 正则化**：使用 $\text{KL}(q \parallel p) = \mathbb{E}_{x \sim q}[-\log r(x)]$，其中 $r(x) = p(x)/q(x)$。采用标准估计器 $\text{k1} = -\log r$ 而非 Schulman 的 k3 估计器，以避免在 p 和 q 差异较大时方差爆炸（图 4）。
+        *   **平均与最佳性能提升**：与传统 RL 不同，Composer 2 的训练同时提升了平均性能和 best-of-K 性能（图 5），表明模型不仅重采样已知路径，还在拓展正确解的覆盖范围。
+    *   **自摘要 (Self-Summarization)**：为支持长周期任务，训练 rollouts 可包含多代通过摘要链式连接的生成。这会根据轨迹质量提升或降低摘要和智能体响应的权重，让模型学习有效利用自摘要。
+    *   **智能体行为塑造 (Agent Behavior)**：
+        *   引入辅助奖励，如编码风格、沟通、产品特定惩罚（如未完成的 to-do 项）。
+        *   引入非线性长度惩罚，鼓励模型在简单任务上快速响应，在复杂任务上深入思考。惩罚函数为 $C_{length}(k,q)(x) = \frac{(1+kx)^{1-q} - 1}{k(1-q)}$，其中 $x$ 是思考 token、工具调用 token、工具输出 token、最终消息 token、工具调用次数和 rollout 轮次的加权组合。
+
+**实验设置：**
+*   **实现基础**：基于 Ray 和 PyTorch 构建异步、高吞吐量的训练栈。内核由 CUDA、PTX 和 ThunderKittens/ParallelKittens 编写。
+*   **硬件条件**：训练在 NVIDIA B300s 上进行，MoE 层计算利用 NVIDIA Blackwell GPUs 的 block-scaled tensor-core 矩阵乘法。
+*   **精度**：MoE 前向传播使用 NVFP4 (FP4E2M1)，结合 FP8E4M3 的 per-block 尺度和 FP32 的 per-token 尺度；MoE 后向传播使用标准 MXFP8 (FP8E4M3 值和 FP8E8M0 尺度)。
+*   **并行策略**：结合上下文并行 (Context Parallelism, CP)、专家并行 (Expert Parallelism, EP) 和数据并行 (FSDP)。CP 作为主要长上下文扩展轴，EP 与 TP 解耦。在持续预训练中采用 EP=8, CP=2；在 RL 阶段采用 EP=8, CP=8。使用 DeepEP 实现高吞吐量 token dispatch/combine。
+*   **负载情况**：生产训练任务跨 3 个 GPU 区域和 4 个 CPU 区域。RL 训练的计算负载通过全局序列打包 (global sequence packing) 算法在 DP 级别实现均衡。
+*   **环境基础设施 (Anyrun)**：用于运行不可信代码的内部计算平台，支持在 Firecracker VM 中模拟完整的开发环境，包括浏览器和 GUI。支持环境的分支 (forking) 和快照 (snapshotting)。
+*   **推理与权重同步**：与 Fireworks AI 合作进行 RL 推理。权重同步通过 delta 压缩和分片上传/下载实现跨区域同步。
+*   **评估**：通过 CursorBench 进行，模型在 Anyrun 中执行，模拟生产环境。还使用了实时在线评估，通过生产后端和 Cursor 客户端的固定版本进行。
+*   **对比基线**：在 CursorBench 上与 Composer 1、Composer 1.5、Opus 4.6/4.5、GPT-5.4/5.3/5.2、GLM-5、Kimi K2.5 等进行比较。在公共基准测试 (SWE-bench Multilingual, Terminal-Bench) 上与上述模型及其他 SOTA 模型进行比较。
+
+**关键对比结果：**
+*   **CursorBench 性能 (Table 1)**：Composer 2 达到 61.3% 的准确率，相较 Composer 1.5 提升 37%，相较 Composer 1 提升 61%。相对于基座模型 Kimi K2.5，准确率显著提升，验证了训练流程的有效性。
+*   **公共基准测试性能 (Table 1)**：
+    *   SWE-bench Multilingual：Composer 2 达到 73.7%，相较 Composer 1.5 提升 7.8%，相较 Composer 1 提升 16.8%。
+    *   Terminal-Bench：Composer 2 达到 61.7%，相较 Composer 1.5 提升 13.8%，相较 Composer 1 提升 21.7%。
+*   **效率与成本 (Figure 11)**：Composer 2 在 CursorBench 任务上的推理成本与较小或低努力的模型相似，但准确率与更大的前沿模型具有竞争力。它实现了 Pareto 最优的权衡，在token 使用效率上保持高度竞争力，同时提供前沿级别的准确性。
+
+**潜在局限或不足：**
+1.  **现有模型智能与连贯性有待提升**：尽管 Composer 2 显著改进，但在许多情况下，模型在智能和连贯性方面仍有明显的提升空间。
+2.  **模型规模相对较小**：Composer 2 虽然已是大型模型（1.04T 参数，32B 活跃参数），但可能小于其他具有可比能力但未公开的模型。这意味着在模型架构和算法层面仍有相当大的发展空间。
+3.  **长任务处理能力**：未来的工作重点是扩展模型处理长周期任务的能力，这需要算法上有效利用更长期的训练信号，以及基础设施支持忠实的长周期问题。
 
 ## TriAttention
 TriAttention: Efficient Long Reasoning with Trigonometric KV Compression 2026.4.6 MIT, NVIDIA, ZJU
