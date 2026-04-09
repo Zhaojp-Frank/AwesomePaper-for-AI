@@ -1,6 +1,97 @@
 # AwesomePaper-for-AI
 Awesome or inspiring paper for AI
 
+
+## TriAttention
+TriAttention: Efficient Long Reasoning with Trigonometric KV Compression 2026.4.6 MIT, NVIDIA, ZJU
+
+https://arxiv.org/pdf/2604.04921 
+
+https://github.com/WeianMao/triattention/tree/main
+
+1. 🚀 大型语言模型 (LLMs) 的长推理任务面临严峻的 KV 缓存内存瓶颈，为解决此问题，研究发现 RoPE 预处理空间中的 Q 和 K 向量高度集中于固定的非零中心，且这种 Q/K concentration 现象在不同位置和上下文之间保持稳定。
+2. 💡 这种 Q/K 集中使得注意力对特定距离键的偏好可通过三角级数从 Q/K 中心预测，基于此，论文提出了 TriAttention 方法，它利用 Q/K 中心、三角级数以及 Q/K 范数来估计键的重要性，并自适应地进行 KV 缓存压缩。
+3. 📈 AIME25 等数学推理基准测试中，TriAttention 在保持与 Full Attention 相当的推理准确率的同时，实现了2.5x吞吐量提升或 10.7 倍的 KV 内存减少，显著优于现有基线方法，并支持在单个消费级 GPU 上部署长上下文模型。
+-MLA也具备改特性？
+
+本文提出了TriAttention，一种针对大型语言模型（LLMs）长推理过程中KV cache内存瓶颈的高效KV cache压缩方法。
+(2K budget)
+<img width="813" height="203" alt="image" src="https://github.com/user-attachments/assets/df4dd130-cce4-4e49-866e-b3389c57547b" />
+
+<img width="814" height="251" alt="image" src="https://github.com/user-attachments/assets/83d1211f-890a-454b-b8d6-63c8dfe85e20" />
+<img width="753" height="215" alt="image" src="https://github.com/user-attachments/assets/08d9fde7-a3ed-485a-89bc-af9dd227c1fe" />
+<img width="821" height="178" alt="image" src="https://github.com/user-attachments/assets/2e58a7bc-764f-4873-afc2-3a8b5ea6fbc5" />
+
+**场景与具体问题**
+LLMs进行长链式推理（Chain-of-Thought reasoning）时，会生成数万个token的序列。这导致KV cache（Key-Value cache）以与序列长度成比例的速度增长，进而引发严重的内存瓶颈，限制了LLMs在长上下文推理任务中的部署和性能。
+
+**业界存在的不足**
+现有的KV cache压缩方法主要通过保留最“重要”的token来解决内存问题。它们通常基于后-RoPE（post-RoPE）查询的注意力分数来估计KV的重要性。然而，这种方法存在以下固有缺陷和不稳定性：
+1.  **旋转性与观察窗口限制：** RoPE（Rotary Position Embedding）会导致查询向量随位置旋转。这意味着只有最新的查询才能保持“最新”的方向性，从而提供有用的注意力分数。这形成了一个极小的“观察窗口”，导致可用于重要性估计的有效查询数量极少。
+2.  **不稳定性与关键信息丢失：** 在如此小的观察窗口内，许多重要的key可能暂时没有接收到高注意力分数，因此被错误地判断为不重要并被驱逐。即使这些key在后续推理中变得至关重要，也无法被找回，导致“思维链”断裂，推理性能下降。这对于检索头（retrieval heads）尤其具有挑战性，因为相关token可能长时间处于“休眠”状态。
+3.  **性能瓶颈：** 现有研究表明，即便增大观察窗口也无济于事，性能通常在25个查询左右达到峰值后下降，这远低于典型长上下文的长度。
+
+**关键观察与假设**
+TriAttention的核心洞察是转向前-RoPE（pre-RoPE）空间：
+1.  **Q/K集中现象（Q/K concentration）：** 在前-RoPE空间中，Q（Query）和K（Key）向量在很大一部分注意力头中高度集中于固定的非零中心。这种集中现象在不同token位置和输入上下文之间保持稳定（如图2(A)所示，Mean Resultant Length R值接近1.0），且普遍存在于几乎所有注意力头中（如图2(C)所示）。由于前-RoPE向量未受位置旋转影响，这种稳定性是固有的，而非偶然的。
+2.  **可预测的距离偏好：** 由于前-RoPE向量与RoPE公式直接关联，当Q/K高度集中时，它们可以被其中心近似。将这些中心代入RoPE注意力公式后，注意力logit可以简化为一个仅依赖于Q-K距离（$\Delta = p_q - p_k$）的三角级数（trigonometric series）：
+    $$ \text{logit}(\Delta) \approx \sum_f \| \bar{q}_f \| \| \bar{k}_f \| \cos(\omega_f \Delta + \bar{\phi}_f) $$
+    其中，$f$ 表示频率带，$\bar{q}_f, \bar{k}_f$ 是Q/K中心，$ \omega_f $ 是RoPE频率，$ \bar{\phi}_f $ 是它们中心间的相位差。这个级数形成了一个“注意力-距离”曲线，通常在特定Q-K距离处出现峰值，这表明注意力会优先关注特定距离的key。这种偏好由Q/K中心决定，且可以通过三角级数预测（如图2(D)所示，预测与实际注意力相关性高）。
+
+**方法核心思路和主要步骤**
+TriAttention基于上述观察，设计了一种KV cache压缩方法，通过对key的重要性进行评分并保留得分最高的key。
+1.  **离线校准（Offline Calibration）：** 在推理前，通过收集大量文本（例如，约50k-960k token）来校准模型。对于每个注意力头和每个频率带$f$，计算前-RoPE Q向量的中心$E[q_f]$（即平均Q向量）和平均范数$E[\|q_f\|]$。同样，为K向量计算$E[k_f]$和$E[\|k_f\|]$。这些统计量构成了Q/K中心和范数的估计值。
+2.  **Key重要性评分函数（Key Importance Scoring）：** TriAttention的评分函数结合了两个信号：
+    *   **三角级数分数（Trigonometric Series Score），$S_{\text{trig}}(k, \Delta)$：** 利用Q中心作为未来查询的代理，通过三角级数估计key在距离$\Delta$处将获得的预期注意力。对于缓存中的key $k$，其在前-RoPE频率带$f$的表示为$k_f$。
+        $$ S_{\text{trig}}(k, \Delta) = \sum_f \|E[q_f]\| \cdot \|k_f\| \cdot \cos(\omega_f \Delta + \phi_f) $$
+        其中，$\phi_f = \text{arg}(E[q_f]) - \text{arg}(k_f)$ 是Q中心与当前key之间的角度差。
+    *   **范数分数（Norm-Based Score），$S_{\text{norm}}(k)$：** 补充三角级数分数，考虑Q/K向量围绕其中心的变化。它通过频率带$f$的平均查询范数$E[\|q_f\|]$和当前key的范数$ \|k_f\| $来计算。
+        $$ S_{\text{norm}}(k) = \sum_f E[\|q_f\|] \cdot \|k_f\| $$
+3.  **基于集中度的自适应加权（Adaptive Weighting via Concentration）：** $S_{\text{trig}}$在Q/K高度集中时最准确，而$S_{\text{norm}}$在集中度较低时变得更重要。TriAttention使用Q/K集中度（Mean Resultant Length，$R_f = \|E[q_f]\| / E[\|q_f\|]$）来自动平衡这两个组件。$S_{\text{norm}}$被修改为：
+    $$ S_{\text{norm}}(k) = \sum_f (1 - R_f) \cdot E[\|q_f\|] \cdot \|k_f\| $$
+    当$R_f$高时，$(1-R_f)$小，$S_{\text{norm}}$贡献小，主要依赖$S_{\text{trig}}$；当$R_f$低时，$(1-R_f)$大，$S_{\text{norm}}$的贡献增加。最终的组合分数是：
+    $$ S(k, \Delta) = S_{\text{trig}}(k, \Delta) + S_{\text{norm}}(k) $$
+4.  **未来偏移量平均（Future Offset Averaging）：** 由于key可能被任何未来位置的查询访问，其重要性应考虑所有可能的未来查询位置。因此，计算一个平均重要性分数：
+    $$ \tilde{S}(k) = \frac{1}{|D|} \sum_{\delta \in D} S(k, \Delta + \delta) $$
+    其中，$D = \{1, 2, 4, \dots, 2^{16}\}$ 是一组对数间隔的未来偏移量。
+5.  **KV Cache剪枝（KV Cache Pruning）：**
+    *   **窗口式剪枝：** 每生成$\beta=128$个token触发一次剪枝。当缓存超过预算B时，对所有key进行评分并保留得分最高的B个。
+    *   **GQA支持：** 对于Grouped-Query Attention（GQA），每个KV头被G个查询头共享。每个key会得到G个不同的分数。首先对每个查询头的分数进行z-score归一化，然后取最大值作为最终分数：
+        $$ \hat{S}^{(g)}(k) = \frac{\tilde{S}^{(g)}(k) - \mu_g}{\sigma_g} $$
+        $$ S_{\text{final}}(k) = \max_{g \in \{0,\dots,G-1\}} \left( \hat{S}^{(g)}(k) \right) $$
+        最终，保留$S_{\text{final}}(k)$最高的B个key。
+
+**实验设置**
+*   **实现基础：** 在Qwen3-8B、DeepSeek-R1-Distill-Llama-8B、DeepSeek-R1-Distill-Qwen-7B和GPT-OSS-20B等具有强大思维链推理能力的LLMs上进行评估。
+*   **硬件条件：** 大多数实验在NVIDIA A100 80GB GPU上进行；GPT-OSS使用H100 GPU。
+*   **软件版本：** 使用bfloat16精度，FlashAttention-2（A100）或FlashAttention-3（H100）。
+*   **负载情况：**
+    *   **数据集：** AIME 2024、AIME 2025（各30个问题，竞争级数学推理，多步推理）；MATH 500（500个问题，多样化数学推理）；以及LongBench（16个子任务，包含QA、摘要、对话、检索、代码等）和RULER（检索任务）用于泛化性评估。
+    *   **生成参数：** 最大生成长度32,768个token，temperature 0.6，top-p 0.95。AIME问题采样8次取平均通过率，MATH 500采样1次。
+    *   **KV cache管理：** 每128个token触发一次压缩。默认KV预算为2048个token。DS-Llama和MATH 500使用512个token预算以确保压缩实际发生。
+*   **对比基线：**
+    *   **Full Attention：** 无剪枝，性能上限。
+    *   **SnapKV：** 基于局部观察窗口的历史注意力分数选择重要token。
+    *   **R-KV：** 最新的方法，结合基于注意力的重要性评分和冗余检测。
+    *   **其他方法（在附录中）：** LazyEviction、H2O、TOVA、RaaS、PyramidKV、StreamingLLM、KnormPress、Ada-KV+SnapKV。
+
+**关键对比结果**
+*   **推理性能：**
+    *   在AIME24、AIME25和MATH 500上，TriAttention在所有模型和数据集上均持续优于所有KV cache压缩方法，且性能接近甚至在某些情况下超过Full Attention。
+    *   在相同KV预算下，TriAttention在AIME25上比R-KV高出15.4个百分点（32.9% vs 17.5%）。在MATH 500上，KV cache预算为1024时，TriAttention（68.4%）接近Full Attention（69.6%）。
+    *   在递归状态查询基准测试（Recursive State Query）中，TriAttention在深度达16时性能与Full Attention相当，而R-KV从深度16开始出现灾难性精度下降，表明TriAttention能有效保留中间状态，避免信息丢失。
+*   **吞吐量与效率：**
+    *   在AIME25上，与Full Attention达到相同精度（40.8%）时，TriAttention实现了2.5倍更高的吞吐量或10.7倍的KV内存减少。
+    *   在MATH 500上，吞吐量提升高达6.3倍（1405 vs 223 tokens/s），同时保持可比精度。
+    *   与R-KV相比，在相同精度下，TriAttention仅需一半的KV预算（1024 vs 2048 token），吞吐量提高85%（1405 vs 760 tokens/s）。在相同内存预算下，TriAttention保持类似吞吐量但精度更高（MATH 500上提升8%，AIME24上提升15%）。
+*   **消融研究与泛化性：**
+    *   移除三角级数分数$S_{\text{trig}}$会大幅降低性能，证实其重要性。自适应加权机制也有效。
+    *   跨领域校准（使用代码数据而非推理数据）表现出可比的精度，表明Q/K统计量是模型固有的属性，具有良好的领域泛化性。
+    *   未来偏移量设计中，几何间隔（$\{1, 2, 4, \dots\}$）优于线性间隔，并证实多未来偏移量有效。
+    *   校准数据量和质量对性能影响不大，再次验证Q/K统计的鲁棒性。
+    *   Q/K集中现象在MLA（Multi-head Latent Attention）架构（如GLM-4.7-Flash）中同样存在，甚至更显著，表明其具有架构通用性。
+*   **实际部署：** TriAttention使得Qwen3-32B（INT4量化）可以在单个RTX 4090上部署OpenClaw进行多轮代理任务，而Full Attention在相同内存预算下会导致OOM（out-of-memory）。
+
 ## NV LLM router with prefill activations
 LLM Router: Rethinking Routing with Prefill Activations 
 
