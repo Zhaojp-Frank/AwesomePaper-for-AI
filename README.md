@@ -1,6 +1,111 @@
 # AwesomePaper-for-AI
 Awesome or inspiring paper for AI
 
+## Thinktwice
+https://arxiv.org/pdf/2604.01591 多伦多大学 2026.4.6
+
+https://github.com/CSSLab/ThinkTwice
+
+1. 🤔 提出ThinkTwice，一个基于GRPO的两阶段框架，用于在没有外部正确性信号或批评标注的情况下，共同优化大型语言模型的推理和自我修正能力。
+2. 🚀 该框架在Qwen3-4B和Olmo3-7B模型上，于五个数学推理基准测试中显著提升了推理和修正性能，例如在Qwen3-4B的AIME任务上，推理表现提升5个百分点，自我修正后提升11.5个百分点。
+3. 💡 研究发现，ThinkTwice的训练过程会产生一种**隐式“纠正-强化”**，即**早期训练侧重纠错，后期则转向保持并优化正确答案**，同时**仅增加3%的**训练开销，并能更快地收敛。
+
+<img width="637" height="309" alt="image" src="https://github.com/user-attachments/assets/c0f120fe-9065-4cb2-863e-d77cdf1628c7" />
+
+<img width="699" height="379" alt="image" src="https://github.com/user-attachments/assets/b68008e7-c8f0-4c59-b1bc-99c04c61a455" />
+
+<img width="768" height="387" alt="image" src="https://github.com/user-attachments/assets/d5e546bf-c3e6-438b-99ef-2981cff3f6a4" />
+
+<img width="631" height="702" alt="image" src="https://github.com/user-attachments/assets/d010771f-f206-4c6c-a58a-31d2d84f3550" />
+
+<img width="612" height="305" alt="image" src="https://github.com/user-attachments/assets/e295f4f7-e32a-4d38-9cc7-1510a6483dfd" />
+
+介绍了名为 “ThinkTwice” 的框架，旨在通过联合优化大型语言模型（LLMs）的推理和自我修正能力，以解决数学推理问题。
+
+**场景与具体问题：**
+在推理任务中，特别是数学推理，尽管现有的大型语言模型（LLMs）表现强劲，但其生成的解决方案仍可能包含可修正的错误，例如推导不完整、代数计算失误或推理路径效率低下。人类在解决问题时会进行自我修正（self-refinement），即回顾初始方案、识别错误并修订推理。将这种能力赋予LLM有望显著提升其在挑战性问题上的表现。
+
+**业界存在的不足：**
+1.  **训练无关方法（Training-free methods）：** 如“prompt-only”反思，在推理时提示模型进行批评和修订，但无法学习可重用的修正策略。即便对于顶尖LLM，其性能也可能因自我修正提示而下降，表现出不稳定性（Figure 1A）。
+2.  **训练相关方法（Training-based methods）：** 旨在学习修正行为，但通常依赖于昂贵的外部监督信号，例如：
+    *   **过程监督（process supervision）：** 关注中间推理步骤的正确性。
+    *   **批评标注（critique annotations）：** 需要人工或更强大的模型提供错误分析和修正建议。
+    *   **明确的正确性信号（explicit correctness signals）：** 指示初始答案是否正确。
+    这些监督在实际应用中往往不可用，尤其是在LLM能力前沿，没有更强的模型提供可靠的批评，或人工监督不足以应对复杂问题。
+
+**关键观察与假设：**
+1.  **人类学习的启发：** 人类在解决问题时会“三思”（think twice），即先尝试解决，再审视并修正。这种两阶段的思维模式可以借鉴到LLM的训练中。
+2.  **信号稀疏性与利用：** 对于可验证奖励（verifiable rewards）的强化学习（RLVR），仅通过最终答案的二元正确性奖励（binary correctness reward）来优化模型，可能在初始尝试失败时提供学习信号不足。
+3.  **内生课程（Emergent Curriculum）：** 假设如果模型在训练的每个批次中既进行推理优化，也进行自我修正优化，那么修正阶段会自然地形成一种“修正错误”到“巩固正确”的内生课程。早期训练时，模型倾向于修正大量错误解决方案；随着模型能力提升，修正则侧重于保留并优化已正确的解决方案。
+4.  **共享策略的潜力：** 假设使用共享的模型骨干（shared model backbone）来同时执行推理和自我修正任务，并且两者使用相同的二元正确性奖励，无需额外的批评信号或外部验证器，也能有效提升性能。
+
+**方法核心思路和主要步骤：**
+ThinkTwice是一个基于Group Relative Policy Optimization (GRPO) 的两阶段RLVR框架，它在不访问外部信息（如正确性信号、批评标注）的情况下，联合优化LLM的推理和自我修正能力。
+
+**核心思路：**
+在每个训练步对中，模型首先针对一批推理问题进行优化（推理阶段），然后针对同一批问题中自身生成的解决方案进行优化（修正阶段）。修正阶段为模型提供第二次尝试机会，使其能在条件（自身先前的解决方案）下从可修正的错误中恢复。
+
+**主要步骤：**
+ThinkTwice交替进行两个训练阶段：
+1.  **阶段1：推理优化（Reasoning Optimization）**
+    *   从训练集 $\mathcal{D}$ 中采样一批问题 $x$。
+    *   使用当前策略 $\pi_\theta$ 为每个问题生成 $G$ 个候选解决方案 $\{y_1, \dots, y_G\}$。
+    *   每个解决方案都通过二元正确性奖励 $r_i^{(base)} = \mathbb{1}[E(y_i) = a^*]$ 进行评估（其中 $E$ 从 $y_i$ 中提取答案，$a^*$ 是真实答案）。
+    *   根据GRPO的策略更新公式（如公式(1)所示），更新策略 $\pi_\theta$ 为 $\pi'_\theta$。
+        $$J_{GRPO}(\theta) = \mathbb{E}_{x, \{y_i\}_i^G} \left[ \frac{1}{G}\sum_{i=1}^G L_i - \beta D_{KL}(\pi_\theta || \pi_{ref}) \right]$$
+        其中 $L_i = \min(\rho_i A_i, \text{clip}(\rho_i, 1-\epsilon, 1+\epsilon)A_i)$ 是裁剪的替代目标，$\rho_i = \pi_\theta(y_i|x)/\pi_{\theta_{old}}(y_i|x)$ 是重要性权重，$A_i$ 是通过组归一化计算的优势值：
+        $$A_i = \frac{r_i - \text{mean}(r_1, \dots, r_G)}{\text{std}(r_1, \dots, r_G)}$$
+    *   从这 $G$ 个推演结果中，随机选择一个基础解决方案（base solution）用于后续的修正阶段。
+
+2.  **阶段2：修正优化（Refinement Optimization）**
+    *   使用阶段1中选择的基础解决方案 $y_{base}$，构建修正提示（refinement prompt）。修正提示遵循多轮对话格式：
+        $$x_{refine} = [\text{User: } x][\text{Ast: } y_{base}][\text{User: } I_{refine}]$$
+        其中 $I_{refine}$ 是一个任务无关的通用修正指令，不包含任何关于 $y_{base}$ 正确与否的指示。
+    *   使用更新后的策略 $\pi'_\theta$ 为每个修正提示生成 $G$ 个修正尝试 $\{y_1^{(ref)}, \dots, y_G^{(ref)}\}$。
+    *   每个修正后的解决方案同样使用二元正确性奖励 $r_i^{(ref)} = \mathbb{1}[E(y_i^{(ref)}) = a^*]$ 进行评估。
+    *   再次通过GRPO的策略更新公式，更新策略 $\pi'_\theta$ 为 $\pi''_\theta$。
+
+**关键设计选择：**
+*   **基础解决方案采样：** 随机选择一个基础解决方案，旨在覆盖整个训练样本范围，并促进内生课程的形成。
+*   **修正解决方案奖励：** 仅使用最终答案的二元正确性作为奖励信号，不依赖于额外的结构化或中间步骤奖励，鼓励模型：(1) 在基础解决方案错误时检测并修正错误；(2) 在基础解决方案已正确时保留并优化。
+
+**实验设置：**
+*   **实现基础：** 实验使用VERL框架实现，基于GRPO算法。
+*   **硬件条件：** 所有计时结果在两块NVIDIA H100 80GB GPU上测量。
+*   **基础模型：** 选用两个已指令微调（instruction-tuned）的模型：Qwen3-4B-Instruct-2507 和 OLMo3-7B-Instruct，因为修正阶段需要模型具备遵循多轮指令的能力。
+*   **训练数据集：** MATH训练数据集，包含7,500个数学问题。
+*   **评估基准：** 在5个数学推理基准上进行评估：AIME、AMC、MATH500、Minerva Math和OlympiadBench。
+*   **奖励机制：** 使用Math-Verify进行答案验证，采用与真实答案精确匹配的二元正确性奖励。
+*   **评估指标：** Reasoning评估报告pass@4，Self-Refinement评估也报告pass@4。
+*   **对比基线：**
+    *   **强化学习基线：** 标准GRPO、Dr. GRPO、DAPO。
+    *   **训练无关基线（用于Refinement评估）：** Reflexion、Self-Refine（通过定制prompt实现）。
+
+**关键对比结果：**
+1.  **推理性能（Reasoning Performance）：**
+    *   在Qwen3-4B上，ThinkTwice取得了最高的平均分65.57%，在最具挑战性的AIME基准上，ThinkTwice达到44.11%，比GRPO高出5个百分点。
+    *   在OLMo3-7B上，趋势相似，ThinkTwice平均分最高。
+    *   这些提升是在未应用自我修正步骤的直接提示下获得的，表明修正训练阶段本身增强了模型的推理能力。
+2.  **自我修正性能（Self-Refinement Performance）：**
+    *   在Qwen3-4B上，ThinkTwice实现了最高的平均分71.88%，比DAPO高2.9个百分点，比GRPO高4.5个百分点。在AIME上，ThinkTwice达到60.43%，比GRPO高出超过11个百分点。
+    *   在OLMo3-7B上，ThinkTwice同样表现最佳。
+    *   ThinkTwice显著优于Reflexion和Self-Refine等训练无关基线。
+3.  **跨模型修正能力（Cross-Model Refinement）：**
+    *   作为修正模型，无论基础解决方案由哪个模型生成，ThinkTwice都能获得最高分数，表明其修正能力具有良好的泛化性。
+4.  **训练动态分析：**
+    *   **修正-巩固课程（Rectify-then-Fortify Curriculum）：**
+        *   **早期训练（修正）：** ThinkTwice保持了比基线更高的“修正错误率”（fix-wrong rate），表明修正阶段能够从基础尝试失败的问题中恢复，产生更有价值的学习信号。
+        *   **后期训练（巩固）：** ThinkTwice的“损害正确率”（damage-correct rate）接近于零，而基线高出五倍。修正后的解决方案变得显著更短，表明其在保留正确性的同时消除了冗余。此外，修正后的答案格式（如带框答案和Final Answer标记）也优于香草GRPO。
+    *   **训练成本：** ThinkTwice的平均奖励稳定性与GRPO相当，修正阶段不会破坏策略优化。总壁钟时间仅比GRPO慢3%，但达到最佳检查点所需时间减少16%，表明更丰富的训练信号带来更快的收敛。
+
+**潜在局限或不足：**
+1.  **领域限制：** 当前评估主要在数学推理领域，尽管设计是领域无关的，但其在其他具有可验证奖励的任务（如代码生成）上的表现有待进一步验证。
+2.  **修正步数：** 当前主要关注单步自我修正。虽然框架支持多步迭代修正，但其效果和成本尚未充分探索。
+3.  **泛化性：** 尽管在两个不同模型家族上进行了验证，但ThinkTwice的性能是否能扩展到更大规模的模型或更广泛的推理任务类型仍需进一步研究。
+4.  **通用修正指令：** 尽管通用指令简化了设计，但在某些特定任务中，更精细的修正指令是否能带来额外收益值得探索。
+
+
+
 ## Cusor Composer2
 https://arxiv.org/pdf/2603.24477 2026.3.26
 
