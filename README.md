@@ -1,6 +1,95 @@
 # AwesomePaper-for-AI
 Awesome or inspiring paper for AI
 
+## PivotRL
+PivotRL: High Accuracy Agentic Post-Training at Low Compute Cost
+
+https://arxiv.org/pdf/2603.21383 NV, 伯克利 2026.3.22
+
+中文解读：https://mp.weixin.qq.com/s/NigH0g3XYcoGjQzGH67RTg
+
+SFT容易遗忘退化，RL效率慢。提出先从已有的SFT轨迹里找出那些关键的“pivot”中间状态，只在这些token做短rollout；不用“字符串完全一致”打分，而是基于“功能可用即可”作functional reward（依赖对工具结果作验证器）
+未开源，但声称技术已经用在了NVIDIA Nemotron-3 Super后训练过程 且效果不错。
+
+1. 提出了 PivotRL 框架，旨在解决长周期代理任务中监督微调 (SFT) 的计算效率与端到端强化学习 (E2E RL) 的泛化能力之间的矛盾，尤其关注**SFT在域外 (OOD) 遗忘退化问题**。
+2. PivotRL 通过两个核心机制克服了现有方法的瓶颈：一是**执行局部在线 rollout 并筛选出“支点”(pivots)，**即在采样动作中表现出高结果方差的中间回合，以确保强学习信号；二是利用funcation reward等效动作的奖励，而非严格的字符串匹配，提高了奖励的精确性。
+3. Qwen3-30B-A3B-Thinking-2507模型，与同数据的SFT相比，PivotRL在四个AgentBench平均实现了+4.17%的域内准确率提升，并在非代理任务中实现了+10.04% 的域外准确率提升，同时在 agentic 编程任务上，仅用 E2E RL **～1/4的rollout次数**就达到了可比的准确率。
+<img width="720" height="170" alt="image" src="https://github.com/user-attachments/assets/7ad1c7df-d994-4874-958a-1d59e68b8812" />
+
+
+<img width="722" height="615" alt="image" src="https://github.com/user-attachments/assets/bdb7fa03-f4c1-4f10-a768-98a2878aae0d" />
+
+提出了一种名为 PivotRL 的新颖框架，用于长时序（long-horizon）Agentic 任务的大型语言模型（LLM）后期训练。
+
+**场景与问题：**
+长时序 Agentic 任务，例如对话式工具使用、Agentic 编程、终端交互和网页搜索，需要 LLM 与环境进行多轮交互。这类任务的后期训练（post-training）面临计算效率与泛化能力之间的内在矛盾。
+
+**业界不足：**
+1.  **监督微调 (SFT)**：计算效率高，但泛化能力差，在域外 (OOD) 性能上往往会灾难性退化。这是因为 SFT 仅在单一演示完成上进行训练，对训练分布之外的场景适应性差。
+2.  **端到端强化学习 (E2E RL)**：能够保持良好的 OOD 能力并通常带来更高的域内准确性，但计算成本高昂，因为每次参数更新都需要多次、多轮的在线（on-policy） rollout 并在环境中进行交互。
+
+**关键观察与假设：**
+作者通过初步实验发现，简单地将 SFT 轨迹用于 RL 训练（即在随机选择的中间轮次进行在线 rollout，仅在生成动作与 SFT 演示严格匹配时给予奖励）未能改善 OOD 准确性。他们将此失败归因于两个瓶颈：
+1.  **信息量不足的回合**：随机选择的中间轮次（turns）往往提供微不足道的学习信号。在 Group Relative Policy Optimization (GRPO) 框架下，如果采样的动作要么全部成功，要么全部失败，则归一化优势（normalized advantage）接近零，无法产生有意义的梯度更新。经验表明，71% 的随机采样回合产生零学习信号。
+2.  **过于严格的奖励机制**：严格的字符串匹配对于生成式动作空间而言限制性过大。在实际场景中，许多工具调用、Shell 命令或搜索步骤即使不完全匹配演示，也可能是功能上等效且可接受的。这种严格匹配错误地丢弃了许多功能上正确的 rollout。
+
+**方法核心思路和主要步骤：**
+PivotRL 旨在解决上述瓶颈，结合 SFT 的数据效率和 E2E RL 的泛化能力。其核心思想是对现有 SFT 轨迹进行操作，并依赖于两个关键机制：
+1.  **枢纽（Pivots）过滤**：执行局部在线（local, on-policy）rollout，并筛选出“枢纽”——即信息量丰富的中间助手轮次，这些轮次中采样的动作表现出混合结果（即成功和失败并存），从而提供高方差（high variance）的学习信号。
+2.  **功能等效奖励**：对功能上等效的动作而非严格的字符串匹配提供奖励，使用领域特定的验证器（verifier）来评分 rollout。
+
+**具体步骤 (算法1)：**
+1.  **提取候选枢纽**：从专家轨迹 $\mathcal{D}_{\text{sft}}$ 中提取所有助手轮次 $(s_t, a^*_t)$，构成候选枢纽数据集 $\mathcal{D}_{\text{cand}}$。
+2.  **离线轮次筛选 (Profiling)**：
+    *   使用冻结的参考策略 $\pi_0$（通常是用于初始化 PivotRL 的策略）估计每个候选枢纽 $s$ 的信息量。
+    *   对于每个 $s \in \mathcal{D}_{\text{cand}}$，从 $\pi_0(\cdot | s)$ 中采样 $K$ 个局部 rollout $a^{(k)}$，并使用验证器 $r_{\text{func}}(s, a^{(k)})$ 进行评分。
+    *   计算经验奖励均值 $\hat{\mu}(s) = \frac{1}{K}\sum_{k=1}^K r_{\text{func}}(s, a^{(k)})$ 和奖励方差 $\hat{\sigma}^2(s) = \frac{1}{K}\sum_{k=1}^K (r_{\text{func}}(s, a^{(k)}) - \hat{\mu}(s))^2$。
+    *   保留满足以下条件的轮次作为训练集 $\mathcal{D}_{\text{pivot}}$：$\hat{\sigma}^2(s) > 0$（非零方差）且 $\hat{\mu}(s) < \lambda_{\text{diff}}$（低奖励均值，表示仍然具有挑战性）。
+3.  **在线局部 rollout 与训练**：
+    *   在每次训练迭代中，从 $\mathcal{D}_{\text{pivot}}$ 中采样一个 mini-batch 的状态 $s_b$。
+    *   对于每个 $s_b$，从当前策略 $\pi_{\theta_{\text{old}}}(\cdot | s_b)$ 中采样 $G$ 个动作 $\{a_{b,i}\}_{i=1}^G$。
+    *   执行短时 rollout 以评分每个 $a_{b,i}$，得到局部验证器奖励 $r_{b,i} = r_{\text{func}}(s_b, a_{b,i})$。
+    *   计算归一化优势 $\hat{A}_{b,i} = r_{b,i} - \frac{1}{G}\sum_{j=1}^G r_{b,j} / \text{std}(\{r_{b,j}\}_{j=1}^G) + \epsilon_{\text{std}}$。
+    *   使用 GRPO 风格的目标函数 $\mathcal{J}_{\text{PivotRL}}(\theta) = \mathbb{E}_{s \sim \mathcal{D}_{\text{pivot}}} \mathbb{E}_{\{a_i\}^G_{i=1} \sim \pi_{\theta_{\text{old}}}(\cdot|s)} [\frac{1}{G}\sum_{i=1}^G \min(w_i(\theta) \hat{A}_i, \text{clip}(w_i(\theta), 1-\epsilon, 1+\epsilon) \hat{A}_i) - D_{\text{KL}}]$ 更新模型参数 $\theta$，其中 $w_i(\theta) = \pi_{\theta}(a_i|s) / \pi_{\theta_{\text{old}}}(a_i|s)$ 是重要性采样权重，$D_{\text{KL}} = \beta \text{KL}(\pi_{\theta}(\cdot|s) \| \pi_0(\cdot|s))$ 是 KL 正则化项。
+
+**理论分析：**
+1.  **枢纽选择的有效性**：命题3.1和定理3.2指出，只有具有正奖励方差的 rollout 组才能贡献非零的归一化更新。奖励方差越大，自然梯度范数越大，学习信号越强。这证明了 PivotRL 筛选混合结果枢纽的合理性。
+2.  **功能奖励的保守性**：定理3.3表明，基于功能奖励的 RL 优化会将概率质量转移到可接受的动作上，同时保持对参考策略的保守性。它在可接受动作集合内部及其补集内部保留了相对排序，从而减轻了 OOD 性能的退化。
+
+**实验设置：**
+*   **基础模型**：所有实验均从 Qwen3-30B-A3B-Thinking-2507（Base）模型开始。
+*   **优化器**：使用 Nemo-RL。
+*   **环境交互**：使用 Nemo-Gym 进行环境 rollout。
+*   **训练数据**：PivotRL 与 SFT 使用相同的提示（prompts）和专家轨迹。
+*   **Agentic 领域**：在对话式工具使用、软件工程、终端控制和网页浏览四个 Agentic 领域分别进行训练和评估。
+    *   **$\tau^2$-Bench**：对话式工具使用，数据由合成数据生成管道生成（281,774 条轨迹）。动作是完整的助手轮次。
+    *   **SWE-Bench Verified**：软件工程，使用 OpenHands、OpenCode、Codex 等生成内部轨迹数据集。动作是下一个助手工具调用。局部验证器仅匹配工具调用名称（粗粒度检查）。
+    *   **Terminal-Bench**：终端控制，从 Qwen/Qwen3-Coder-480B-A35B-Instruct 和 moonshotai/Kimi-K2-Instruct 收集轨迹。动作是下一个 bash 命令。局部验证器结合输出 schema 验证、归一化字符串相似度、基于 LLM-as-judge 的等效性评分。
+    *   **BrowseComp**：网页浏览，基于多跳问答数据集和在线搜索引擎生成浏览轨迹。动作是下一个浏览步骤。
+*   **Rollout 成本比较**：在 SWE-Bench 上，PivotRL 的每次训练采样是一个单轮 rollout；E2E RL 则计算所有训练轨迹的总轮次。
+
+**关键对比结果：**
+1.  **域内准确性**：
+    *   PivotRL 在四个 Agentic 域中的三个（$\tau^2$-Bench, Terminal-Bench, BrowseComp）上表现优于 SFT。
+    *   平均而言，PivotRL 相较于 Base 模型获得了 +14.11% 的域内准确性提升，而 SFT 仅提升了 +9.94%。
+2.  **OOD 性能保留**：
+    *   PivotRL 几乎消除了 OOD 退化，平均 OOD 性能变化仅为 +0.21%。最严重的单项退化不超过 -3.12%。
+    *   相比之下，SFT 平均 OOD 退化为 -9.83%，在某些情况下（如终端领域训练后的 AIME25）甚至出现灾难性退化（从 86.04 降至 21.56）。
+3.  **与 E2E RL 的比较 (SWE-Bench)**：
+    *   PivotRL 在 SWE-Bench 上达到了与 E2E RL 相当的准确性。
+    *   但 PivotRL 仅需约 **4 倍更少的 rollout 轮次** 和 **5.5 倍更少的挂钟时间**（在相同计算节点数量下）即可达到相同准确性。
+4.  **消融研究**：
+    *   在 $\tau^2$-Bench 上的消融实验表明，枢纽过滤和功能奖励都是实现完整性能增益所必需的。
+    *   移除枢纽过滤（即使用随机候选枢纽）导致准确性从 63.81 下降到 59.68。
+    *   移除功能奖励（即使用严格匹配奖励）导致准确性下降到 57.34。
+    *   枢纽过滤确保了 rollout 预算花费在具有非零优势信号的状态上；功能奖励则确保了文本上不同但功能上正确的动作能得到奖励。
+5.  **生产集成**：PivotRL 已被 NVIDIA 的 Nemotron-3-Super LLM 采纳，作为其在生产规模 Agentic 后期训练中的核心工具。
+
+**潜在局限或不足：**
+*   **验证器设计**：文章提到验证器可以是“领域特定的”，并且在 SWE-Bench 实验中使用了“故意粗糙”的工具名称匹配作为验证器。未来工作计划扩展到**非编程验证器（如 LLM-as-a-judge、过程奖励模型）**。这暗示了验证器设计的复杂性和其对性能的潜在影响。
+*   **动态采样**：未来工作将探索在线奖励剖析方法，如动态采样。这可能意味着目前的离线枢纽选择策略在某些动态或快速变化的环境中可能不是最优的。
+*   **理论假设**：在理论分析中，假设了有限动作空间、$\mathcal{M}(s) = \emptyset$（这里似乎是一个笔误，应该是 $\mathcal{M}(s) \ne \emptyset$ 且 $\pi_0(a|s) > 0$），可能不完全覆盖所有复杂实际场景。
+
 ## Thinktwice
 https://arxiv.org/pdf/2604.01591 多伦多大学 2026.4.6
 
