@@ -1,5 +1,84 @@
-# AwesomePaper-for-AI
+<img width="655" height="294" alt="image" src="https://github.com/user-attachments/assets/7305ddf8-d25d-45b9-8486-242c15771a23" /># AwesomePaper-for-AI
 Awesome or inspiring paper for AI
+
+## KAT-Coder-V2
+https://arxiv.org/pdf/2603.27703 Kuaishou 2026.3.29
+
+https://streamlake.com/product/kat-coder 产品主页。不开源
+
+1. KAT-Coder-V2旨在解决agentic coding中能力碎片化、基础设施耦合及大规模RL训练不稳定等挑战，并创新性地提出了"**Specialize-then-Unify**"范式来应对这些问题。
+2. 核心方法将agentic coding**分解为SWE、WebCoding等五个独立领域进行SFT和RL**，随后通过**On-Policy Distillation统一为一个模型**，并引入KwaiEnv、turn-level GSPO, MCLA蒙特卡洛对数概率平均及**Tree Training**来支持高效、稳定的agentic RL训练。
+3. KAT-Coder-V2在**SWE-bench Verified上达到79.6%**（接近Claude Opus 4.6），在PinchBench上以88.7分领先，并在前端美学场景中取得最佳表现，验证了其方法在构建强大编码Agent方面的有效性。
+SWE（软件工程修复与开发）、WebCoding（前端生成与美学）、Terminal（命令行推理）、WebSearch（在线搜索与信息合成）和 General（通用代码智能）。
+**训推共卡**，RL训练框架 KRL（Kwai RL）；SGLang Server；Megatron Trainer；结合 Cache-Aware智能调度和动态流式处理。～45人
+
+介绍了KwaiKAT团队开发的智能编程模型KAT-Coder-V2，旨在解决当前大型语言模型在具身编程（Agentic Coding）领域面临的核心挑战。
+<img width="731" height="431" alt="image" src="https://github.com/user-attachments/assets/e98aed6c-1445-441a-ad75-bac32cb2d525" />
+
+<img width="743" height="438" alt="image" src="https://github.com/user-attachments/assets/cadd723f-353e-41bd-885f-980c0748cfdb" />
+
+<img width="744" height="281" alt="image" src="https://github.com/user-attachments/assets/20bd741b-26e4-4c8f-9850-89e425b4235b" />
+
+<img width="732" height="383" alt="image" src="https://github.com/user-attachments/assets/3f889f48-6529-4dc8-8120-38d9a0e89975" />
+
+<img width="655" height="294" alt="image" src="https://github.com/user-attachments/assets/fa6b8d96-ac04-4a97-851d-549e5dc9bf16" />
+
+<img width="651" height="452" alt="image" src="https://github.com/user-attachments/assets/663695af-aaec-4510-a8ec-214f47ab5046" />
+
+**业界存在的问题与挑战：**
+1.  **能力碎片化：** 软件工程需要长链代码编辑和测试验证，WebCoding侧重于稀疏口语输入下的美学判断，而终端任务则要求持久的环境状态跟踪。这些领域内的**训练信号不仅不同，而且经常冲突，导致单一的整体训练流程**难以在每个领域同时达到最优。
+2.  **基础设施耦合：** 具身强化学习（RL）训练需要高吞吐量的沙盒编排、异构基准测试支持以及与快速增长的 Agent 脚手架（如 Claude Code、OpenClaw）的无缝兼容。现有系统通常紧密耦合这些关注点，使得每次新的脚手架或数据集集成都成为耗费成本的工程工作。
+3.  **Agentic强化学习的规模化：** 有效训练编程 Agent 需要同时在任务复杂性、提示多样性和脚手架泛化等多个维度上进行扩展，同时还要应对 MoE（Mixture-of-Experts）训练的不稳定性以及树形、**多轮轨迹带来的计算冗余**。
+
+**关键观察与假设：**
+KAT-Coder-V2 的核心观察是，将具身编程能力分解为正交的专家领域，并通过“先专业化后统一”（Specialize-then-Unify）的范式进行训练，可以有效克服能力碎片化问题。同时，一个模块化、高并发的基础设施对于大规模具身 RL 训练至关重要，而创新的算法能够解决 MoE 不稳定性和计算冗余。
+
+**方法核心思路和主要步骤：**
+KAT-Coder-V2 的训练流程遵循“先专业化后统一”的范式，并基于 KAT-Coder-V1 持续后训练。整个流程包含三个阶段：
+
+1.  **监督微调（Supervised Fine-Tuning, SFT）：**
+    将具身编程的完整能力谱分解为五个正交的专家领域：SWE（软件工程修复与开发）、WebCoding（前端生成与美学）、Terminal（命令行推理）、WebSearch（在线搜索与信息合成）和 General（通用代码智能）。每个专家领域都独立进行数据构建和专业化训练。
+    *   **SWE 专家：** 侧重自主问题解决。数据构建通过三个互补的管道：
+        *   **Issue-PR 管道：** 从 GitHub 抽取大量合并的 Pull Requests 及其相关 Issues，通过语义关联分析建立双向映射，并提取代码差异。合并状态作为自然正确性监督信号。数据处理包括从 Issue 语义空间到代码空间进行精准映射的检索任务，以及生成完整修复的编辑任务。最终得到超过 2M 高质量样本。
+        *   **AutoBuilder 管道：** 自动从真实代码库中构建可验证的软件工程任务。包含三个阶段：环境设置（多 Agent 协作构建隔离沙盒，解决依赖、编译和测试）、指令构建（LLM 根据提交差异、Issue 和代码上下文生成不泄漏解决方案的用户指令）、实例验证（通过“Fail-to-Pass, F2P”和“Pass-to-Pass, P2P”双重标准验证修复有效性，即修复后所有之前失败的测试通过，所有之前通过的测试仍保持通过）。该管道生成了 30k 经验证的训练样本。
+        *   **代码理解管道：** 生成交互式代码理解轨迹，训练模型在大型代码库中导航、理解和推理的能力。包含七个阶段，包括爬取高星 GitHub 仓库、质量筛选、构建隔离 Docker 环境、LLM 生成六种类型和四个难度级别的代码理解查询，并部署 Claude Code Agent 在 Docker 容器中自主探索代码库以回答查询。
+    *   **WebCoding 专家：** 侧重美学感知的 UI 生成。引入了三视角标签系统（用户感知 $\rightarrow$ 设计原理 $\rightarrow$ 技术实现），将口语化输入映射到七层分层结构。采用提示重写（Prompt Rewriting）策略，为每个 HTML 构建三种语义等效的提示变体（设计师标注、专业用户、普通用户），以应对不同输入粒度。
+    *   **Terminal 专家：** 侧重交互式命令行推理。数据来源于专家标注、多 Agent 合成、跨格式适应（SWE 任务转换为 Terminal 格式），以及整合开源数据集（如 CLI-Gym、TermiGen）。
+    *   **WebSearch 专家：** 训练模型通过主动调用搜索工具执行多跳推理来回答复杂问题。通过基于搜索轨迹的知识图谱构建和多阶段过滤生成训练样本。
+    *   **General 专家：** 维持模型在通用场景的核心竞争力，包括指令遵循、通用问答、代码-数学推理。
+
+2.  **强化学习（Reinforcement Learning, RL）：**
+    利用 KwaiEnv 提供的沙盒环境和验证器基础设施，应用基于环境反馈的强化学习进一步提升模型在多轮交互和长序列任务中的决策质量。
+    *   **Agentic Scaling** 提出一种 RL 数据合成范式，利用 Autobuilder 任务池，在任务复杂性、意图对齐和脚手架泛化三个维度系统地扩展训练数据。仅保留对前沿模型也具有挑战性的任务，并对任务描述进行语义增强以提高对模糊指令的鲁棒性。通过在不同脚手架（Claude Code, OpenCode, Kilo Code 等）上生成轨迹，培养脚手架无关的解决问题的能力。统一的 RL 格式表示为 $DRL = \langle E, T_{tools}, S_{agent}, I_{task}, V_{verifier} \rangle$。
+    *   **修改的逐轮策略优化（Modified Turn-level Policy Optimization）：** 针对长序列 Agent 场景，提出逐轮适应的 GSPO。将完整生成序列 $y$ 划分为 $N$ 个离散轮次，计算每个轮次 $n$ 的独立重要性比率 $r(n)_{turn}(\theta) = \prod_{i \in T_n} \frac{\pi_\theta(y_i | x, y_{<i})}{\pi_{old}(y_i | x, y_{<i})}$。目标函数为 $L_{Turn}(\theta) = E_{\tau \sim \pi_{old}} \left[ \frac{1}{N} \sum_{n=1}^N \min \left( r(n)_{turn}(\theta) A_n, \text{clip}(r(n)_{turn}(\theta), 1-\epsilon, 1+\epsilon) A_n \right) \right]$，其中 $A_n$ 是组级别优势。这平衡了序列级优化的方差降低优势和细粒度信用分配。
+    *   **蒙特卡洛对数概率平均（Monte-Carlo Logprob Averaging, MCLA）：** 为解决 MoE 模型 RL 训练不稳定性，特别是轨迹对数概率估计的高方差问题，MCLA 在训练时对每个轨迹预取 $K=8$ 次，并对相应的对数概率进行平均 $\bar{\log \pi}(a) = \frac{1}{K} \sum_{k=1}^K \log \pi^{(k)}(a)$，显著降低估计器方差。结合 IcePop 进一步缓解分布不一致性。
+    *   **树训练（Tree Training）：** 针对 Agent 脚手架生成的树形轨迹（共享前缀），通过将整个轨迹树序列化为单个 DFS 扁平序列，并应用逐 Token 损失权重来消除共享前缀的冗余计算，实现高达 6.2 倍的训练速度提升。同时利用树形注意力掩码和逐 Token 位置 ID。
+
+3.  **策略蒸馏（On-Policy Distillation, OPD）：**
+    将多个领域专家的能力整合到统一的 KAT-Coder-V2 模型中。学生模型在混合领域提示下主动生成完整轨迹。通过标准 RL 损失和专家指导的 OPD 损失共同优化。RL 组件由环境提供稀疏奖励，确保最终任务成功。OPD 组件动态选择最佳专家作为教师，评估学生模型的 On-policy 推理，并通过其对数概率提供密集的步骤级别监督，避免离线模仿学习的暴露偏差。
+
+**实验设置：**
+*   **实现基础：** 模型基于 KAT-Coder-V1 持续后训练。基础设施为 KwaiEnv，一个模块化平台，解耦数据集、沙盒、脚手架和验证逻辑。
+*   **硬件与负载：** KwaiEnv 能够支持数万个并发沙盒实例，提供 RL 训练所需的高吞吐量。RL 训练框架 KRL（Kwai RL）利用 SGLang Server 进行推理和 Megatron Trainer 进行参数优化，并结合 Cache-Aware 智能调度和动态流式处理，将整体单位样本成本降低 2.8 倍。高并发沙盒训练流程涉及实例采样、Agent 分配、沙盒初始化（基于快手专有大规模容器云平台 Wanqing）、请求路由、推理生成、奖励计算、引擎切换和参数优化等阶段，实现了生成（Rollout）和权重更新（Training）阶段的无缝交织。
+*   **对比基线：**
+    *   **多脚手架编码：** 主要与**Claude Opus 4.6 对比，包括 GLM-5、MiniMax M2.7** 等。
+    *   **具身任务执行：** 与 GLM-5、MiniMax M2.7、Claude Opus 4.6、GPT-5.4、Gemini 3.1 Pro 对比。
+    *   **前端美学生成：** 与 GLM-5、Kimi K2.5 对比。
+    *   **通用任务处理：** 与 GLM-5、MiniMax M2.7、Claude Opus 4.6、GPT-5.4、Gemini 3.1 Pro 对比。
+*   **测试数据集：**
+    *   **多脚手架编码：** SWE-bench Verified、SWE-bench Multilingual、SWE-rebench-V2 (subset)。
+    *   **具身任务执行：** PinchBench、Claw-Eval。
+    *   **前端美学生成：** 自建参考自由的美学评估基准，覆盖 Landing Pages、Slides、Data Visualization 三个场景，由专业 UI/UX 设计师团队进行盲评。
+    *   **通用任务处理：** Terminal-Bench Hard、$\tau^2$-Bench Telecom、AA-LCR、IFBench。
+
+**关键对比结果：**
+*   **SWE-bench Verified：** KAT-Coder-V2 在 Claude Code 脚手架上达到 79.6%，与 Claude Opus 4.6 (80.8%) 接近。在 OpenCode 和 OpenClaw 脚手架上性能也相当。
+*   **PinchBench (Best Score)：** KAT-Coder-V2 达到 88.7，超越 GLM-5 (86.4) 和 MiniMax M2.7 (87.1)。
+*   **前端美学生成：** KAT-Coder-V2 在 Landing Page (59.8)、Slides (57.6) 和 Data Visualization (67.6) 三个场景中均取得领先分数。
+*   **通用任务处理：** KAT-Coder-V2 在 Terminal-Bench Hard (46.8) 和 $\tau^2$-Bench (93.9) 上表现出色。
+
+**潜在局限或不足：**
+尽管取得了显著进展，KAT-Coder-V2 在某些具身执行基准测试（如 Claw-Eval）上仍存在差距，未来工作目标是通过进一步扩展具身强化学习和更丰富的环境交互来缩小这些差距。此外，未来的工作还将专注于将“先专业化后统一”范式扩展到编程之外的更广泛的具身领域，并探索更高效的专家融合策略，以充分释放领域专业化训练的潜力。
 
 ## Meta-Harness
 Meta-Harness: End-to-End Optimization of Model Harnesses 
@@ -7,6 +86,8 @@ Meta-Harness: End-to-End Optimization of Model Harnesses
 https://yoonholee.com/meta-harness/paper.pdf 斯坦福等
 
 https://github.com/stanford-iris-lab/meta-harness-tbench2-artifact
+
+中文解读：https://mp.weixin.qq.com/s/4W2XwuGKki-CUBMmEVwa5w 
 
 1. 提出 Meta-Harness 系统，旨在通过**自动化搜索和优化** LLM 系统的“harness”代码来解决传统人工设计或现有文本优化器在长周期、复杂反馈场景中的不足。
 2. 关键创新在于其agentic proposer能够**通过文件系统访问和选择性地review 所有 历史候选** harness 的源代码、评估分数和执行轨迹，从而支持对复杂失败模式的因果推理和策略调整，**而非仅仅依赖压缩反馈**或标量分数。
