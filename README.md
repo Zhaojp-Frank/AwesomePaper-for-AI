@@ -1,5 +1,79 @@
 # Awesome or inspiring paper for AI
 
+
+## Search More, Think Less
+Search More, Think Less: Rethinking Long-Horizon Agentic Search for Efficiency and Generalization
+https://arxiv.org/pdf/2602.22675 Oppo, 2026.2.27
+
+https://github.com/OPPO-PersonalAI/Agent_Foundation_Models
+1. 针对长周期智能体搜索中的推理深度扩展导致的高成本、高延迟及跨任务泛化性差的问题，本文提出SMTL（Search More, Think Less）框架。
+2. SMTL通过将**顺序推理**替换为**并行证据获取和并发工具执行**，并结合**结构化上下文管理和统一的数据合成流**程，显著提升了信息获取效率和任务泛化能力。
+3. 在BrowseComp、GAIA、Xbench和DeepResearch Bench等多个基准测试中，SMTL实现了领先或最先进的性能，同时在BrowseComp上将推理步骤平均减少了70.7%，证明了其优越的效率和泛化性。
+
+Qwen3-30B-A3B-Instruct-2507,包括SFT和RL
+**业界存在哪些不足:**
+
+现有智能体工作流（Agentic Workflows）通过深化顺序推理和扩展交互范围来提升性能，导致信息效率低下，大部分计算用于模型侧长时间推理而非有效获取外部证据。
+
+收集多步、工具交互式训练轨迹成本高昂。
+
+现有合成数据流水线大多依赖静态知识源，侧重确定性、以实体为中心的深度搜索任务，对开放式深度研究场景覆盖不足。
+
+任务难度通常通过增加推理跳数而非提高信息密度来衡量，导致冗余证据和低效的交互轨迹。
+
+关键观察与假设：
+现有深度研究智能体的主要可扩展性瓶颈在于其对线性、顺序推理的依赖。
+
+通过并行化证据获取，可以在有限的上下文预算下实现高效的长程推理。
+
+统一的数据合成管线可以构建跨确定性和开放式场景的搜索任务，以提高泛化能力。
+
+方法核心思路和主要步骤：SMTL 的核心思想是“搜得多，想得少 (Search More, Think Less)”，用并行证据获取取代顺序推理。
+
+<img width="805" height="355" alt="image" src="https://github.com/user-attachments/assets/03b9419c-24d6-4b3b-b605-2fc5562753bf" />
+
+## SkillCraft
+SkillCraft: Can LLM Agents Learn to Use Tools Skillfully?
+
+https://arxiv.org/pdf/2603.00718 牛津等 2026.3.10
+
+https://github.com/shiqichen17/SkillCraft
+
+1. 🤖 SkillCraft提出了一个新基准和协议，用于评估LLM代理在长周期工作流中抽象和重用高级工具组合（即“技能”）的能力，现有基准在这方面存在局限性。
+2. 💡 该研究发现，引入“技能模式”后，**agent的效率显著提升，令牌使用量减少高达80%**，且**效率提升与模型解决任务的能力呈正相关**，表明更强的模型从技能复用中获益更多。
+3. 🚀 尽管自动生成的深层技能组合易于误差传播，但高质量技能在不同难度级别和模型间表现出很强的泛化能力，强调了可组合技能获取对稳健工具使用的重要性。
+
+## Inefficiency Patterns
+Beyond Accuracy: Unveiling Inefficiency Patterns in Tool-Integrated Reasoning
+
+https://arxiv.org/pdf/2604.05404 2026.4.7 中科大 上海创新研究员 ACL2026
+
+https://github.com/sqs-ustc/tool-reasoning-framework-PTE
+
+1. 针对大语言模型（LLMs）在工具集成推理（TIR）中因KV-Cache驱逐和长工具响应导致的推理效率低下，现有基于token或工具调用计数的指标无法准确反映实际硬件延迟。
+2. 提出了一种硬件感知的TIR效率指标——PTE（Prefill Token Equivalents），它通过统一量化计算绑定预填充和内存绑定解码的不对称成本，经验证与真实墙钟延迟高度相关（r=0.925），且在不同硬件配置下保持模型效率排名的一致性。
+3. 研究基于PTE成本对五项TIR基准测试进行广泛实验，识别出四种主要低效模式（如Confirmatory Tool Usage、Tool-Mixing等），并发现PTE成本与推理正确性呈负相关，揭示了低效推理往往伴随着较低的答案质量。
+
+<img width="477" height="598" alt="image" src="https://github.com/user-attachments/assets/b207be17-6e1a-4334-b97b-8139103c94cc" />
+
+**PTE与真实延迟相关性**：在工业级高并发设置下，PTE与实际的壁钟时间（wall-clock latency）表现出极强的线性相关性（Pearson r = 0.925），远超简单的token计数（r = -0.375）。这表明PTE能够更准确地反映真实硬件成本。
+**硬件鲁棒性**：PTE在不同硬件配置（H100, H200, A100, V100, RTX 4090）下均能保持模型效率排名的极高一致性（Spearman’s rank correlation \rho > 0.95ρ>0.95\rho > 0.95ρ>0.95），证明其作为固有效率指标的独立性。
+**效率与准确性权衡**：
+TIR成本差距巨大：尽管许多模型在准确性上接近（例如AIME24上约70%），但其PTE值可以相差一个数量级甚至更多（图4）。
+**任务特定性**：模型的TIR能力并非通用，而是高度任务和工具类型特化（例如Qwen2.5-72B在SimpleQA上表现出色，但在Python推理任务上较差）。
+**思维模式影响**：Qwen3-235B-Thinking模式相比Instruct模式，在复杂任务（如AIME25）上能显著提升准确性（+16.7%）且PTE成本仅增加1.8倍，但在简单任务（SimpleQA）上则可能导致“过度思考”（over-thinking），准确性下降，PTE成本急剧增加（4.2倍）。
+
+
+**四种低效率模式**：
+**确认性工具使用**（Confirmatory Tool Usage）：模型在内部得出答案后，仍使用工具进行验证。这种“先思考后验证”行为显著增加了上下文长度和PTE成本（例如Qwen3-235B-Instruct，成本乘数1.77\times×\times×）。
+**工具混合**（Tool-Mixing）：模型在一个推理轨迹中频繁切换不同工具集（例如DeepSeek-V3.1-Terminus）。尽管显示出灵活能力，但这种行为会累积中间输出，显著增加PTE（成本乘数2.42\times×\times×），却未带来明显准确性提升。
+**缺乏工具先验知识**（Lack of Tool Priors）：模型缺乏对特定工具的训练经验，导致工具使用低效甚至失败（例如Qwen-2.5-7B-Instruct在AIME24上使用Python工具时，忘记使用print函数导致无输出，成本乘数2.15\times×\times×）。
+**工具格式崩溃**（Tool Format Collapse）：模型对工具调用格式过于敏感，微小的语法变化（例如工具名称更改、参数类型不匹配）就可能导致调用失败和高额PTE成本（例如Tongyi-Deepresearch因工具格式不匹配导致反复失败，PTE成本极高）。
+
+
+PTE与推理正确性的负相关：统计结果显示，PTE成本更高的推理轨迹往往伴随更低的推理正确性。
+错误的轨迹通常涉及冗长的交互模式、重复的工具调用和扩展的中间推理步骤，从而导致更高的PTE。这表明PTE可以作为识别潜在低效推理轨迹的诊断信号
+   
 ## KAT-Coder-V2
 https://arxiv.org/pdf/2603.27703 Kuaishou 2026.3.29
 
