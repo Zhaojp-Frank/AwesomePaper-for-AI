@@ -1,6 +1,106 @@
 # AwesomePaper-for-AI
 Awesome or inspiring paper for AI
 
+## Meta-Harness
+Meta-Harness: End-to-End Optimization of Model Harnesses 
+
+https://yoonholee.com/meta-harness/paper.pdf 斯坦福等
+
+https://github.com/stanford-iris-lab/meta-harness-tbench2-artifact
+
+1. 提出 Meta-Harness 系统，旨在通过**自动化搜索和优化** LLM 系统的“harness”代码来解决传统人工设计或现有文本优化器在长周期、复杂反馈场景中的不足。
+2. 关键创新在于其agentic proposer能够**通过文件系统访问和选择性地review 所有 历史候选** harness 的源代码、评估分数和执行轨迹，从而支持对复杂失败模式的因果推理和策略调整，**而非仅仅依赖压缩反馈**或标量分数。
+3. Meta-Harness 在在线文本分类任务上超越现有最佳手写 harness 并加速收敛，在检索增强数学推理中将平均准确率提高 4.7 点并泛化到未见模型，并在 TerminalBench-2 智能体编码任务中表现优于手写基线，证明了其在自动化 harness 工程中的卓越效果。
+<img width="674" height="283" alt="image" src="https://github.com/user-attachments/assets/88a208a1-f40d-46bd-9589-970a102e570a" />
+
+<img width="676" height="547" alt="image" src="https://github.com/user-attachments/assets/724ec58a-b7c3-4b30-8028-5044e01e1ec0" />
+
+<img width="662" height="200" alt="image" src="https://github.com/user-attachments/assets/f2532676-a95d-46f5-8e65-a5472dd6bbae" />
+
+本研究论文《Meta-Harness: End-to-End Optimization of Model Harnesses》旨在解决大型语言模型（LLM）系统性能高度依赖于其“harness”（即决定如何存储、检索和呈现信息给模型的代码）的问题。目前，LLM 的harness设计主要依赖于人工，而现有文本优化方法在处理harness工程时表现不佳，因为它们通常采用过度压缩的反馈机制（例如无记忆性、仅依赖标量分数、或将反馈限制在短模板/摘要），这使得追踪下游失败与早期harness决策之间的因果关系变得困难。
+
+**场景与具体问题 (Scenario and Specific Problem)**
+论文关注LLM的“harness工程”领域，其中harness是一个可状态化的程序，它封装了LLM，并在每一步决定模型所见的上下文。目标是找到一个harness $H^*$，使其能最大化LLM在给定任务分布$X$上的预期最终奖励。形式化地：
+$$H^* = \arg \max_H \mathbb{E}_{x \sim X, \tau \sim p_M(H,x)} r(\tau, x)$$
+其中$M$是固定的LLM，$x$是任务实例，$p_M(H,x)$是harness $H$在任务$x$下执行的轨迹，而$r(\tau, x)$是衡量轨迹的奖励函数。在多目标情况下（如准确性与上下文成本），则评估Pareto前沿。传统上，这一过程由人工工程师和研究人员迭代完成。挑战在于，harness对系统性能影响巨大（可导致6倍性能差异），但其设计却高度依赖手动调整和启发式方法。
+
+**业界存在哪些不足 (Industry Shortcomings)**
+现有的文本优化方法（如OPRO, TextGrad, AlphaEvolve, GEPA, Feedback Descent, TTT-Discover）在以下方面存在不足：
+1.  **反馈压缩过甚 (Overly Compressed Feedback)**：它们通常只根据当前候选对象进行条件化处理，或主要依赖于标量分数，或将反馈限制在短模板或LLM生成的摘要中。
+2.  **短期视野 (Short Horizon)**：无法有效捕捉harness在长时间跨度上的行为影响，即一个存储、检索或呈现选择可能在许多推理步骤后才影响行为。
+3.  **信息丢失 (Information Loss)**：压缩反馈常常移除了诊断下游失败所需的关键信息，导致难以追溯失败的根本原因。
+4.  **上下文受限 (Limited Context)**：相比于harness优化的诊断足迹，这些方法在每次优化步骤中可用的上下文量级远小于Meta-Harness（例如，Meta-Harness处理高达10,000,000 token的诊断信息，而现有方法仅为100-30,000 token）。
+
+**关键观察与假设 (Key Observations and Hypotheses)**
+论文的核心观察是：要实现有效的harness优化，需要允许提议者选择性地检查先前的代码和执行轨迹，而不是从有损摘要或额外的人工设计搜索结构中进行优化。
+关键假设包括：
+1.  **丰富反馈的重要性 (Importance of Rich Feedback)**：相比于标量分数或短摘要，对原始代码、执行轨迹和历史失败案例的全面访问对于诊断和改进harness至关重要。
+2.  **代码空间搜索的优势 (Advantages of Code-Space Search)**：harness优化发生在代码空间，即使是微小的改变也可能在后续步骤中产生巨大影响。通过检查执行轨迹，提议者可以推断失败原因并识别导致失败的设计选择，从而进行算法结构层面的修改，而不仅仅是填充模板。
+3.  **编码Agent的能力 (Capability of Coding Agents)**：随着编码Agent能力的提升，将诊断和提议任务委托给Agent本身是可行的，因为它能够决定检查哪些先行artifact，解决哪些失败模式，并进行局部或实质性的重写。
+4.  **文件系统作为反馈通道 (Filesystem as Feedback Channel)**：将所有历史经验（源代码、分数、执行轨迹）通过文件系统暴露给提议者，使得Agent能够通过标准工具（如`grep`和`cat`）进行选择性检索，而非一次性将海量信息塞入有限的上下文窗口。
+
+**方法核心思路和主要步骤 (Core Methodology and Main Steps)**
+Meta-Harness是一种外循环（outer-loop）程序，用于搜索任务特定的harness。
+**核心思路**：通过赋予一个编码Agent提议者对不断增长的文件系统的访问权限，该文件系统存储了所有先前候选harness的源代码、评估分数和执行轨迹，从而实现harness的端到端优化。Agent可以根据需要选择性地检查这些历史信息，形成因果假设，并修改harness。
+
+**主要步骤 (Algorithm 1: Meta-Harness outer loop over harnesses)**:
+1.  **输入 (Inputs)**：任务集合 $X$，LLM $M$，提议者 $P$ (编码Agent)，迭代次数 $N$。
+2.  **初始化 (Initialization)**：
+    *   初始化harness种群 $H$（初始有效harness集合，通常包含基线）。
+    *   初始化文件系统 $D$ 为空，用于存储代码、分数和轨迹。
+3.  **初始评估与存储 (Initial Evaluation and Storage)**：
+    *   对于种群 $H$ 中的每个初始harness $H_i$，使用LLM $M$ 在任务 $X$ 上评估其性能，得到评估结果 $E_{H_i}$。
+    *   将 $(H_i, E_{H_i})$ 及相关日志（源代码、评估分数、执行轨迹）存储到文件系统 $D$ 中。
+4.  **迭代优化 (Iterative Optimization)**：
+    *   循环 $N$ 次迭代：
+        a.  **提议者查询文件系统 (Proposer Queries Filesystem)**：编码Agent $P$ 通过文件系统 $D$ 访问所有先前的harness及其分数和执行轨迹。Agent会根据需要决定检查哪些历史artifact，通常通过终端工具如`grep`和`cat`进行选择性检索，因为它无法一次性摄取所有历史信息。
+        b.  **提议新harness (Proposer Proposes New Harnesses)**：编码Agent $P$ 基于其对历史数据（失败模式、成功策略）的诊断和推理，提议 $k$ 个新的harness $\{H_1, \ldots, H_k\}$。
+        c.  **验证与评估 (Validation and Evaluation)**：
+            *   对于每个提议的新harness $H_j$，首先进行接口验证（例如，通过一个轻量级的测试脚本检查其格式和基本功能）。
+            *   如果通过验证，则使用LLM $M$ 在任务 $X$ 上评估其性能，得到评估结果 $E_{H_j}$。
+            *   将 $(H_j, E_{H_j})$ 及相关日志（提议的代码、推理轨迹、评估分数）存储到文件系统 $D$ 中。
+5.  **返回结果 (Return Result)**：迭代结束后，返回文件系统 $D$ 中存储的harness的Pareto前沿。
+
+**实验设置 (Experimental Setup)**
+*   **实现方式 (Implementation)**：每个harness是一个单文件的Python程序，修改特定任务的提示构建、检索、内存和编排逻辑。
+*   **提议者 (Proposer)**：使用Claude Code [4] (Claude Opus 4.6) 作为编码Agent提议者。它由一个描述新harness编写位置、如何检查先前harness和执行轨迹、以及不能修改哪些文件的最小领域特定技能（skill）指导。
+*   **基础模型 (Base LLM)**：基础模型 $M$ 因领域而异，且在整个实验中是冻结的。
+    *   在线文本分类：GPT-OSS-120B。
+    *   检索增强数学推理：GPT-OSS-20B (用于搜索)，以及 GPT-5.4-nano, GPT-5.4-mini, Gemini-3.1-Flash-Lite, Gemini-3-Flash (用于评估泛化性)。
+    *   Agentic编码：Claude Opus 4.6 和 Claude Haiku 4.5。
+*   **计算负载 (Load)**：典型运行评估大约60个harness，历经20次迭代。每次迭代提议2个候选harness。
+*   **硬件/软件 (Hardware/Software)**：未明确提及具体硬件或软件版本，但实验涉及大型语言模型API调用。
+*   **对比基线 (Baselines)**：
+    1.  **人工设计策略 (Human-designed Strategies)**：Zero-shot, Few-shot, ACE (Agentic Context Engineering), MCE (Meta Context Engineering), Terminus-KIRA, Terminus 2。
+    2.  **程序搜索方法 (Program-search Methods)**：OpenEvolve, TTT-Discover, Best-of-N (无搜索结构)。
+
+**关键对比结果 (Key Comparison Results)**
+
+1.  **在线文本分类 (Online Text Classification)**：
+    *   Meta-Harness在总共60个提议的harness评估中，仅用4次评估就达到或超过了最佳现有文本优化器（OpenEvolve, TTT-Discover）的最终准确性，并且最终准确性比它们高出10个百分点以上（图1左，图4，表4）。
+    *   Meta-Harness达到了48.6%的平均准确性，相比人工设计的ACE提升了7.7个百分点，MCE提升了8.6个百分点（表2）。
+    *   Meta-Harness仅使用11.4K上下文token，远少于ACE的50.8K和MCE的28.5K，实现了更强的准确性-上下文Pareto前沿（图3）。
+    *   **消融实验 (Ablation)**：对提议者信息可用性的消融实验（表3）显示，完整访问执行轨迹是关键。仅有分数或分数+摘要的提议者表现远逊于完全访问的Meta-Harness（最佳准确率分别为41.3%/38.7% vs 56.7%）。
+    *   **OOD泛化 (OOD Generalization)**：在9个未见数据集上的评估（表5）显示，Meta-Harness实现了最高的平均准确率（73.1%），超过ACE（70.2%），表明发现的harness捕获了普遍有效的文本分类策略。
+
+2.  **检索增强数学推理 (Retrieval-Augmented Math Reasoning)**：
+    *   发现的单个harness在200个IMO级别数学问题上，平均提高5个未见模型（GPT-5.4n, GPT-5.4m, Gem-3.1FL, Gem-3F, GPT-20B）的准确率4.7个百分点，达到38.8%（表6）。
+    *   它超越了BM25检索（37.5%），并且避免了密集检索（34.4%）和随机Few-shot（32.2%）在某些模型上的性能下降。
+
+3.  **Agentic编码 (Agentic Coding) - TerminalBench-2**：
+    *   Meta-Harness发现的harness在使用Claude Opus 4.6作为基础模型时，通过率为76.4%，超越了人工设计的Terminus-KIRA（74.7%），在TerminalBench-2排行榜上排名第二。
+    *   在使用较弱的Claude Haiku 4.5模型时，Meta-Harness达到37.6%的通过率，超过了次优的Goose（35.5%），排名第一（表7）。
+    *   **定性行为 (Qualitative Behavior)**：搜索轨迹（附录A）显示，提议者能够进行因果推理，从早期失败中学习，识别混淆因素，并调整策略（例如，从高风险的控制流/提示修改转向安全的附加式修改，如"环境引导"）。
+
+**潜在局限或不足 (Potential Limitations or Shortcomings)**
+1.  **计算资源 (Computational Resources)**：虽然比人工设计快，但Meta-Harness的运行仍然需要显著的计算资源，每次迭代评估都需要执行LLM任务。
+2.  **提议者依赖性 (Proposer Dependency)**：Meta-Harness的性能高度依赖于编码Agent提议者（例如Claude Code）的能力。如果提议者能力不足，搜索效率和质量可能受限。论文明确指出“本实验证明harness搜索可以与一个特别强的编码Agent提议者（Claude Code）协同工作”，但未深入研究其泛化性。
+3.  **搜索空间与收敛性 (Search Space and Convergence)**：尽管Agent可以自由修改代码，但大规模代码空间的探索仍然是一个挑战。虽然Meta-Harness展现了收敛到更好harness的能力，但对不同任务中搜索过程的全面收敛性分析仍有待深入。
+4.  **可解释性 (Interpretability)**：虽然可以检查最终发现的harness代码，但提议者在大型文件系统上进行诊断和推理的内部机制仍然是一个复杂的黑箱，难以完全解释其所有决策。
+5.  **领域特异性 (Domain Specificity)**：尽管声称是领域无关的，但论文仅在三个特定领域进行了验证。在新的、差异大的领域中应用时，可能需要对技能（skill）和初始设置进行大量调整。
+6.  **缺乏模型权重协同演化 (Lack of Co-evolution with Model Weights)**：论文指出未来工作可以探索harness和模型权重的共同演化，这意味着当前Meta-Harness在一个固定的LLM上运行，未探索两者协同优化的潜力。
+7.  **TerminalBench-2的发现问题 (TerminalBench-2 as a Discovery Problem)**：在TerminalBench-2上的实验是作为“发现问题”进行的，即搜索和最终评估使用相同的基准。虽然有检查过拟合的机制，但相比于独立的搜索集和测试集，这种设置可能导致对特定基准的过度优化。
+   
 ## PivotRL
 PivotRL: High Accuracy Agentic Post-Training at Low Compute Cost
 
