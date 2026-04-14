@@ -1,5 +1,99 @@
 # Awesome or inspiring paper for AI
 
+## Foundry
+Foundry: Template-Based CUDA Graph Context Materialization for Fast LLM Serving Cold Start
+
+https://arxiv.org/pdf/2604.06664 2026.4.8 UM, 伯克利，杜克
+
+code: https://github.com/foundry-org/foundry
+
+1. Foundry旨在解决LLM服务**冷启动中CUDA图捕获耗时过长的问题**，传统方法因CUDA图与执行上下文紧密耦合而失效，且现有解决方案（如Medusa和进程级检查点）存在脆弱性或不灵活性。
+2. 观察到CUDA图的拓扑结构在不同批次大小和分布式rank之间具有高度一致性，而瓶颈在于设备地址和内核二进制文件的上下文依赖，且现有方法难以处理新硬件或不透明参数结构。
+3. 提出了一种模板化的CUDA图上下文物化系统，通过**激活显存分配 强制使用VMM；enfore一种确定性的显存布局(固定其实地址 append分配虚拟地址)、自动提取并重新加载内核二进制文件以及基于拓扑的模板化**，将LLM冷启动延迟降低高达99%，例如Qwen3-235B-A22B的初始化时间从10分钟缩短到**3.9秒**，同时保留了CUDA图的吞吐量优势。
+- Torch2.9/vLLM 0.11, H200/B200单机8卡（DP/TP/EP), Driver 590, CUDA 13.1, NVShmem 3.3
+<img width="954" height="260" alt="image" src="https://github.com/user-attachments/assets/40c2a0d7-3cce-4ebc-b3bc-d2afe3d627f1" />
+
+Foundry 是一套基于模板的 CUDA Graph 上下文具体化（Context Materialization）系统，旨在解决大型语言模型（LLM）服务冷启动（Cold Start）中由 CUDA Graph 捕获带来的高延迟问题。
+<img width="955" height="408" alt="image" src="https://github.com/user-attachments/assets/e25cf57c-5684-481f-972a-010b752f9783" />
+<img width="477" height="202" alt="image" src="https://github.com/user-attachments/assets/d22c03f8-eff8-42bb-9a55-b6cfe5c43ca6" />
+
+**场景与具体问题**
+现代 LLM 服务提供商越来越依赖自动扩缩（Autoscaling）和并行度重配置（Parallelism Reconfiguration）来应对快速变化的工作负载，以提高资源利用率。然而，每次启动新的服务实例或重新配置现有实例时，都会遭遇冷启动延迟瓶颈。冷启动过程主要包括两个阶段：加载（或重分片）模型权重以及捕获（或重新捕获）GPU 执行图（如 NVIDIA CUDA Graphs 或 AMD HIP Graphs）。尽管通过 RDMA 等技术，模型权重加载已优化到 1-2 秒，但 CUDA Graph 捕获仍然需要数十秒甚至数分钟，成为主导冷启动时间的瓶颈。
+<img width="470" height="216" alt="image" src="https://github.com/user-attachments/assets/eeb39151-31a8-429f-aab3-b53272b62692" />
+
+CUDA Graphs 对于 LLM 推理性能至关重要，因为它们能将一系列独立的 Kernel Launch 打包成一个单一的执行单元，显著降低 CPU 侧的启动开销。然而，CUDA Graphs 并非简单拓扑描述，它们与捕获时的执行上下文（Execution Context）紧密耦合。具体来说，图中的节点可能引用设备端资源，包括嵌入在 Kernel Arguments 中的内存指针（Device Addresses）以及在预热阶段（Warmup）懒加载的 Kernel Function Handles。这种上下文依赖性使得 CUDA Graphs 无法直接序列化和移植到新的进程中。
+
+**业界存在哪些不足**
+现有方法均存在局限性：
+1.  **Medusa (Patch-based Graph Restoration):** 它只具体化图拓扑，而不包含设备端资源。在线服务时，需要手动编写 Kernel-Specific Patching Rules 来重写内存指针和加载相关设备资源。这种方法脆性高（Brittle），难以适应快速演进的硬件平台和模型架构，尤其是当新的自定义 Kernel 或 cuBLAS 等库将指针参数打包到不透明结构（Opaque Structures）中时，Patching 变得不切实际。同时，它假设所有模型层结构相同，只需捕获第一层即可加载所有相关 Kernel，这与实际情况（如 MoE 模型）不符。
+2.  **Process-level Checkpoint/Restore (C/R) (e.g., NVIDIA's `cuda-checkpoint`):** 这种方法可以快照（Snapshot）整个 LLM 服务实例，包括 GPU 和 CPU 状态。然而，它会产生非常大的检查点镜像（Checkpoint Images），恢复时间较长（针对单个 GPU 恢复时间为 5.7-6.1 秒），并且无法灵活支持动态并行度切换，因为这会丢失正在处理的请求（In-flight Requests）状态。此外，当前的 CUDA Driver C/R 功能尚不支持多 GPU 推理所需的 IPC Memory。
+3.  **Offline Processing Cost:** 对于拥有多种模型和并行策略的大规模部署，为每种配置和目标 GPU 数量频繁启动完整的 GPU 集以创建检查点镜像或图拓扑文件是不可行且经济效率低下的。
+
+**关键观察与假设**
+Foundry 基于以下关键观察来解决上述问题：
+1.  **CUDA Graphs 的非移植性来源于其执行上下文：** 即 embedded device addresses 和 lazily loaded Kernel functions。如果能确定性地重建这些上下文，Graphs 即可移植。
+2.  **图拓扑的共性：** 针对不同 Batch Sizes 捕获的 CUDA Graphs，其拓扑结构（Node Types, Dependency Edges）往往相同，差异仅在于 Per-Node Parameters（如 Kernel Arguments 和 Launch Dimensions）。
+3.  **分布式推理的结构共性：** 在 SPMD (Single Program, Multiple Data) 风格的并行部署（如 Data Parallelism (DP), Tensor Parallelism (TP), Expert Parallelism (EP)）中，所有 Rank 遵循相同的计算流程，因此共享相同的图拓扑，只在特定的模型分片（Model Shards）和 Rank-Dependent Communication State 上有所不同。
+
+**方法核心思路和主要步骤**
+Foundry 通过在离线处理阶段（Offline Processing Stage）持久化（Persist）图拓扑和执行上下文，并在线以可忽略的开销重构可执行图，实现了 Template-Based 的 CUDA Graph Context Materialization。其核心思路围绕两个阶段：SAVE 和 LOAD。
+
+**SAVE Phase (离线处理)**
+Foundry 在一台 GPU 上执行一次引擎的正常预热和图捕获，同时拦截 CUDA Driver Calls 来记录图重放所需的依赖状态。输出是一个便携式归档（Portable Archive），包含序列化的图元数据（Graph Metadata）和重构所需的执行上下文信息，如内存布局元数据和 Kernel Binaries。
+
+1.  **执行上下文具体化 (Execution Context Materialization):**
+    *   **确定性内存布局 (Deterministic Memory Layout, §4.1.1):** Foundry 通过拦截 CUDA Driver 的虚拟内存管理（VMM）接口（`cuMemAddressReserve`, `cuMemMap` 等），将所有 CUDA 分配请求重定向到一个固定基地址（Fixed Base Address）开始的预留虚拟地址区域。在 SAVE 阶段，它按序将每次分配的虚拟地址紧接着上一次分配的地址之后，从而实现确定性且连续的内存布局。这确保了在 LOAD 阶段，即便实际物理地址可能不同，但虚拟地址空间布局与 SAVE 阶段完全一致，无需修改嵌入在 Kernel Arguments 中的内存指针。Foundry 也处理了捕获窗口中瞬时中间缓冲区的分配和重放，确保地址空间完全一致。此外，由于布局是连续的，Foundry 可以在 LOAD 阶段通过一次大分配预先映射整个内存区域，将后续细粒度分配转化为纳秒级的指针递增（Pointer Bump），优化性能。
+    *   **二进制提取与重载 (Binary Extraction and Reload, §4.1.2):** Foundry 拦截 Kernel 模块加载相关的 Driver API（如 `cuModuleLoad`）。在 SAVE 阶段，它提取所使用的模块或库的原始二进制负载（Binary Payload），并记录加载 API、选项以及一个 Kernel Catalog（包含模块哈希、Kernel Entry Points 等）。在 LOAD 阶段，Foundry 直接将这些二进制加载到 Driver 中，并通过 Catalog 解析 Kernel Function Handles，无需依赖预热执行来懒加载 Kernel，从而避免了 `torch.compile` 的编译和自调优开销。
+
+2.  **图模板化 (Templating):**
+    *   **拓扑驱动的 intra-rank 图分组 (§4.2.1):** Foundry 观察到不同 Batch Size 下的图拓扑结构一致，仅参数不同。它在 SAVE 阶段为每个捕获的图计算一个拓扑键（Topology Key），并将具有相同键的图分组。Foundry 只为每个独特的拓扑结构构建一个模板图（Template Graph），其他同组的图则只保存其特有的参数集（Parameter Sets）。CUDA Driver 支持对已实例化的图执行体（Graph Executable）更新 Per-Node Parameters，且速度远快于重新构建图。
+    *   **跨 rank 的图共享 (Inter-Rank Graph Sharing, §4.2.2):** Foundry 利用 SPMD 风格并行模式下 Rank 间计算流的共性。它在单个 GPU 上执行 SAVE，使用存根层（Stub Layer）模拟分布式通信（例如，`NCCL` 或 `NVSHMEM` 的虚拟通信）。在 LOAD 阶段，每个 Rank 根据其实际通信句柄和 Rank 标识符对模板图进行 Patching。这使得一次离线捕获可以在所有 Rank 之间复用，显著降低了 SAVE 阶段的硬件成本和归档存储空间。
+
+**LOAD Phase (在线部署)**
+每个服务进程消耗离线生成的归档文件，重构可执行图。
+
+1.  **重构执行上下文：** 根据归档中的内存布局元数据，建立确定性内存布局，并加载 Kernel Binaries。
+2.  **重构图：** Foundry 根据归档中的分组信息，只构建少量模板图。对于非模板图，它仅准备其节点参数集。由于内存已预分配，图重构可以与 KV Cache 初始化等前台任务异步并行进行。当需要执行特定 Batch Size 的图时，如果存在对应的模板图，Foundry 会根据需要使用 `cuGraphExecUpdate` API 将目标图的参数应用到模板图上。
+
+**实验设置**
+Foundry 使用 PyTorch 实现，并与 vLLM 集成以加速 LLM 服务。
+*   **实现细节：**
+    *   驱动钩子库（Driver-hook Library）：C/C++ Interposition Layer，通过 `LD_PRELOAD` 注入，强制确定性内存分配并捕获 Kernel Binaries。
+    *   PyTorch 图扩展：C++ 库带 Python 绑定，实现图的序列化、重构和基于模板的共享。
+    *   vLLM 集成：薄层集成在 vLLM 的编译模型包装器下，预加载钩子层。
+*   **硬件平台：** NVIDIA DGX 节点，包括 8x H200 GPU (Intel Xeon Platinum 8480C) 和 8x B200 GPU (Intel Xeon Platinum 8570)。GPU 之间通过 NVLink 全互联。
+*   **软件环境：** NVIDIA Driver 590.48, CUDA 13.1, vLLM v0.11.2, PyTorch 2.9, NVSHMEM 3.3.24。
+*   **负载与模型：** 评估了多种模型和并行策略：
+    *   Dense Models: Qwen3-14B, Qwen3-32B, Llama3-8B, Gemma3-12B (DP1-DP8)。
+    *   MoE Models: Qwen3-30B-A3B, Qwen3-235B-A22B (EP2-EP8)，包括 BF16 和 FP8 精度。
+    *   所有配置均捕获 512 个 CUDA Graphs，覆盖 Batch Sizes 1-512。
+*   **对比基线：**
+    *   `vLLM with CUDA graphs` (默认生产实现)。
+    *   `vLLM without CUDA graphs` (Eager Mode，作为参考)。
+    *   `CUDA-checkpoint` (NVIDIA 进程级检查点/恢复 API)。
+    *   未包含 Medusa，因其过时且 Patching 规则难以移植。
+*   **评估指标：** Cold Start Time (初始化延迟) 和 Time Per Output Token (TPOT, 服务吞吐量)。
+
+**关键对比结果**
+1.  **冷启动延迟显著降低：**
+    *   **对比 `vLLM with CUDA graphs`：** Foundry 将冷启动延迟最高降低 99%。例如，Qwen3-235B-A22B EP8 模型，vLLM 需要 650 秒（约 10 分钟），Foundry 仅需 3.9 秒。对于 Qwen3-14B 模型，Foundry 实现了 95% 的延迟降低（从 36-48 秒降至 1.7-1.8 秒），且随着 Rank 数量增加，Foundry 的初始化时间几乎保持不变。
+    *   **对比 `vLLM without CUDA graphs`：** Foundry 的启动时间与 Eager Mode 相当或更快，例如 Qwen3-14B DP8 (5.0 秒 vs. 1.7 秒)，Qwen3-235B-A22B EP8 (62 秒 vs. 3.9 秒)，同时 Foundry 保持了 CUDA Graphs 带来的完整性能提升。
+    *   **对比 `CUDA-checkpoint`：** Foundry 的冷启动延迟比 `CUDA-checkpoint` 快 2.6-4.4 倍（例如，Llama3-8B 从 5.7 秒降至 1.3 秒）。Foundry 只保存必要且耗时的 CUDA 状态，而 `CUDA-checkpoint` 保存整个 CUDA 状态，导致恢复更慢且镜像更大。
+
+2.  **服务吞吐量完全保留：** 经 Foundry 重构的 CUDA Graphs 在 TPOT 方面与原生捕获的 Graphs 表现几乎完全一致，在不同 Batch Size、并行配置（DP1-DP4、EP2-EP8）、FP8 量化模型以及 H200 和 B200 不同架构 GPU 上均无明显性能下降。这证实了 Foundry 的库无关（Library-Agnostic）设计和执行上下文具体化保证了还原引擎的正确性和性能。
+
+3.  **模板化机制高效：**
+    *   **拓扑共享：** 在 512 个捕获图中，Foundry 识别出的独特拓扑数量极少（12-25 个），这意味着 95-98% 的图通过按需参数更新（On-demand Parameter Update）服务，而非完整重构。这表明 LLM 推理的拓扑规律性是普遍存在的。
+    *   **每图构建成本：** 图构建（通过 Driver API）比流捕获快 1.9-2.9 倍。最重要的是，按需参数更新（In-place Graph Update）速度更快，仅需 0.98-2.89 毫秒，比完整图构建快 24-32 倍，使得初始化时只需构建少数模板图，其余按需更新，显著降低了延迟。
+
+4.  **存储成本大幅节省：** Foundry 的归档文件（Archive）比 `CUDA-checkpoint` 的检查点镜像（Image）小 4-5 倍。例如，Qwen3-14B 的 Foundry 归档为 1.1 GB，而 `CUDA-checkpoint` 为 3.7 GB。即使对于最大的 Qwen3-235B-A22B EP8 模型，Foundry 归档也仅为 2.2 GB，其中 Kernel Binaries 占 1.4 GB。
+
+**潜在局限或不足**
+1.  **Foundry 不支持 Pipeline Parallelism (PP)：** 因为 PP 中不同 Rank 执行不同模型阶段，计算流并非 SPMD 风格，会导致 Rank-specific 的图捕获，无法共享模板。
+2.  **CUDA Driver API 的依赖：** Foundry 深度依赖 CUDA Driver API 的拦截和更新能力。尽管当前实现稳定且高效，但未来的 CUDA Driver 更新可能引入不兼容性。
+3.  **部分非 GPU 状态未包含：** Foundry 专注于 GPU Graph 及相关上下文，但对于某些可能影响冷启动的非 GPU 状态（如 Python 环境、依赖库加载等）未做过多优化，这部分依赖于预热环境池。
+4.  **初始化内存占用：** 虽然 Foundry 优化了内存分配，但由于需要为所有可能的 Kernel 和 KV Cache 预分配内存，这在启动时可能会有较高的内存占用，特别是在模型规模非常大的情况下。
+
 ## IndexCache
 IndexCache: Accelerating Sparse Attention via Cross-Layer Index Reuse
 
