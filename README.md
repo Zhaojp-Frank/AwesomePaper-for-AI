@@ -1,5 +1,95 @@
 # Awesome or inspiring paper for AI
 
+## MHPO
+MHPO: Modulated Hazard-aware Policy Optimization for Stable Reinforcement Learning
+
+https://arxiv.org/pdf/2603.16929 2026.3.22 港大 腾讯优图
+    
+1. 针对GRPO基强化学习中因高方差重要性比导致训练不稳定的问题，现有策略优化方法在处理非对称风险时存在局限。
+2. 本文提出Modulated Hazard-aware Policy Optimization (MHPO) 框架，通过Log-Fidelity Modulator (LFM) 将重要性比映射到有界可微域以确保梯度稳定性，并引入Decoupled Hazard Penalty (DHP) 利用生存分析中的累积风险函数独立调节非对称策略转移。
+3. Qwen模型最大7b，数学类实验为主。MHPO在文本和视觉语言任务的数学推理基准上一致优于现有方法，不仅显著提升了性能，还通过稳定梯度范数轨迹和避免后期性能下降，大幅增强了训练稳定性。
+LLM：DAPO-Math-17k-Processed（训练），AIME 2024/2025, AMC 2023, HMMT25, MATH-500（零样本泛化评估）。
+VLM: Geometry3K（训练），MathVision, MathVista, MathVerse（域外评估）。
+基线：GRPO, GSPO, DAPO, SAPO
+<img width="691" height="527" alt="image" src="https://github.com/user-attachments/assets/44aaade8-7f5b-4eb4-bd6b-aeab80f015c3" />
+    
+MHPO (Modulated Hazard-aware Policy Optimization)是一种新颖的强化学习框架，旨在解决GRPO (Group Relative Policy Optimization)系列方法在训练稳定性方面面临的挑战。
+
+**场景与具体问题**
+强化学习在基础模型（特别是LLMs）的后训练中扮演着关键角色，显著提升了纯文本和多模态架构的性能。GRPO方法尤其在长链式思考（Chain-of-Thought, CoT）推理任务（如数学和逻辑问题）中表现出色。然而，GRPO训练过程中的一个核心挑战是**重要性比率（importance ratio）的数值不稳定性**。在长序列CoT生成中，这种不稳定性尤为严重，因为重要性比率在数千个token上累积时可能波动多个数量级，导致高方差的“离群”token引发巨大的梯度尖峰，从而破坏损失景观的稳定性，造成严重的训练不稳定。
+
+**业界存在哪些不足**
+1.  **硬裁剪（Hard Clipping）的问题**：PPO和GRPO等主流方法采用对称的硬裁剪来约束重要性比率（例如在$[1-\epsilon, 1+\epsilon]$内）。DAPO使用更灵活的非对称边界。然而，所有这些方法都不可避免地引入了**梯度不连续性（gradient discontinuities）**和**梯度消失区域（vanishing gradient regions）**，导致优化不稳定，并且信任区域外的token无法有效参与学习过程。
+2.  **软门控（Soft Gating）的局限性**：SAPO引入了基于sigmoid的软门控机制以恢复梯度平滑性，但它未能解耦方向性策略更新（即正向和负向策略偏移）所带来的不同风险。
+3.  **缺乏对非对称风险的细粒度控制**：现有方法未能充分认识到正向策略偏移（增加token概率，促进探索，但可能导致模式坍塌）和负向策略偏移（降低token概率，抑制不良行为，但可能导致策略侵蚀）具有根本上不同的风险特征，需要非对称的精细化控制。过度激进的正向偏移可能导致过拟合少数高奖励token，而过度激进的负向偏移（常由高方差优势估计触发）可能灾难性地抑制有效的语言模式，造成不可逆的策略侵蚀。
+
+**关键观察与假设**
+1.  **重要性比率的本质挑战**：重要性比率的极端方差是导致训练不稳定的主要原因。
+2.  **梯度乘数是稳定性的关键**：训练稳定性主要由梯度乘数（gradient multiplier）决定，该标量量决定了对数比率如何重新缩放分数函数梯度。
+3.  **策略偏移的非对称风险**：正向策略偏移（$r > 1$）和负向策略偏移（$r < 1$）具有非对称的风险特征，需要独立且细粒度的调节。
+4.  **需要连续可微且有界的操作**：为了克服硬裁剪的缺点，需要一个能够将无界重要性比率映射到有界、可微域的机制，同时保留梯度忠实度并有效衰减离群值的影响。
+5.  **生存分析的启发**：可以借鉴生存分析中的累积危害函数（cumulative hazard function）来设计对策略偏移的惩罚机制，使其在信任区域内惩罚可忽略，而在超过阈值后迅速加速。
+
+**方法核心思路和主要步骤**
+MHPO通过引入两个核心组件来解决上述问题：Log-Fidelity Modulator (LFM)和Decoupled Hazard Penalty (DHP)。
+MHPO的优化目标函数定义为：
+$$ \mathcal{L}_{\text{MHPO}}(\theta) = -\mathbb{E}_{p \sim \mathcal{D}, \{q_i\}_{i=1}^K \sim \pi_{\theta_{\text{old}}}(\cdot|p)}\left[ \frac{1}{K} \sum_{i=1}^K \frac{1}{T_i} \sum_{t=1}^{T_i} \exp\left(\psi(r_t^i(\theta)) - \zeta(r_t^i(\theta))\right) \hat{A}_t^i \right] $$
+其中，$r_t^i(\theta) = \frac{\pi_{\theta}(q_t^i | p, q_{<t}^i)}{\pi_{\theta_{\text{old}}}(q_t^i | p, q_{<t}^i)}$是重要性比率，$\hat{A}_t^i$是组内标准化优势。$\psi(\cdot)$和$\zeta(\cdot)$是LFM和DHP转换函数。
+<img width="688" height="354" alt="image" src="https://github.com/user-attachments/assets/0c6c0f28-97ca-4298-83dd-deaa974c6cdd" />
+
+1.  **Log-Fidelity Modulator (LFM)**：
+    *   **核心思想**：将无界的重要性比率映射到一个有界、对称、可微的对数空间，确保全局梯度稳定性。
+    *   **实现**：LFM通过一个缩放的tanh函数在log-space中操作：
+        $$ \psi(r_t^i(\theta)) = c \tanh\left(\frac{\log r_t^i(\theta)}{c}\right) $$
+        其中，$c$是预定义的超参数。
+    *   **作用机制**：
+        *   **高保真局部映射（P1）**：当$r \approx 1$时，$\psi(r) \approx \log r$，保留了标准策略梯度的特性，对on-policy样本不引入偏差。
+        *   **平滑梯度衰减（P2）**：当$r$偏离1较大时，$\psi(r)$平滑地将输出约束在$[-c, c]$之间，其导数$d\psi/dr = \frac{1}{r} \text{sech}^2\left(\frac{\log r}{c}\right)$会平滑衰减，防止极端样本主导参数更新，从而防止高方差的“离群”token破坏全局损失景观。
+        *   **高阶可微性（P3）**：LFM是无穷阶可微的（$C^\infty$正则性），避免了硬裁剪带来的梯度不连续性，使自适应优化器的动量缓冲区保持稳定，提高收敛过程的鲁棒性。
+<img width="822" height="310" alt="image" src="https://github.com/user-attachments/assets/f1dc6483-9120-4627-afc2-0ca011cac8d9" />
+
+2.  **Decoupled Hazard Penalty (DHP)**：
+    *   **核心思想**：对正向和负向策略偏移进行解耦、基于危害的惩罚，以实现精细化控制。
+    *   **实现**：DHP借鉴生存分析中的Weibull分布累积危害函数，其定义为：
+        $$ \zeta(r_t^i(\theta)) = \left(\frac{s(\psi(r_t^i(\theta)))}{\lambda_+}\right)^{k_+} + \left(\frac{s(-\psi(r_t^i(\theta)))}{\lambda_-}\right)^{k_-} $$
+        其中，$s(x) = \log(1+e^x)$是标准Softplus函数。$(k_+, \lambda_+)$和$(k_-, \lambda_-)$是独立的超参数对，分别用于正向和负向偏移。
+    *   **作用机制**：
+        *   **方向性惩罚解耦**：Softplus函数将$\psi(\cdot)$拆分为两个镜像部分。对于正向偏移（$\psi > 0$），惩罚主要由第一项控制；对于负向偏移（$\psi < 0$），惩罚主要由第二项控制，实现了惩罚的解耦。
+        *   **危害感知惩罚塑形**：参数$k$（形状参数）和$\lambda$（尺度参数）控制惩罚的严重程度和起始点。当$k > 1$时，惩罚随偏移量超线性增长，确保在小偏移时惩罚可忽略（促进安全探索），而在大偏移时迅速加速（严格抑制破坏性偏差）。通过设置不同的$(k_+, \lambda_+)$和$(k_-, \lambda_-)$，可以非对称地调节正向和负向偏移，例如，对正向偏移施加较轻调节以鼓励探索，对负向偏移施加更严格惩罚以防止策略崩溃。
+3.  **半梯度方案**：为防止通过DHP反向传播时可能发生的梯度反转和不稳定性，DHP函数内的LFM输出$\psi(r_t^i(\theta))$应用了`stop-gradient`操作。这确保了DHP严格作为危害感知调制器，只重新缩放更新幅度而不扭曲策略梯度的方向。
+4.  **稳定性理论保证**：MHPO的梯度乘数$M(r) = \exp(\psi(r) - \zeta(r)) \text{sech}^2\left(\frac{\log r}{c}\right)$具有有限上界$M_\psi(c) \leq e^c$，即使重要性比率极端，梯度乘数也始终有界。这保证了梯度估计器第二矩的有界性（$\mathbb{E}[\|g(\theta)\|^2] \leq \sigma_A^2 G^2 M_\psi(c)^2 \leq \sigma_A^2 G^2 e^{2c}$），确保了梯度信号的统计稳定性，从而减轻了自适应优化器（如Adam）中学习率消失或策略侵蚀的风险。
+
+**实验设置**
+*   **实现基础**：基于Qwen系列模型。
+*   **模型**：
+    *   **文本型数学推理**：Qwen3-4B-Base, Qwen2.5-7B-Instruct, Qwen2.5-Math-7B-Instruct。
+    *   **视觉-语言数学推理**：Qwen2.5-VL-7B-Instruct。
+*   **数据集**：
+    *   **文本型**：DAPO-Math-17k-Processed（训练），AIME 2024/2025, AMC 2023, HMMT25, MATH-500（零样本泛化评估）。
+    *   **视觉-语言型**：Geometry3K（训练），MathVision, MathVista, MathVerse（域外评估）。
+*   **硬件条件/负载情况**：论文未明确提及具体的GPU型号或数量，但强调了长CoT生成中的高序列长度（数千token）和计算效率，最大响应长度限制为2048或4096 token。
+*   **对比基线**：GRPO, GSPO, DAPO, SAPO。
+*   **评估指标**：推理时每个prompt采样$n=32$个响应，报告期望通过率Avg@32。
+*   **超参数**：默认平滑边界参数$c=1.5$。危害参数默认非对称：正向Weibull参数$(k_+, \lambda_+) = (1.5, 1.0)$，负向参数$(k_-, \lambda_-) = (2.0, 0.8)$，反映对过早抑制的更高敏感性。
+<img width="823" height="395" alt="image" src="https://github.com/user-attachments/assets/e5e75f00-1013-4f37-a857-7514177888c7" />
+
+**关键对比结果**
+MHPO在所有配置下始终优于现有方法，验证了其解耦忠实度和阻尼目标具有广泛适用性和鲁棒性。
+*   **通用模型对比（Qwen2.5-7B-Instruct）**：MHPO平均达到43.7%，比DAPO（最强基线）高出3.5个百分点。
+*   **领域专业模型对比（Qwen2.5-Math-7B-Instruct）**：MHPO平均达到47.8%，比DAPO高出4.2个百分点。在HMMT25上，MHPO达到17.9%（DAPO 11.5%），在AIME25上达到21.6%（DAPO 15.0%）。
+*   **多模态模型对比（Qwen2.5-VL-7B-Instruct）**：MHPO平均达到53.0%，比零样本基线高5.5个百分点，比DAPO高0.7个百分点。在MathVision上提升最为显著。
+*   **基础模型对比（Qwen3-4B-Base，未经指令微调）**：MHPO平均达到52.9%，比领先基线GSPO高5.7个百分点。在AIME25和AIME24等高级竞赛基准上提升尤为显著。这突出显示了稳定优化对基础模型的重要性，因为它们在RL训练中经历的策略分布变化通常更为剧烈。
+*   **训练稳定性分析**：
+    *   **梯度范数动态**：MHPO在整个训练过程中保持严格有界和稳定的梯度范数，而基线算法（特别是SAPO）则频繁出现高方差的梯度尖峰。这直接证实了理论上的梯度乘数有界性。
+    *   **奖励进展**：MHPO在训练早期即获得更高奖励并持续保持优势。基线方法则出现过早的停滞或后期奖励显著下降，这与未受控制的梯度不稳定性直接相关。
+    *   **检查点鲁棒性**：基线模型易受后期策略崩溃影响（DAPO从43.6%降至31.4%），而MHPO的性能下降微乎其微（52.9%降至52.1%，仅0.8个百分点），这表明严格执行有界梯度乘数可有效防止破坏性梯度方差的累积，显著降低对详尽早停启发式方法的依赖。
+
+**潜在局限或不足**
+1.  **超参数敏感性**：虽然论文进行了超参数敏感性研究，并给出了推荐值，但LFM的$c$和DHP的$(k, \lambda)$参数的选择仍可能影响性能。尤其是在对称与非对称危害参数之间存在权衡：默认的非对称设计是为了更广泛的跨任务稳定性，而非单一任务的最优性。
+2.  **“危害感知”的Weibull分布选择**：论文选择了Weibull分布的累积危害函数进行惩罚塑形，这是一种启发式选择，尽管其特性符合需求，但可能存在其他更优的函数形式。
+3.  **计算成本**：虽然论文提到保持计算效率，但复杂的梯度计算（涉及$\psi$和$\zeta$的导数）相比简单裁剪可能会带来额外的计算负担，尽管可能不大。
+4.  **未直接解决所有GRPO组件问题**：MHPO主要关注重要性比率的稳定化，而GRPO训练流水线中的其他组件（如rollout采样、奖励设计、优势估计）仍有改进空间，MHPO与之正交。
+
 ## Replay buffer
 Efficient RL Training for LLMs with Experience Replay
 
