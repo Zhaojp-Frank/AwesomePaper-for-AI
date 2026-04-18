@@ -1,5 +1,88 @@
 # Awesome or inspiring paper for AI
 
+## Squeeze Evolve
+Squeeze Evolve: Unified Multi-Model Orchestration for Verifier-Free Evolution
+
+https://arxiv.org/pdf/2604.07725 2026.4.10 伯克利 UT Austin，TogetherAI等
+
+https://github.com/squeeze-evolve/squeeze-evolve 
+
+1. Squeeze Evolve是一种统一的多模型编排框架，旨在解决无验证器进化中 **多样性丧失和高计算成本**的瓶颈，通过**对不同模型能力和成本的分析**，发现**强模型主要用于初始化，而模型内部置信度可有效引导更经济的模型进行聚合**。
+2. 方法的核心在于**置信度引导的routing机制**，根据**候选集合的置信度或多样性**将重组操作分配给最经济的模型（昂贵的Model 2、廉价的Model 1或轻量级非LLM聚合），从而**在保持性能的同时显著降低成本**。
+3. SQUEEZE EVOLVE在AIME 2025、ARC-AGI-V2和MMMU-Pro等多个基准测试中，**API成本最高降低了3x**，**固定预算下的服务吞吐量提高了10x**，并在某些任务上超越了单一模型的表现，甚至在发现任务上首次达到或超过了基于验证器的进化方法。
+
+<img width="789" height="428" alt="image" src="https://github.com/user-attachments/assets/78ccef8c-294b-43b0-82e8-be47ed8518f7" />
+
+SQUEEZE EVOLVE是一种统一的多模型编排框架，用于解决免验证（verifier-free）进化推理的效率和多样性瓶颈。
+
+**1. 场景与具体问题**
+
+该研究关注测试时推理（test-time inference）的扩展，特别是通过模型自进化（self-evolution）来迭代改进候选解。在许多实际应用领域，例如核聚变研究，存在高昂或不可用的外部验证器（external verifier）的问题，这使得免验证进化成为一个吸引人的方向。然而，现有的免验证进化方法（如RSA）计算成本极高，可能生成比单次LLM推理多500-700倍的tokens，导致经济上难以承受。同时，不同模型的能力和成本差异巨大，例如专有前沿模型（proprietary frontier models）通常比开源模型贵4-25倍，这使得统一使用高成本模型变得低效。核心问题是如何在严格的预算限制下，有效地分配不同能力和成本的模型资源，以达到特定的性能目标。研究发现，重复的免验证进化会加速向狭窄模式的崩溃（diversity collapse），这限制了多样性，进而限制了性能上限，而统一使用高成本模型则会浪费计算资源。
+
+**2. 业界存在的不足**
+
+现有的测试时扩展方法，如多数投票（majority voting）、自反思（self-refinement）和递归自聚合（Recursive Self-Aggregation, RSA），通常使用单一模型或固定模型分配，这导致了“多样性崩溃”（diversity collapse）和性能上限（pass@K）的显著下降。此外，尽管一些LLM驱动的进化搜索方法（如AlphaEvolve、FunSearch）表现出色，但它们普遍依赖于外部验证器，并在一系列操作中使用单一模型。虽然存在模型路由框架，但它们通常在整个查询或单个推理步骤的粒度上进行路由，而不是在多步进化流程中的细粒度聚合组级别上进行动态决策。
+
+**3. 关键观察与假设**
+
+该研究基于以下关键观察：
+*   **Pass@K瓶颈与多样性**: 免验证进化中，缺乏外部验证会导致模型倾向于放大其已知的轨迹，使解决方案趋向狭窄模式，从而降低多样性和潜在的`Pass@K`性能。引入具有不同先验、失败模式和推理风格的模型，可以维持多样性，从而保持更高的`Pass@K`。
+*   **初始化主导最终准确性**: 强模型生成的初始候选集质量是最终准确性的最强预测因子。
+*   **弱模型在强候选集上的聚合能力**: 即使是较弱的模型，当聚合的候选集质量较高时，也能有效地进行聚合。当候选集中包含正确轨迹时，聚合准确率显著提升。
+*   **模型内在置信度作为有效适应度信号**: 模型自身的（token级别）对数概率（log-probabilities）或交叉模型（cross-model）置信度可以作为有效的代理信号，来衡量候选解或候选组的质量和难度。高置信度组更可能包含正确轨迹并成功聚合，这可用于路由决策。多样性（D）是另一种有效信号，通过计算组内最终答案的唯一数量来衡量，无需token级别评分。
+
+**4. 方法核心思路和主要步骤**
+
+SQUEEZE EVOLVE将现有的测试时扩展方法统一为一个进化框架，并在此基础上引入了多模型编排。其核心思想是根据模型能力对边缘效用的最高分配原则，将计算能力（即模型能力）分配到最能发挥作用的环节。具体来说：将强大的模型保留用于高影响力阶段（如初始化），而廉价模型处理其他阶段。
+
+<img width="877" height="566" alt="image" src="https://github.com/user-attachments/assets/b1434079-1811-49da-a891-5ff8433dff81" />
+
+5.  **种群更新 (Update)**：将M1、M2和Blite重组生成的新轨迹合并到种群中。更新规则可以是替换（discard previous population）或累积（retain previous population），以保留早期代的高质量解决方案。
+
+**系统实现**：
+*   **延迟匹配服务 (Latency-matched serving)**：SQUEEZE EVOLVE将M1和M2部署在独立的GPU池中，并根据路由比例和工作负载动态调整池大小，以确保两个池在每轮中近似同时完成其分配的工作，避免瓶颈。
+*   **置信度评分 (Confidence scoring)**：自置信度计算是免费的。交叉模型置信度需要单次预填充（prefill-only）前向传播，其成本与序列长度线性相关。
+*   **定制置信度引擎 (Custom Confidence Engine)**：为了避免生成完整的token级别logprob张量和减少网络传输，实现了vLLM的定制预填充路径，直接在GPU上聚合置信度统计量并仅返回最终的标量值（约100字节），大幅降低了延迟（4-10倍加速）并节省了内存。
+
+**5. 实验设置**
+
+*   **通用设置**: 所有运行使用种群大小N=16，组大小K=4，进化循环数T=10（多模态视觉任务T=5），所有结果均在四个随机种子下取平均。成本按实际API美元价格计算，使用模型提供商的定价。基线是仅使用Model 2的标准RSA，作为成本上限。
+*   **实现基础**: 基于LLM的进化框架，结合自定义模型路由逻辑和vLLM的修改版本。
+*   **硬件条件**: 论文未明确列出具体GPU型号和数量，但提及“Latency-matched serving”部分通过优化GPU池分配（$G_L + G_S = G$）来匹配不同模型的推理速度。
+*   **软件版本**: 基于vLLM定制开发。
+*   **负载情况**: 模拟实际推理工作负载，涉及多模型并行处理，以及置信度评分的预填充操作。
+*   **对比基线**:
+    *   单模型RSA（通常是成本更高的Model 2）。
+    *   其他现有方法（如ARC-AGI-V2上的Imbue和Confluence Lab；Circle Packing上的AlphaEvolve，ShinkaEvolve，OpenEvolve）。
+*   **数据集**:
+    *   **数学与编码**: AIME 2025, HMMT 2025, GPQA-Diamond, LiveCodeBench V6。
+    *   **多模态视觉**: MMMU-Pro, BabyVision。
+    *   **视觉推理**: ARC-AGI-V2。
+    *   **科学发现**: Circle Packing (n=26)。
+*   **模型对**:
+    *   **同质对（开源+开源）**: Qwen3-30B Instruct / Thinking; Qwen3-30B / 235B Instruct; GPT-OSS-20B / 120B。
+    *   **异质对（开源+闭源）**: Qwen3-30B Instruct / GPT-5 mini; GPT-OSS-20B / GPT-5 mini。
+    *   **多模态模型**: Kimi-2.5 Instant / Thinking; Qwen3.5-35B (text-only) / Kimi-2.5 Thinking。
+    *   **ARC-AGI-V2**: Gemini 3.1 Pro; Gemini 3.0 Flash / Gemini 3.1 Pro。
+    *   **Circle Packing**: GPT-OSS-20B / GPT-OSS-120B。
+
+**6. 关键对比结果**
+
+*   **API成本降低**: SQUEEZE EVOLVE将API成本降低了1.3-3.3倍，同时保持或超过了单模型准确性。在某些配置下，甚至超越了单独使用Model 2的性能。
+    *   **数学与编码**: 在AIME25上，成本降低1.4-2.0倍，准确率提升；在HMMT25上，成本降低1.6-1.7倍，准确率提升；在GPQA-Diamond上，成本降低1.8-2.1倍，准确率持平或略有提升；在LiveCodeBench V6上，成本降低2.0-2.4倍，准确率持平。
+    *   **多模态视觉**: 在MMMU-Pro上，成本降低1.9-2.7倍，准确率持平或超越。在BabyVision上，成本降低2.5倍。即使Model 1是文本模型，在初始化后也能接管部分任务，实现显著成本节省。
+*   **固定预算下的吞吐量提升**: 在相同总GPU预算下，SQUEEZE EVOLVE的吞吐量提升高达10倍（Qwen3对，4-10倍），GPT-OSS对提升1.4-3.4倍。
+*   **ARC-AGI-V2**: 达到了97.5%的准确率，任务成本为$7.74/task，在成本-能力方面创下新SOTA，甚至低于使用代码执行的Imbue（95.1%，$8.71/task）和Confluence Lab（97.9%，$11.77/task）。
+*   **科学发现（Circle Packing）**: 作为第一个免验证进化方法，SQUEEZE EVOLVE的性能与基于验证器的AlphaEvolve和ShinkaEvolve相当（2.635896 vs 2.635982）。这表明模型内在置信度可以作为验证的实用替代品。
+*   **路由开销**: 置信度评分和模型分派的端到端延迟开销极低，平均仅增加2.4-4.3%（最高12.4%），远低于所获得的成本和吞吐量收益。
+
+**7. 潜在局限或不足**
+
+*   **适应度信号的噪声**: 当前路由依赖于模型内在置信度和答案多样性，这些是轻量级但具有固有噪声的代理信号。未来的工作可以探索结合稀疏或近似验证（如执行少量候选程序、训练轻量级正确性分类器）来锐化适应度估计，尤其是在科学发现任务中。
+*   **静态超参数**: 种群大小、组大小、循环次数和路由阈值目前是每个任务固定的。未来的方向包括学习动态调整这些参数（例如，收敛时提前停止，多样性崩溃时扩展），以提高效率和鲁棒性。
+*   **轨迹分解**: SQUEEZE EVOLVE目前对完整轨迹进行操作。将推理分解为中间步骤，并仅选择性地重新生成不确定部分，可以减少冗余计算，同时保留最强的部分解决方案。
+*   **理论基础**: 模型的内在置信度何时能可靠地分离正确与不正确解，以及免验证多模型进化的收敛性保证，这些仍是开放的理论问题，有待深入研究。
+
 ## cocoabench
 COCOABENCH: Evaluating unified digital agents in the wild
 
