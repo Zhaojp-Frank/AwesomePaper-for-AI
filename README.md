@@ -11,12 +11,12 @@ https://mp.weixin.qq.com/s/A_gKk8ls7-w2xYDTLFuyPQ
 
 1. 针对LLM生成的大型系统，现有的**形式化方法因难以编写准确的函数级规范**而难以扩展，FM-Agent提出通过**分析调用方期望行为、利用LLMs理解自然语言和代码语义以及生成系统级测试用例**来解决此问题。
 2. FM-Agent是首个实现**自动化组合推理的框架，**它采用LLMs驱动的自上而下范式自动生成函数级自然语言规范，并**泛化Hoare逻辑推理规则**以直接基于这些规范进行代码验证。
-3. 该框架成功对高达143k LoC的大型系统进行推理，在**两天内发现了522个开发人员已测试但未发现的新bug**，展现了其在大型系统可靠性提升方面的强大能力和通用性。
-FM-Agent 使用 Python 实现，包含规约生成器、代码推理器和 Bug 验证器三个组件。通过 OpenRouter调用Claude Sonnet 4.6。
+3. 对合计143k LoC的大型仓库（C/Python/CDUA/Rust等），**两天内发现了522个开发人员已测试但未发现的新bug**，展现了其在大型系统可靠性提升方面的强大能力和通用性。
 
-FM-Agent 论文提出了首个用于大型系统自动组合推理的框架，它利用大型语言模型（LLM）进行基于 Hoare 逻辑风格的推理。
+FM-Agent论文提出了首个用于大型系统自动组合推理的框架，它利用大型语言模型（LLM）进行基于 Hoare 逻辑风格的推理。
 核心做了两件事：一是重新定义规约的来源，二是用 LLM 完成推理过程。FM-Agent是基于用户-着甲方等原始需求（规范），去自动化验收agent-乙方并汇报结果。
 关键是提出了一种创新的自上而下规约生成范式：从用户对系统整体正确行为的期望出发，逐步推导出每个函数应满足的规约。这样做可以避免被具体实现误导，生成的规约描述的是函数“应该做什么”，而不是“怎么做”。
+基于Python实现，包含规约生成器、代码推理器和 Bug 验证器三个组件。通过 OpenRouter调用Claude Sonnet 4.6。
 
 <img width="859" height="370" alt="image" src="https://github.com/user-attachments/assets/4a47f4ad-e306-4043-91bc-fdd0b451bd80" />
 <img width="423" height="426" alt="image" src="https://github.com/user-attachments/assets/494af411-3cdb-4c19-a78e-54d9e025707f" />
