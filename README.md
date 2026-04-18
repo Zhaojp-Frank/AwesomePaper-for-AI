@@ -1,5 +1,99 @@
 # Awesome or inspiring paper for AI
 
+## cocobenh
+COCOABENCH: Evaluating unified digital agents in the wild
+https://arxiv.org/pdf/2604.11201 2026.4.14 CoCoaBench team
+
+https://cocoabench.github.io/
+1. COCOABENCH是一个旨在评估统一数字代理的新基准，它通过人类设计的**长周期任务**，要求代理灵活组合**视觉、搜索和编程能力**，解决了现有基准通常单独测试这些能力的问题。
+2. 实验结果显示，当前最强的代理系统在COCOABENCH上成功率仅为45.1%，表明在**推理规划、工具使用和视觉理解方面**仍有巨大提升空间；研究发现，**顶级模型更倾向于通过代码执行进行处理**，这在多步骤推理和结构化输出任务中扮演关键角色。
+3. 基准通过仅指定指令和最终输出的评估函数来实现与具体运行环境或工具生态系统的解耦，并引入了轻量级共享脚手架COCOA-AGENT，以促进模型骨干间的可控比较，为未来通用数字代理的研究奠定了可复现的基础。
+
+
+<img width="660" height="246" alt="image" src="https://github.com/user-attachments/assets/caec3b8f-f2da-4c65-b31a-2774138fb949" />
+<img width="808" height="317" alt="image" src="https://github.com/user-attachments/assets/30abc0e1-c594-4731-a2e3-e3cfd8847bfc" />
+<img width="380" height="360" alt="image" src="https://github.com/user-attachments/assets/0f312cb0-69d1-4c53-83dc-9543eebab670" />
+<img width="818" height="794" alt="image" src="https://github.com/user-attachments/assets/ffeb880f-1009-4d35-95c9-8618300b184e" />
+<img width="804" height="361" alt="image" src="https://github.com/user-attachments/assets/ca9228f7-5c97-44a1-86d1-06bb283df13e" />
+<img width="801" height="401" alt="image" src="https://github.com/user-attachments/assets/db281df5-f620-41dd-b9fb-3ce5ea039c9b" />
+
+COCOABENCH 论文旨在解决当前大型语言模型 (LLM) 代理评估中存在的不足，尤其是在这些代理正趋向于整合多种能力、成为“统一数字代理”的背景下。
+**1. 场景与具体问题**
+LLM 代理在软件工程、GUI 自动化和深度研究等领域展现出强大潜力，并且最新的代理框架（如 OpenClaw、Claude Cowork）和模型（如 GPT-5.4、Claude Sonnet 4.6）正致力于将这些能力整合到单一系统中，目标是实现一个能协助人类完成复杂任务的统一数字代理。然而，现有的大多数评估基准仍侧重于孤立地测试单一领域或单一交互模式的能力（例如仅限于命令行、仅限于 GUI 或预定义工具 API），这使得它们不足以系统性地评估统一代理在开放环境、多样化任务中组合不同能力的表现。
+
+**2. 业界存在哪些不足**
+现有基准主要缺陷在于：
+*   **能力评估的割裂：** 大多基准仅测试单一能力（如 CLI-only、GUI-only），无法反映代理在现实复杂任务中灵活组合多种能力的需求。
+*   **环境或工具的耦合：** 许多基准与特定环境（如 OSWorld 的 VM 环境）或固定工具生态系统（如 Tool Decathlon）紧密耦合，限制了代理在开放世界中选择和组合工具的能力。
+*   **评估方式的局限：** 一些基准依赖于人工评估（如 GDPval），难以实现可靠和可扩展的评估。
+*   **缺乏对泛化能力的考察：** 现有基准未能充分测试代理在不同交互模式和复杂任务之间进行泛化和迁移的能力。
+
+**3. 关键观察与假设**
+*   **统一能力的必要性：** 一个强大的数字代理必须能够有效地组合和编排三种核心能力：编码（terminal use）、搜索（信息获取与导航）和视觉（GUI 交互与视觉理解）。
+*   **开放世界评估的需求：** 代理应能在开放环境中自主推理和选择工具，而非仅在预定义工具集内操作。
+*   **结果导向评估的有效性：** 对于涉及多步骤交互的任务，通过验证最终结果而非中间行动序列，可以实现可扩展且可靠的评估，同时保留开放性工作流。
+*   **Scaffold 的重要性：** 代理框架（scaffold）设计对模型表现具有重要影响，编码导向的 scaffold 即使在非传统领域也能表现良好。
+*   **编码能力的关键作用：** 较强的代理会更多地利用编码执行，将其作为多步骤推理和结构化输出格式化的有效策略。
+
+**4. 方法核心思路和主要步骤**
+COCOABENCH 的核心是评估代理在面对需要灵活组合视觉 (Vision)、搜索 (Search) 和编码 (Coding) 三种核心能力的复杂、长程任务时的表现。
+*   **任务构建 (Task Construction)：**
+    *   包含 153 个由人类编写的任务，涵盖研究、娱乐、购物、商业等 9 个日常领域。
+    *   每个任务都要求整合多种能力，并对人类构成非平凡的挑战。
+    *   尽量减少对外部资源的瞬时依赖，确保任务的稳定性。
+    *   任务仅通过指令和针对最终输出的自动评估函数来定义，不绑定特定运行时、接口或工具生态系统。
+*   **自动评估函数 (Automatic Evaluation Functions)：**
+    *   每个任务配有独立的评估脚本，确保自动和可复现的评估。
+    *   优先要求代理输出结构化格式（如 `str`, `list`, `dict`）。
+    *   对于行动中心任务，采用“基于结果的代理评估器 (outcome based proxy evaluators)”，通过验证最终输出而非复杂行动序列来推断正确执行，从而实现可扩展评估。
+*   **COCOA-AGENT (共享 scaffold)：**
+    *   为了实现模型主干的受控比较，开发了一个轻量级、模块化的共享代理 scaffold——COCOA-AGENT。
+    *   基于 AIO Sandbox (集成浏览器、Shell、文件系统于 Docker 容器内)，提供安全执行和可扩展并行评估环境。
+    *   采用 ReAct 范式，为模型主干配备通用工具，包括浏览器交互（DOM 级 API 和截图 GUI 控制）、终端执行、文件操作和代码执行。
+    *   其工具接口按 Vision（17个工具）、Search（11个工具）、Coding（9个工具）和 Control 组织，共 39 个工具，确保了对三种核心能力的专用支持。
+
+**5. 实验设置**
+*   **实现基础：** COCOABENCH 任务基于人类设计，COCOA-AGENT 基于 AIO Sandbox 实现。
+*   **硬件/软件环境：** 论文未详细说明具体的硬件条件或软件版本（如操作系统、Docker 版本），但提及 AIO Sandbox 将浏览器、shell 和文件系统集成在一个 Docker 容器中。
+*   **负载情况：** 未明确提及，但强调了自动评估和沙箱化运行的“可扩展并行评估”能力。
+*   **对比基线/评估系统：**
+    *   **现有代理系统：**
+        *   ChatGPT Agent Mode (OpenAI, 2025b)
+        *   OpenClaw (OpenClaw, 2026)，分别使用 GPT-5.4 和 Claude Sonnet 4.6 作为主干。
+        *   Codex (GPT-5.4 主干)
+        *   Claude Code (Claude Sonnet 4.6 主干)
+        *   OpenAI Deep Research (o4-mini 版本)
+    *   **COCOA-AGENT 下的模型主干：**
+        *   Claude Sonnet 4.6 (thinking high)
+        *   GPT-5.4 (thinking high)
+        *   Gemini-3.1-pro (thinking high)
+        *   Gemini-Flash-3.0
+        *   Kimi-k2.5 (Moonshot AI, 2026)
+        *   Qwen3.5-397B-A13B (Qwen Team, 2026)
+*   **运行预算：** 每个运行有 30 分钟的墙钟时间预算和最多 50 次交互回合。
+
+**6. 关键对比结果**
+*   **整体表现：** 当前代理在 COCOABENCH 上的表现远未达可靠水平。表现最佳的系统（Codex w/ GPT-5.4）成功率仅为 45.1%。
+*   **模型主干影响：** GPT-5.4 在不同 scaffold 下均表现最稳定且最强，在 Codex 和 OpenClaw 下均达到 45.1%，在 COCOA-AGENT 下为 36.6%，位居前三。Claude Sonnet 4.6 具有竞争力（OpenClaw 下 34.0%），但表现波动性大。开源模型（Kimi-k2.5: 11.8%，Qwen3.5: 9.8%）与领先专有模型差距显著。
+*   **Scaffold 影响：** 编码导向的 scaffold（Codex, Claude Code）在 COCOABENCH 上表现出良好的泛化能力，能够作为通用问题解决器。OpenClaw 也是一个鲁棒的 scaffold。COCOA-AGENT 虽然不是最强 scaffold，但其性能已足够进行有意义的模型比较。
+*   **成本与时间效率：** CodeX 在性能、成本（$0.75/任务）和时间效率方面表现最佳，位于帕累托前沿。更高的金钱或时间成本不一定带来更好的性能。
+*   **工具使用分析：**
+    *   总的来看，编码工具（`code execute`, `shell execute`）在所有工具调用中占比最大，其次是浏览器级别操作。这表明编程执行对于解决 COCOABENCH 任务中的多步骤推理和结构化输出至关重要。
+    *   **工具使用与性能相关性：** GPT-5.4 和 Gemini 3.1 Pro 将超过 60% 的工具调用分配给编码工具，并获得了最高的成功率。相比之下，性能较弱的模型（Kimi-k2.5, Qwen3.5）在编码工具上的使用比例较低（约 30%）。这表明强大的代理通过代码将信息获取（视觉和搜索）与后续处理分离，而较弱的代理则未能充分利用编程处理。
+*   **错误分析：** 失败主要集中在三个方面：
+    *   **Reasoning & Planning (E1) 53%：** 代理未能制定有效方法，对关键细节推理不精确，或忘记输出格式要求。
+    *   **Tool & Execution (E2) 19%：** 代理与工具交互不当，无法正确执行步骤，或无法从执行错误中恢复（如无限循环、反机器人屏障、工具结果幻觉）。
+    *   **Visual Grounding (E3) 28%：** 代理未能正确感知或解释视觉信息（如视觉细节缺失、视觉知识不足导致语义映射错误、忽略仅存在于像素缓冲区的内容）。
+    *   **GPT-5.4 vs. Kimi K2.5：** Kimi K2.5 在推理错误（E1.1 错误推理）、格式错误（E1.3）、无限循环（E2.1）和视觉细节（E3.1）方面表现出更明显的劣势。
+
+**7. 潜在局限或不足**
+*   **当前代理能力仍有显著差距：** 最佳代理仅有 45.1% 的成功率，表明距离能可靠地执行复杂任务的通用数字代理还有很长的路要走。
+*   **模型主干质量仍是关键：** 即使在相同的 scaffold 下，不同模型主干的表现差异巨大，说明模型本身的推理和泛化能力仍是瓶颈。
+*   **COCOA-AGENT 的性能非最优：** 尽管 COCOA-AGENT 适用于模型比较，但它本身并非性能最佳的 scaffold，这可能暗示其设计仍有提升空间，或者某些现有 agent 产品在特定方面进行了更优化的集成。
+*   **错误分析的 LLM-as-Judge 局限：** 错误分类由 LLM（Claude Sonnet 4.6）完成，虽然提供了详细的指导和截断机制，但 LLM 判断的准确性和潜在偏差仍需注意。
+*   **任务资源的稳定性：** 尽管论文尽力确保外部资源稳定，但互联网内容的变化仍可能对长期复现性构成挑战。
+  
+ 
 ## Introspective Diffusion Language Models
 Introspective Diffusion Language Models
 
