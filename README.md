@@ -3,7 +3,7 @@
 ## Introspective Diffusion Language Models
 Introspective Diffusion Language Models
 
-https://arxiv.org/pdf/2604.11035 2026.4.13 Together AI, 伊利诺伊，斯坦福等
+https://arxiv.org/pdf/2604.11035 2026.4.13 Together AI, UIUC，斯坦福等
 
 https://github.com/Introspective-Diffusion/I-DLM
 
@@ -22,9 +22,8 @@ https://github.com/Introspective-Diffusion/I-DLM
 该研究旨在解决扩散语言模型 (DLM) 在质量和实际服务效率方面相较于自回归 (AR) 模型的差距。作者将这一差距归因于 DLM 缺乏“内省一致性”（introspective consistency），即 DLM 无法可靠地认同其自身生成的内容。现有 DLM 的主要不足包括：
 <img width="732" height="422" alt="image" src="https://github.com/user-attachments/assets/2e0ea3a0-979d-4404-920a-f01cab59dc6d" />
 
-1.  **内省一致性低（Low Introspective Consistency）**：DLM 难以可靠地验证其自身生成的内容，**导致推理连贯性受损**。其内省接受率（introspective acceptance rate）定义为 $\alpha = \frac{1}{L} \sum_k \min(1, p_k(x_k)/q_k(x_k))$，其中 $q_k(x_k)$ 是模型对第 $k$ 个 token $x_k$ 的生成分布，而 $p_k(x_k)$ 是在所有 token 都已确定的情况下，**模型对该 token 的因果分布**。AR 模型因其构造特性，$p=q$，因此 $\alpha=1$。而现有 DLM 的 $\alpha$ 值显著低于 1，**表明其在重新审查时无法完全认同自身输出。**
-2.  **计算效率低下（Compute Inefficiency）**：DLM 的训练和推理在每前向传播 token 数（Tokens Per Forward, TPF）上需要更多的 FLOPs，导致计算开销高，无法有效利用其理论并行性。
-3.  **推理引擎不兼容（Inference Engine Incompatibility）**：DLM 的多 token、多步去噪模式与为 AR 模型高度优化的现代 LLM 服务栈（如连续批处理、KV Cache 分页等）不兼容，导致实际执行效率低下。
+<img width="967" height="190" alt="image" src="https://github.com/user-attachments/assets/3f5fcc0f-353b-48ee-ad4a-12aa087c1d98" />
+
 <img width="748" height="400" alt="image" src="https://github.com/user-attachments/assets/813dc81a-888f-4579-a1c3-4d591f3851c6" />
 
 该研究的核心观察和假设是：AR 模型之所以强大，在于其通**过因果掩码和 logits 偏移隐式地强制执行了内省一致性**，即模型被训练为认同其生成的内容。这种结构优势在 DLM 中缺失了。
@@ -32,15 +31,7 @@ https://github.com/Introspective-Diffusion/I-DLM
 为了解决这些问题，该研究提出了 **内省扩散语言模型 (I-DLM)**，这是一个新的范式，旨在保留 DLM 并行生成能力的同时，继承 AR 模型的内省一致性。其核心方法论包括：
 <img width="739" height="467" alt="image" src="https://github.com/user-attachments/assets/a0a9498a-d459-4c8a-b244-d0a8f70d407b" />
 
-1.  **内省一致性训练（Introspective-Consistency Training）**：
-    *   **因果注意力与 Logits 偏移（Causal Attention with Logit Shift）**：训练时对所有 token（包括掩码 token）强制执行严格的因果注意力，即每个查询位置 $j$ 只能关注到位置 $i \le j$ 的键。同时，采用 Logits 偏移，使得位置 $i$ 的隐藏状态预测 token $i+1$，而非 token $i$。这使得模型能够在统一的注意力模式下进行生成和内省，并确保因果锚点分布 $p$ 的准确性。
-    *   **全掩码目标（All-Masked Objective）**：训练输入是全掩码序列 $x_t$ 与干净序列 $x_0$ 的拼接 `[xt | x0]`。模型始终在全掩码输入上进行训练，确保每个位置都贡献有效信号，避免了稀疏监督。
-    *   **自平衡损失（Auto-Balanced Loss）**：训练目标为带偏移标签的交叉熵损失，分为掩码区域损失 $L_{mask}$ 和干净区域损失 $L_{clean}$。为解决两部分损失量级差异导致的不平衡梯度问题，引入自平衡损失：$L = L_{mask} + \hat{s} \cdot L_{clean}$，其中 $\hat{s} = L_{mask}/L_{clean}$。这确保了生成路径（从 MASK 隐藏状态生成 $q$）和内省路径（从干净位置生成因果锚点 $p$）获得等效的梯度强度，从而最大化内省接受率。
-
-2.  **内省步进解码（Introspective Strided Decoding, ISD）**：
-    *   **单次前向传播实现步进与内省（Single-Pass Stride and Introspection）**：ISD **每次解码迭代都在一次前向传播中同时生成新 token 并验证之前的 token**。例如，步骤 $t$ 会将前一步接受的 token 视为干净 token，并在此基础上追加 $N$ 个 `[MASK]` token。模型在前向传播中，干净位置的 Logits 产生因果锚点分布 $p_k$，而 `[MASK]` 位置的 Logits 产生步进生成分布 $q_k$。
-    *   **基于 $p/q$ 接受的自适应步进（Adaptive Stride via $p/q$ Acceptance）**：ISD 采用 $p/q$ 接受准则（$p_k(x_k)/q_k(x_k)$ 的最小值与 1 比较）来判断是否接受 token。如果接受，则 token 被认为符合因果锚点分布。如果拒绝，则从修正后的分布 $\text{normalize}(\max(0, p_k - q_k))$ 中重采样，并丢弃所有后续 token，下次迭代退化为纯步进模式。若所有 token 都被接受，则会采样一个额外的 bonus token。这种机制使得有效步进长度能根据模型自信度自适应调整。
-    *   **基于门控 LoRA 的无损 ISD（Lossless ISD with Gated LoRA）**：通过在 `[MASK]` 位置应用 LoRA 适配器（base+LoRA 权重）进行高质量的草稿生成，而在内省位置仅使用基础模型权重。由于严格的因果注意力，内省位置的 KV 缓存完全由基础模型权重计算，确保内省结果与原始 AR 模型完全一致，从而实现位对位无损输出。
+<img width="964" height="491" alt="image" src="https://github.com/user-attachments/assets/7deb531d-5ec5-48b1-862c-a09a9fea4461" />
 
 3.  **I-DLM 服务栈（I-DLM Serving Stack）**：
     *   **AR 继承优化（AR-inherited optimizations）**：ISD 的严格因果结构使其能直接兼容 SGLang 等现有 AR 服务系统，继承其 KV Cache 分页、连续批处理和张量并行等优化。
@@ -52,7 +43,7 @@ https://github.com/Introspective-Diffusion/I-DLM
 *   **硬件条件**：NVIDIA H100 80GB SXM GPU，使用 NVLink 互联。
 *   **软件版本**：CUDA 12.9，FlashInfer 用于注意力计算，SGLang 用于模型服务。
 *   **负载情况**：在 15 个基准测试集上评估，涵盖知识与推理、数学推理、代码生成和指令遵循四个领域。测试并发级别从 C=1 到 C=64，输出长度固定为 2,048 token。
-*   **对比基线**：包括 LLaDA-2.1-mini (16B)、LLaDA-2.0-flash (100B)、SDAR (8B/30B)、NBDiff (7B)、DREAM (7B)、WeDLM (8B)、TiDAR (8B) 等现有 SOTA DLM，以及基于 AR 的推测解码方法 EAGLE-3，同时以原始 AR 模型 Qwen3-8B 和 Qwen3-32B 作为能力基线。
+*   **对比基线**：包括 LLaDA-2.1-mini (16B)、LLaDA-2.0-flash (100B)、DREAM (7B)、WeDLM (8B)、TiDAR (8B) 等现有 SOTA DLM，以及基于 AR 的推测解码方法 EAGLE-3，同时以原始 AR 模型 Qwen3-8B 和 Qwen3-32B 作为能力基线。
 
 **关键对比结果：**
 <img width="731" height="424" alt="image" src="https://github.com/user-attachments/assets/ac76704f-9464-40b8-a0a2-626a95865449" />
