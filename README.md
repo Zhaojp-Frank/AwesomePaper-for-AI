@@ -1,5 +1,75 @@
 # Awesome or inspiring paper for AI
 
+## Introspective Diffusion Language Models
+Introspective Diffusion Language Models
+
+https://arxiv.org/pdf/2604.11035 2026.4.13 Together AI, 伊利诺伊，斯坦福等
+
+https://github.com/Introspective-Diffusion/I-DLM
+
+1. 提出“内省一致性”是扩散语言模型（DLMs）与自回归模型（AR）**质量差距的关键因素**，指出AR模型通过因果掩码和 logits 偏移训练机制**天然具备生成与自我验证的一致性，即模型被训练为认同其生成的内容；而现有DLMs则严重缺乏 导致生产token前后潜在冲突 欠缺逻辑连贯性**。
+2. 引入了内省式扩散语言模型（I-DLM），通过**内省一致性训练（结合因果注意力、Logit移位和全掩码目标）将预训练AR模型转化为DLM，保留内省能力**，并开发了**新的内省步进解码（ISD）和Gated LoRA投机推理**，在单次前向传播中**同时生成新Token和验证旧Token**，提升推理效率。
+3. 基于已有等Qwen3-8B 和 Qwen3-32B转换，I-DLM在**15项基准测试中首次实现了与同等规模AR**模型相当的质量，远超扩散模型；在推理效率上，显著超越了现有AR模型，**吞吐提升3x~4x**，**系统设计也与现有AR服务栈高度兼容**。
+
+- 加训数据为 4.5B token 的推理数据集响应。LoRA 适配器（rank 128/1024）用于无损 ISD。
+- NVIDIA H100 80GB SXM GPU，使用 NVLink 互联。
+- CUDA 12.9，FlashInfer 用于注意力计算，SGLang 用于模型服务。
+- 15 个基准测试集：知识与推理、数学推理、代码生成和指令遵循四个领域。测试并发级别从 C=1 到 C=64，输出长度固定为 2,048 token。
+- 基线：包括 LLaDA-2.1-mini (16B)、LLaDA-2.0-flash (100B)、SDAR (8B/30B) DREAM (7B)、TiDAR (8B) 等现有 SOTA DLM，以及基于 AR 的推测解码方法 EAGLE-3，同时以原始 AR 模型 Qwen3-8B 和 Qwen3-32B 作为能力基线。
+- 消融：严格因果注意力、Logits 偏移和全掩码目标是实现高质量的关键，尤其在长序列推理任务中，内省一致性显著减少了错误累积。系统优化方面，CUDA graph 捕获贡献最大，其次是解码循环优化和 Argmax 提议。
+
+  
+该研究旨在解决扩散语言模型 (DLM) 在质量和实际服务效率方面相较于自回归 (AR) 模型的差距。作者将这一差距归因于 DLM 缺乏“内省一致性”（introspective consistency），即 DLM 无法可靠地认同其自身生成的内容。现有 DLM 的主要不足包括：
+<img width="732" height="422" alt="image" src="https://github.com/user-attachments/assets/2e0ea3a0-979d-4404-920a-f01cab59dc6d" />
+
+1.  **内省一致性低（Low Introspective Consistency）**：DLM 难以可靠地验证其自身生成的内容，**导致推理连贯性受损**。其内省接受率（introspective acceptance rate）定义为 $\alpha = \frac{1}{L} \sum_k \min(1, p_k(x_k)/q_k(x_k))$，其中 $q_k(x_k)$ 是模型对第 $k$ 个 token $x_k$ 的生成分布，而 $p_k(x_k)$ 是在所有 token 都已确定的情况下，**模型对该 token 的因果分布**。AR 模型因其构造特性，$p=q$，因此 $\alpha=1$。而现有 DLM 的 $\alpha$ 值显著低于 1，**表明其在重新审查时无法完全认同自身输出。**
+2.  **计算效率低下（Compute Inefficiency）**：DLM 的训练和推理在每前向传播 token 数（Tokens Per Forward, TPF）上需要更多的 FLOPs，导致计算开销高，无法有效利用其理论并行性。
+3.  **推理引擎不兼容（Inference Engine Incompatibility）**：DLM 的多 token、多步去噪模式与为 AR 模型高度优化的现代 LLM 服务栈（如连续批处理、KV Cache 分页等）不兼容，导致实际执行效率低下。
+<img width="748" height="400" alt="image" src="https://github.com/user-attachments/assets/813dc81a-888f-4579-a1c3-4d591f3851c6" />
+
+该研究的核心观察和假设是：AR 模型之所以强大，在于其通**过因果掩码和 logits 偏移隐式地强制执行了内省一致性**，即模型被训练为认同其生成的内容。这种结构优势在 DLM 中缺失了。
+
+为了解决这些问题，该研究提出了 **内省扩散语言模型 (I-DLM)**，这是一个新的范式，旨在保留 DLM 并行生成能力的同时，继承 AR 模型的内省一致性。其核心方法论包括：
+<img width="739" height="467" alt="image" src="https://github.com/user-attachments/assets/a0a9498a-d459-4c8a-b244-d0a8f70d407b" />
+
+1.  **内省一致性训练（Introspective-Consistency Training）**：
+    *   **因果注意力与 Logits 偏移（Causal Attention with Logit Shift）**：训练时对所有 token（包括掩码 token）强制执行严格的因果注意力，即每个查询位置 $j$ 只能关注到位置 $i \le j$ 的键。同时，采用 Logits 偏移，使得位置 $i$ 的隐藏状态预测 token $i+1$，而非 token $i$。这使得模型能够在统一的注意力模式下进行生成和内省，并确保因果锚点分布 $p$ 的准确性。
+    *   **全掩码目标（All-Masked Objective）**：训练输入是全掩码序列 $x_t$ 与干净序列 $x_0$ 的拼接 `[xt | x0]`。模型始终在全掩码输入上进行训练，确保每个位置都贡献有效信号，避免了稀疏监督。
+    *   **自平衡损失（Auto-Balanced Loss）**：训练目标为带偏移标签的交叉熵损失，分为掩码区域损失 $L_{mask}$ 和干净区域损失 $L_{clean}$。为解决两部分损失量级差异导致的不平衡梯度问题，引入自平衡损失：$L = L_{mask} + \hat{s} \cdot L_{clean}$，其中 $\hat{s} = L_{mask}/L_{clean}$。这确保了生成路径（从 MASK 隐藏状态生成 $q$）和内省路径（从干净位置生成因果锚点 $p$）获得等效的梯度强度，从而最大化内省接受率。
+
+2.  **内省步进解码（Introspective Strided Decoding, ISD）**：
+    *   **单次前向传播实现步进与内省（Single-Pass Stride and Introspection）**：ISD **每次解码迭代都在一次前向传播中同时生成新 token 并验证之前的 token**。例如，步骤 $t$ 会将前一步接受的 token 视为干净 token，并在此基础上追加 $N$ 个 `[MASK]` token。模型在前向传播中，干净位置的 Logits 产生因果锚点分布 $p_k$，而 `[MASK]` 位置的 Logits 产生步进生成分布 $q_k$。
+    *   **基于 $p/q$ 接受的自适应步进（Adaptive Stride via $p/q$ Acceptance）**：ISD 采用 $p/q$ 接受准则（$p_k(x_k)/q_k(x_k)$ 的最小值与 1 比较）来判断是否接受 token。如果接受，则 token 被认为符合因果锚点分布。如果拒绝，则从修正后的分布 $\text{normalize}(\max(0, p_k - q_k))$ 中重采样，并丢弃所有后续 token，下次迭代退化为纯步进模式。若所有 token 都被接受，则会采样一个额外的 bonus token。这种机制使得有效步进长度能根据模型自信度自适应调整。
+    *   **基于门控 LoRA 的无损 ISD（Lossless ISD with Gated LoRA）**：通过在 `[MASK]` 位置应用 LoRA 适配器（base+LoRA 权重）进行高质量的草稿生成，而在内省位置仅使用基础模型权重。由于严格的因果注意力，内省位置的 KV 缓存完全由基础模型权重计算，确保内省结果与原始 AR 模型完全一致，从而实现位对位无损输出。
+
+3.  **I-DLM 服务栈（I-DLM Serving Stack）**：
+    *   **AR 继承优化（AR-inherited optimizations）**：ISD 的严格因果结构使其能直接兼容 SGLang 等现有 AR 服务系统，继承其 KV Cache 分页、连续批处理和张量并行等优化。
+    *   **静态批处理调度（Stationary-batch scheduling）**：通过复用批处理对象，减少了 CPU-GPU 交互开销，提高了吞吐量。
+
+**实验设置：**
+
+*   **实现基础**：I-DLM 模型由预训练的 Qwen3-8B 和 Qwen3-32B 模型转换而来。训练数据为 4.5B token 的推理数据集响应。LoRA 适配器（rank 128/1024）用于无损 ISD。
+*   **硬件条件**：NVIDIA H100 80GB SXM GPU，使用 NVLink 互联。
+*   **软件版本**：CUDA 12.9，FlashInfer 用于注意力计算，SGLang 用于模型服务。
+*   **负载情况**：在 15 个基准测试集上评估，涵盖知识与推理、数学推理、代码生成和指令遵循四个领域。测试并发级别从 C=1 到 C=64，输出长度固定为 2,048 token。
+*   **对比基线**：包括 LLaDA-2.1-mini (16B)、LLaDA-2.0-flash (100B)、SDAR (8B/30B)、NBDiff (7B)、DREAM (7B)、WeDLM (8B)、TiDAR (8B) 等现有 SOTA DLM，以及基于 AR 的推测解码方法 EAGLE-3，同时以原始 AR 模型 Qwen3-8B 和 Qwen3-32B 作为能力基线。
+
+**关键对比结果：**
+<img width="731" height="424" alt="image" src="https://github.com/user-attachments/assets/ac76704f-9464-40b8-a0a2-626a95865449" />
+
+*   **质量**：I-DLM 首次达到与其同规模 AR 模型相当的质量水平，并显著优于现有 DLM。I-DLM-8B 在多个基准测试中超越了参数量更大的 LLaDA-2.1-mini (16B)，例如在 AIME-24 上提高了 26.3 分，在 LiveCodeBench-v6 上提高了 15.3 分。相较于基于相同 Qwen3-8B 的 SDAR，I-DLM-8B 在 AIME-24 上从 10.0 提升到 69.6。I-DLM-32B 甚至超越了更大的 LLaDA-2.1-flash (100B)。
+*   **服务效率**：在典型部署并发量下 (C=16–32)，I-DLM 提供了比 LLaDA-2.1-mini 高 2.2–3.8 倍、比 SDAR 高 3.7–4.5 倍的吞吐量。在重负载 (C=64) 下，I-DLM 仍能保持稳定的每请求吞吐量（~125 tok/s），总体吞吐量提升 2.9–4.1 倍。此外，I-DLM 即使在无损模式下也优于 EAGLE-3 等推测解码方法。
+*   **消融实验**：训练设计方面，严格因果注意力、Logits 偏移和全掩码目标是实现高质量的关键，尤其在长序列推理任务中，内省一致性显著减少了错误累积。系统优化方面，CUDA graph 捕获贡献最大，其次是解码循环优化和 Argmax 提议。
+<img width="742" height="272" alt="image" src="https://github.com/user-attachments/assets/27c6055b-40eb-44ae-993a-740810c924e2" />
+
+**潜在局限或不足：**
+
+该论文主要强调 I-DLM 在质量和效率上的突破性进展，并未明确指出其潜在局限。然而，可以推断：
+1.  **训练成本**：虽然相较于某些现有 DLM，I-DLM 的转换训练数据量（4.5B token）更少，但仍然需要额外的训练阶段来将预训练 AR 模型转换为 I-DLM，这增加了部署的复杂性和成本，尤其对于需要大规模迭代和版本控制的生产环境。
+2.  **硬件依赖**：虽然 I-DLM 兼容现有 AR 服务系统，但其峰值性能的实现（例如在 B200 或 H100 上的高 TPS）仍依赖于高性能 GPU 硬件和 NVLink 互联，这可能限制其在资源受限环境中的应用。
+3.  **超参数敏感性**：尽管提出了自平衡损失，但训练阶段的步进 N 值、LoRA rank 等超参数的选择仍需经验，特别是对于不同基础模型或下游任务的适用性，可能需要进一步的调优。
+4.  **$p/q$ 接受准则的局限性**：虽然 $p/q$ 准则保证了输出的理论正确性，但其在极端低概率事件或模型不确定性高的情况下，可能导致频繁的拒绝和重采样，从而降低实际的 TPF 效率，尽管论文中提到实际接受率较高。
+
 ## MHPO
 MHPO: Modulated Hazard-aware Policy Optimization for Stable Reinforcement Learning
 
