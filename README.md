@@ -1,6 +1,95 @@
 # Awesome or inspiring paper for AI
 
+## TokenDance
+TokenDance: Scaling Multi-Agent LLM Serving via Collective KV Cache Sharing 
+https://arxiv.org/abs/2604.03143 2026.4.3
 
+1. 🤖 TokenDance 针对多智能体LLM服务中，All-Gather通信模式导致的KV Cache冗余和低效复用问题，提出了一种通过集体共享KV Cache来提高并发代理数的方法。
+2. 💡 该系统通过轮次感知提示接口识别共享内容，利用KV Collector集体执行KV Cache复用以摊销计算成本，并采用Diff-Aware Storage以块稀疏差异存储KV Cache实现11-17倍的压缩，并通过融合差异恢复路径确保高效访问。
+3. 🚀 基于vLLM和LMCache的实现，Qwen2.5最大14b模型，A100, 在GenerativeAgents和AgentSociety等代表性多智能体工作负载上，支持的并发代理数比vLLM高出2.7x，KV Cache存储减少17.5x，预填充速度提升1.9x。
+- 理论有损？
+  
+<img width="933" height="316" alt="image" src="https://github.com/user-attachments/assets/50318251-b5b4-497b-b8e1-0f6db1437a72" />
+<img width="441" height="703" alt="image" src="https://github.com/user-attachments/assets/af1026d7-3845-4358-b976-91b8c369d823" />
+<img width="451" height="487" alt="image" src="https://github.com/user-attachments/assets/1dcb6b42-911a-4de2-83ff-baa47c5d5d9a" />
+<img width="441" height="399" alt="image" src="https://github.com/user-attachments/assets/b9032a5e-3227-4f43-bd50-7165e35580d1" />
+<img width="453" height="458" alt="image" src="https://github.com/user-attachments/assets/b6c9401b-f17c-41c2-86a8-b99bbbfac850" />
+<img width="926" height="309" alt="image" src="https://github.com/user-attachments/assets/bdf3c4f7-fb60-4a94-a1ef-4ccdf01369f9" />
+<img width="930" height="475" alt="image" src="https://github.com/user-attachments/assets/9472c7c4-cc92-4a09-9320-4c9a5dc7a497" />
+<img width="926" height="416" alt="image" src="https://github.com/user-attachments/assets/2fc4d4f6-c8c5-4ff7-a2be-e75ae8ba66ad" />
+
+<img width="934" height="375" alt="image" src="https://github.com/user-attachments/assets/92c38878-e22c-422d-a2c1-4cff42a0127b" />
+
+**场景与具体问题：**
+大型语言模型（LLMs）是许多多智能体应用（如代码生成、搜索、社交模拟）的核心执行引擎。这些应用常采用同步回合制执行模式，其中一个中心调度器收集所有智能体的输出，并将合并后的上下文重新分发给每个智能体以进行下一轮。这种通信模式被称为“All-Gather模式”。它导致了大规模的KV缓存冗余：由于每个智能体提示（prompt）包含相同的共享输出块（$\mathcal{O}$），而私有历史（$\mathcal{H}$）长度不同，导致这些共享块在不同提示中处于不同的绝对位置（如图1所示）。现有系统未能有效利用这种结构性冗余，导致每个智能体维护一个独立的、近乎相同的KV缓存副本，从而使GPU内存成为扩展并发智能体数量的主要瓶颈。实验表明，多智能体工作负载的KV缓存消耗高达总内存池的99.3%，远高于独立请求的59.2%（图2），导致严重内存饱和和高延迟。
+
+**业界存在哪些不足：**
+1.  **粒度不匹配：** 现有服务系统（如vLLM、SGLang）将每个智能体子请求视为独立的推理请求，在“请求级”而非“回合级”进行优化。
+2.  **低效重用：**
+    *   前缀缓存（prefix caching）在私有历史分歧后失效。
+    *   位置无关缓存（PIC）方法（如CacheBlend、EPIC）虽能重用任意偏移的块，但仍“独立处理”每个请求，导致对同一组共享块进行N次独立的重用计算（重复RoPE旋转、键差异计算和重要位置选择），效率低下。
+3.  **低效存储：** 即使经过重用，同一回合内智能体的KV缓存仍高度相似（图3显示91%-97%的块相似度）。现有系统为每个智能体存储一个完整、独立的缓存副本，导致大量内存浪费。
+4.  **调度器局限：** Agent-aware调度器（如Parrot、Autellix、Tokencake）优化请求执行时机和卸载，但未能改变KV缓存的计算和存储方式，每个智能体仍持有完整的缓存副本。
+
+**关键观察与假设：**
+1.  **观察1：All-Gather模式导致计算冗余。** 同一回合内的所有智能体共享绝大部分上下文，但现有PIC方法对每个请求重复进行重用分析，造成计算浪费。
+2.  **观察2：All-Gather模式导致存储冗余。** 重用后的KV缓存彼此之间高度相似，差异仅体现在私有历史和少数位置敏感的更新上，这表明它们是高度可压缩的。
+3.  **核心假设：** 多智能体应用中普遍存在的All-Gather模式蕴含着大量KV缓存重用和压缩的机会。
+4.  **核心原则：** 将优化单位从单个请求提升到“All-Gather回合”整体。回合内所有智能体共有的操作只需执行一次并共享，只针对智能体间的差异进行单独处理。
+
+**方法核心思路和主要步骤：**
+TokenDance 通过“回合级”优化来降低每个额外智能体带来的计算和内存成本，从而扩展并发智能体数量。主要包含三个核心组件（如图5所示）：
+1.  **Round-Aware Prompt Interface (回合感知提示接口)：**
+    *   **思路：** 在运行时显式保留提示的逻辑块结构。
+    *   **实现：** 应用在私有历史块和共享输出块之间插入特殊的分隔符标记（`<TTSEP>`）。
+    *   **作用：** 运行时通过“段式哈希”（segment-based hashing）而非固定大小块哈希，识别并索引每个逻辑段。这使得即使共享块在不同提示中绝对位置不同，系统也能将其映射到相同的缓存对象，从而识别可重用关系。
+
+2.  **Collective KV Cache Reuse (集体KV缓存重用)：**
+    *   **思路：** 将同一回合内兼容请求的KV缓存重用计算摊销到整个组。
+    *   **实现：**
+        *   **KV Collector：** 收集同一All-Gather回合中兼容（相同活跃提示长度、相同缓存可见范围、非重叠槽位映射）的请求，将其分组。
+        *   **分层集体重用：** 对于每个组，逐层（layerwise）进行处理。将组内所有请求的Q和K张量拼接成一个组合张量，执行一次批处理的RoPE（旋转位置编码）操作。
+        *   **共享重要位置选择：** 在配置的检查层（check layer），对整个组的旋转键与缓存键进行一次批处理的差异比较，同时识别所有请求的重要位置（即新鲜计算值与缓存值显著不同的token位置）。
+        *   **选择性刷新：** 仅刷新这些重要位置对应的K和V张量。后续层直接重用此重要位置集合，无需重复差异计算。
+        *   **主（Master）请求选择：** 重用路径记录组内请求，并选择一个“主”请求（Master），通常是与组内共享结构偏差最小的请求。此信息用于后续存储优化。
+    *   **优势：** 计算成本（特别是RoPE和键差异分析）从“N次/请求”降至“1次/回合组”，从而实现计算摊销，减少总重用工作量（如图7所示）。
+
+3.  **Diff-Aware Storage with Fused Diff Restore (差异感知存储与融合差异恢复)：**
+    *   **思路：** 利用重用后KV缓存的相似性进行压缩存储，并优化恢复路径。
+    *   **实现（存储）：**
+        *   **Master-Mirror布局：** 存储一个完整的“主”（Master）缓存副本，而将同一回合中其余智能体的缓存存储为“镜像”（Mirror），其中只包含相对于Master的稀疏差异。
+        *   **块稀疏差异表示：** 差异以“块稀疏K/V差异”的形式存储。差异集中在少数连续的token块中（通常对应私有历史或共享块边界）。仅记录受影响的块索引和这些块的K/V校正值。
+        *   **延迟物化：** 在读取时，存储层返回一个轻量级的镜像对象，而不是立即重建一个密集的镜像张量，从而延迟物化，节省内存。
+    *   **实现（恢复）：**
+        *   **融合差异恢复：** 在GPU连接器的分层（layerwise）乒乓式（ping-pong）传输路径中，将稀疏校正操作融合进去。当缓存数据从存储传输到GPU内存时（在RoPE恢复和paged-memory写入之前），就地应用这些块稀疏差异。
+        *   **块级调度：** 与Master完全相同的块直接进入注意力计算；仅携带差异的块在进入FlashAttention之前在SM内存中进行校正（如图9所示）。
+    *   **优势：** 每回合的KV缓存成本从N个完整缓存降至约$1 + (N-1)/R$个完整缓存（$R$为压缩比），显著降低内存占用。融合恢复路径避免了额外的数据拷贝和重建步骤，确保压缩收益在运行时得到保持。
+
+**实验设置：**
+*   **实现基础：** TokenDance 在 LMCache 和 vLLM 上实现，增加了约3K行Python代码和500行CUDA/C++代码。
+*   **硬件：** NVIDIA A100 80 GB GPU。
+*   **软件版本：** 基于vLLM。
+*   **模型：** Qwen2.5-7B 和 Qwen2.5-14B。
+*   **工作负载：** 重放来自 GenerativeAgents 和 AgentSociety 的轨迹。GenerativeAgents 私有历史短、智能体少；AgentSociety 私有历史长、智能体多。
+*   **对比基线：**
+    1.  vLLM（带前缀缓存）：标准请求级重用。
+    2.  CacheBlend Ordinary Path（不带每请求KV缓存恢复）：使用CPU端KV缓存池，无跨前缀重用。
+    3.  CacheBlend with Full Per-Request KV Cache Recovery：最广泛采用的开源PIC方法，进行选择性跨前缀重用，但无回合级共享。
+*   **评估指标：** 最大可维持的智能体数量（在固定延迟SLO，如1500ms下）、给定QPS下的最大支持智能体数量。
+
+**关键对比结果：**
+*   **系统级扩展性（Q1）：** 在所有配置下，TokenDance 始终保持最低回合延迟。在GenerativeAgents/Qwen2.5-14B上，vLLM在7.5个智能体时超出SLO，而TokenDance 仍能维持10个智能体在SLO之下。在QPS=16时，TokenDance 支持的智能体数量比CacheBlend多达2倍，比vLLM多达4倍。TokenDance的优势随着智能体数量和模型尺寸的增加而更显著。
+*   **计算收益（Q2）：** Collective KV Cache reuse 相对于串行（每请求）PIC恢复，在GenerativeAgents工作负载上实现了最高2.57倍的预填充（prefill）加速（10个智能体，QPS=1）。即使在QPS=16时，仍能提供1.3-1.5倍的加速。这证实了集体重用能有效摊销RoPE和重要位置选择的计算成本。
+*   **存储收益（Q3）：** Master-Mirror存储在GenerativeAgents回合中实现了显著的KV缓存压缩。Qwen2.5-7B模型达到11.2倍压缩比，Qwen2.5-14B模型达到17.5倍压缩比（图12）。这意味着Mirror缓存大小仅为完整缓存的约6%-9%。对于10个智能体，KV缓存成本从10个完整缓存降至约1.5-1.8个完整缓存。
+*   **恢复开销（Q4）：** 融合差异恢复（Fused diff retrieval）相对于密集重建（dense reconstruction）减少了1.3-2.6倍的恢复延迟（图13）。这表明存储压缩带来的收益在在线关键路径上得到保持，甚至加速了访问过程。
+*   **准确性影响（Q5）：** TokenDance 的设计确保其与底层PIC方法（本例中为CacheBlend）生成相同的KV缓存，因此不引入额外的模型输出失真。与vLLM（前缀缓存）相比，少数场景下的输出差异（3.3%-11.9%）归因于底层PIC方法的选择性重计算引入的数值扰动，而非TokenDance本身。
+
+**潜在局限或不足：**
+*   TokenDance的效益高度依赖于多智能体工作负载是否遵循All-Gather模式，以及共享上下文的比例。如果请求分歧严重（如每个智能体接收的共享输出子集大相径庭），则镜像校正会变大，存储收益会降低。
+*   集体KV缓存重用需要请求具备“兼容性”（相同活跃提示长度、相同缓存可见范围、非重叠槽位映射）。不满足条件的请求将回退到单独处理路径，可能无法获得全部收益。
+*   当前融合差异恢复在注意力机制之前进行，而非更深度的融合（如在HBM到共享内存加载注意力瓦片时）。未来的深度融合可能进一步提升性能。
+*   虽然实验展示了显著的延迟和内存优化，但TokenDance仍需处理随着智能体数量增多而增加的调度开销。在智能体数量超过10个时，调度开销开始部分抵消单请求摊销收益（图11）。
+   
 ## Think Less, Know More
 Think Less, Know More: State-Aware Reasoning Compression with Knowledge Guidance for Efficient Reasoning
 https://arxiv.org/abs/2604.03143 北理工 北邮等 2026.4.10
@@ -255,7 +344,7 @@ FM-Agent论文提出了首个用于大型系统自动组合推理的框架，它
 FM-Agent 采用一种**自顶向下的范式来自动生成函数级规约**，并**基于 LLM 泛化 Hoare 逻辑推理规则来对自然语言规约进行推理**，最后**自动生成测试用例以确认 Bug 并解释其原因**。
 1.  **规约生成器 (Specification Generator)：**
     *   **确定生成顺序：** 将系统分解为自包含的“阶段”（phases），每个阶段再通过浓缩图（condensed graph）的层级拓扑排序（layered topological sort）划分为不同的“层”（layers）。同一层中的函数可以并发处理，层与层之间按拓扑顺序处理。对于相互递归的函数（即在同一强连通分量 SCC 中），它们的规约将同时生成。
-![Uploading image.png…]()
+<img width="926" height="309" alt="image" src="https://github.com/user-attachments/assets/06dab6a0-9aed-409a-9385-d24cdee3c359" />
 
 
 2.  **代码推理器 (Code Reasoner)：**
