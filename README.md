@@ -1,7 +1,109 @@
 # Awesome or inspiring paper for AI
 
+## TIP
+TIP: Token Importance in On-Policy Distillation 
+
+https://arxiv.org/pdf/2604.14084 2026.4.15 普林斯顿
+
+https://github.com/HJSang/OPSD_OnPolicyDistillation
+
+1. 💡 在on-policy知识蒸馏（OPD）中，该研究提出了TIP（Token Importance in on-Policy distillation）双轴分类法，发现有信息量的token主要来自学生高熵（不确定）区域和**低熵高教师-学生分歧**（过度自信且错误）区域。
+2. 🔍 论文理论证明单独的熵指标无法识别**学生过度自信但错误的**Q3 token（盲点），并引入了**参数无关的Soft-OR得分**，该得分能有效结合学生熵和**教师-学生分歧**，从而捕获所有有价值的token。
+3. 🚀 TIP方法在Qwen3、Llama和Qwen2.5等dense模型家族的AIME数学推理及DeepPlanning agentic规划任务上得到验证，与全token训练相比，可显著**减少高达58%的峰值内存，并通常提升性能**，尤其Q3-only训练在某些情况下超越全量OPD。
+
+<img width="669" height="364" alt="image" src="https://github.com/user-attachments/assets/ae539c11-3f98-4a54-8934-99017bd7ae9c" />
+<img width="672" height="573" alt="image" src="https://github.com/user-attachments/assets/133deb36-41f4-461b-a98a-e036595e3b52" />
+<img width="672" height="657" alt="image" src="https://github.com/user-attachments/assets/fcf22d7d-59ef-49f9-b5b4-cb910a5d44c0" />
+<img width="687" height="477" alt="image" src="https://github.com/user-attachments/assets/4945405a-34bd-4d64-91f7-684eeb250344" />
+
+**场景与具体问题**
+知识蒸馏（Knowledge Distillation）旨在将大型教师模型（Teacher model）的能力转移到小型学生模型（Student model）。在On-Policy Distillation (OPD) 范式中，学生模型生成自己的rollouts，教师模型对每个token提供校正监督。在这种设置下，token的重要性成为学生-教师状态的一个特性，因此核心问题是：哪些token在OPD中承载了最有用的学习信号？
+
+**业界存在哪些不足**
+现有的token重要性观点不够完善。尽管人们认识到并非所有token位置都同等重要，但对于如何全面、准确地衡量和利用这种重要性，仍存在不足。例如，单纯基于学生模型不确定性（即熵）的token选择方法，可能会遗漏某些关键的、具有高纠正信号的token。此外，传统的OPD通常对所有token进行训练，这不仅效率低下，还可能导致内存占用过高。
+
+**关键观察与假设**
+论文的核心观察和假设是：在OPD中，信息量最大的token主要来源于两个区域：
+1.  **高学生熵（High Student Entropy）区域**：学生模型在此处表现出不确定性，其预测仍在形成中。这些token通常代表学生需要巩固知识或纠正错误的地方。
+2.  **低学生熵但高教师-学生分歧（Low Student Entropy but High Teacher-Student Divergence）区域**：学生模型在此处表现出高度自信但与教师模型存在明显分歧。这意味着学生模型过拟合于错误，需要强烈的纠正信号。论文将此区域命名为“Q3：Overconfident Errors”。
+论文进一步假设，学生熵是一个强大的“一阶代理”（first-order proxy），但它对“过自信且错误”的token（Q3）存在结构性盲点，而结合教师-学生分歧可以弥补这一不足。
+
+**方法核心思路和主要步骤**
+论文提出了TIP（Token Importance in On-Policy Distillation）框架，这是一个基于学生熵（$h_t$）和教师-学生分歧（$\delta_t$）的二维分类法。
+1.  **Token特征量化**：
+    *   **学生熵（Student entropy）**：$h_t = H(P_S(\cdot | c_t)) / \log|V| \in [0, 1]$，衡量学生模型在给定上下文$c_t$下的预测分布的不确定性。
+    *   **教师-学生分歧（Teacher-student divergence）**：$\delta_t = D_{KL}(P_S(\cdot | c_t) \| P_T(\cdot | c_t))$，即每个token位置的KL散度损失，衡量教师和学生预测分布之间的不一致性。
+    这两个量在标准OPD训练中已经计算。
+2.  **四象限分类**：根据$h_t$和$\delta_t$将token分为四个象限（Q1-Q4），每个象限代表不同的学习角色：
+    *   **Q1 (High entropy, high divergence)**：不确定且分歧大。代表需要纠正错误或巩固脆弱知识的密集信号区。
+    *   **Q2 (High entropy, low divergence)**：不确定但分歧小。代表需要稳定不足自信预测的信号区。
+    *   **Q3 (Low entropy, high divergence)**：自信但分歧大（Overconfident Errors）。代表需要打破系统性自信偏差的关键纠正信号区。
+    *   **Q4 (Low entropy, low divergence)**：自信且分歧小（Solved tokens）。代表已解决、信号可忽略的区域。
+3.  **理论分析**：
+    *   **Proposition 1 (Oracle token weight)**：从理论上证明，理想的token权重$w^*_t$与梯度对齐情况和梯度能量相关，定性排序为Q1 > Q2 > Q3 >> Q4。
+    *   **Proposition 2 (Blind spot)**：证明任何仅基于熵的非递减分数$f(h_t)$都会将Q3 token的权重设为0或接近0，因为Q3 token的熵值较低。
+4.  **Soft-OR分数**：为了克服熵的盲点，论文提出了参数无关的Soft-OR分数，结合了标准化后的学生熵$\hat{h}_t$和教师-学生分歧$\hat{\delta}_t$：
+    $s_t = \hat{h}_t + \hat{\delta}_t - \hat{h}_t \cdot \hat{\delta}_t = 1 - (1 - \hat{h}_t)(1 - \hat{\delta}_t)$
+    这个分数在任一轴活跃时都为非零，能够有效捕获Q3 token的重要性，同时保持对Q1和Q2的关注。
+5.  **类型感知token选择（Type-Aware Token Selection）**：给定一个保留比例$\rho$，通过Soft-OR分数$s_t$选择Top-$\rho$比例的token进行训练。训练损失为：
+    $L_{TIP} = \frac{1}{|T|} \sum_{t \in T} D_{KL}(P_S(\cdot | c_t) \| P_T(\cdot | c_t))$
+    其中$T$是选出的token集合。
+
+**实验设置**
+*   **实现基础**：扩展了开源OPD代码库`https://github.com/HJSang/OPSD_OnPolicyDistillation`。
+*   **硬件条件**：使用了NVIDIA H200 GPU。具体数量为：Qwen3和Llama模型训练使用8个H200 GPU，Qwen2.5模型训练使用4个H200 GPU。
+*   **模型对**：
+    *   数学推理：
+        *   Qwen3 Small: Qwen3-8B (GRPO) → Qwen3-4B
+        *   Llama: Llama-3.3-70B-Instruct → Llama-3.1-8B-Instruct
+        *   Qwen2.5: Qwen2.5-14B-Instruct-thinking → Qwen2.5-1.5B-Instruct (约9倍容量差距，推理型教师)
+    *   Agentic Planning：
+        *   Qwen3 Agentic: Qwen3-{14B, 32B} → Qwen3-1.7B (所有模型均启用thinking功能)
+*   **数据集**：
+    *   数学推理：训练数据来自DAPO，评估在MATH-500（500道题）和AIME 2024/2025（各30道题）。
+    *   Agentic Planning：训练数据来自DeepPlanning基准，评估在DeepPlanning的旅行规划任务上。
+*   **训练超参数**：
+    *   优化器：AdamW
+    *   学习率：Qwen3和Qwen2.5为$1 \times 10^{-6}$，Llama为$3 \times 10^{-7}$
+    *   Batch size (rollouts)：8
+    *   Rollouts per prompt：16
+    *   最大响应长度：8192
+    *   最大提示长度：2048
+    *   OPD chunk size：512
+    *   OPD最大长度：16384
+    *   Tensor parallel size：2
+    *   生成温度：1.0
+    *   Top-p：1.0
+    *   训练轮次：DeepPlanning为15个epoch。
+*   **对比基线**：
+    *   全token OPD (100%) 作为主要基线。
+    *   纯熵选择 (Entropy-only selection) 作为次要基线，用于验证熵的有效性和盲点。
+    *   Q3-only训练作为特定验证，用于量化Q3区域的信号强度。
+*   **评估指标**：数学推理任务使用mean@16（平均16个独立样本的准确率），DeepPlanning使用Avg@16（平均16个样本，基于满足个性化硬约束的分数）。
+
+**关键对比结果**
+1.  **熵选择的有效性**：
+    *   保留50%的token进行熵选择，在大多数基准测试中匹配或超过全token基线，同时峰值内存使用降低高达47%。例如，Qwen3 Small在MATH-500上从76.7提升到78.6，Llama从71.0提升到74.0。
+    *   在更积极的保留比例（例如20%）下，纯熵选择性能可能下降，证实了其盲点。
+2.  **Q3（过自信）token的重要性**：
+    *   仅训练Q3 token（低熵、高分歧），即使只使用所有token的不足10%，也几乎能达到全token基线的性能。例如，Qwen3在MATH-500上，仅使用约5.7K（<10%）过自信token训练，达到76.1，而全token基线为76.7。Qwen2.5在某些基准上Q3-only训练甚至超过基线。这表明Q3区域包含密集且高质量的纠正信号。
+3.  **Soft-OR（TIP）的综合优势**：
+    *   Soft-OR分数（结合熵和分歧）在数学推理任务上始终优于纯熵选择。例如，在Qwen3的MATH-500上，Entropy-only 50%为78.6，Soft-OR 50%为79.1；Entropy-only 20%为74.1，Soft-OR 20%为77.6。
+    *   通过Soft-OR选择的Top 50% token训练的模型，其性能显著优于Bottom 50% token训练的模型，验证了Soft-OR能够有效区分有益和无益的token。
+4.  **在Agentic Planning上的泛化性**：
+    *   在DeepPlanning基准上，Q3-only训练（20% token）超越了全token OPD，对于14B教师和32B教师均如此（例如，14B教师下从11.7提升到12.6 Avg@16）。这表明在规划类任务中，纠正过自信的错误尤为关键，因为单一错误承诺可能导致整个规划失败。
+    *   Soft-OR方法在DeepPlanning上与熵选择保持竞争力，进一步验证了其通用性。
+5.  **内存效益**：通过token选择，峰值内存显著降低。例如，Qwen3在全token训练时为72.0GB，而熵选择和Q3选择时可降至35.3-36.4GB（降低约47-51%）。
+
+**潜在局限或不足**
+1.  **Q3检测的依赖性**：Q3 token的检测需要教师模型的输出分布，尽管$D_{KL}$已是标准OPD损失的一部分。
+2.  **标准化敏感性**：Soft-OR分数中使用的min-max标准化是按批次进行的，这可能对批次中的异常token敏感，其他标准化方法（如运行平均标准化）有待研究。
+3.  **损失函数泛化性**：所有实验都使用Reverse KL散度进行监督，同样的象限排序和结论是否适用于Forward KL或JSD等其他损失函数仍是开放问题。
+4.  **教师熵的无信息性**：实验发现教师熵几乎为常数，对token选择和学习信号无鉴别力，这表明本文的框架主要依赖于学生的状态和学生-教师之间的分歧。
+   
 ## TokenDance
 TokenDance: Scaling Multi-Agent LLM Serving via Collective KV Cache Sharing 
+
 https://arxiv.org/abs/2604.03143 2026.4.3
 
 1. 🤖 TokenDance 针对多智能体LLM服务中，All-Gather通信模式导致的KV Cache冗余和低效复用问题，提出了一种通过集体共享KV Cache来提高并发代理数的方法。
