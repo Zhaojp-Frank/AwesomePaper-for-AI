@@ -1,5 +1,110 @@
 # Awesome or inspiring paper for AI
 
+## CSattention
+
+CSAttention: Centroid-Scoring Attention for Accelerating LLM Inference 
+https://arxiv.org/pdf/2604.08584 蚂蚁Oceanbase Rutgers Universit， 2026.3.20
+
+1. ⚙️ 针对长上下文LLM推理中注意力及KV缓存的瓶颈，现有稀疏注意力方法因Query与Key分布漂移，在高稀疏度下难以维持准确性。
+2. 🌟 本文观察到Query和Key分布存在显著差异以及注意力分数在不同子空间中分布不均，提出CSAttention，在离线预填充阶段构建Query中心的查找表，以“存储换计算”的方式优化在线解码。
+3. ✨ CSAttention通过子空间划分和Query中心聚类，预计算质心与Key的得分，实现在线解码时高效的查表和质心分数累积，在高稀疏度和128K上下文长度下，保持接近全注意力准确性的同时，实现了～4.6x的推理加速。
+选的都是GQA模型 dense模型，没有MoE 没有MLA；没说什么框架。A100
+
+CSAttention (Centroid-Scoring Attention) 是一种为加速LLM推理而设计的免训练稀疏注意力方法，特别优化用于可重用上下文的高吞吐量服务场景。
+
+**场景与具体问题**
+在诸如LLM代理和领域特定Q&A等场景中，LLM越来越多地依赖于扩展的、可重用的预填充提示（prefill prompts），这导致注意力和KV缓存成为解码阶段主要的性能瓶颈。虽然稀疏注意力能够减少计算和传输成本，但由于Query和Key之间固有的分布漂移（distribution shift），它在高稀疏度下往往难以保持准确性。具体而言，KV缓存的内存占用随上下文长度、模型维度和注意力头数线性增长，迅速饱和GPU HBM，导致数据在GPU和CPU内存之间频繁分页，带来巨大的带宽和延迟开销。例如，Llama-3.1-8B在1M token时需要大约102GB的KV内存，远超单GPU容量。
+
+**业界存在哪些不足**
+现有稀疏注意力方法在处理高稀疏度时面临根本挑战：
+1.  **准确性下降：** 许多方法难以在高稀疏度下维持模型性能，这是因为它们通常基于Key的聚类来构建索引，而这会受到Query-Key分布漂移的影响。即使是微小的召回率（recall）下降，也会在长生成过程中迅速导致质量退化。
+2.  **不稳定的召回：** 现有的Key-centric查找结构（Q -> K-centroid -> K）在Query和Key分布存在显著差异时（例如，Q和K由不同的投影生成，且随层/头/时间步变化），可能导致不稳定的召回率。
+3.  **硬件利用率低：** 一些方法可能涉及不规则的控制流和数据移动，导致硬件利用率低下，难以维持高推理速度。
+
+**关键观察与假设**
+CSAttention基于以下关键观察和假设：
+1.  **注意力矩阵的稀疏性：** 长上下文LLM中的注意力矩阵本质上是稀疏的，大多数权重接近零，只有少数Key承载显著的“质量”（mass）。这表明在可靠地保留真正高权重的Key的前提下，存在巨大的修剪（pruning）空间。
+2.  **Top-K召回率主导准确性：** 在极度修剪的情况下，模型准确性与Top-K召回率强相关。因此，一个实用的稀疏注意力设计应优先确保在长上下文解码过程中Top-K召回的稳定性。
+3.  **子空间的重要性偏差：** 在向量相似性搜索中，将d维原始空间划分为m个子空间，可以有效提升效率和准确性。不同子空间对最终的q·k相似度贡献不均，少数子空间主导排名信号，而其他贡献甚微。通过跨多个子空间聚合证据，真实的高分Key更有可能浮现。
+4.  **Query-centric搜索路径的稳定性：** 传统的Key-centric搜索路径（Q -> K-centroid -> K）易受Query-Key分布漂移影响。一个Query-centric的搜索路径（Q -> Q-centroid -> K）能够提供更大的稳定性，因为最近质心分配发生在与Query相同的空间中，显著降低了OOD（Out-Of-Distribution）风险。一旦选定Query-centric质心，搜索策略只咨询预计算的“质心→Key”偏分（partials），无需在线的Q→K质心跳跃，从而显著提升高稀疏度下的召回稳定性。
+
+**方法核心思路和主要步骤**
+CSAttention采用“以存储换计算”（storage-for-computation）策略，将计算前置到一次性的离线预填充阶段，并通过构建以Query为中心的查找表，在在线解码时用高效的表查找和GPU友好的分数累加取代全上下文扫描。它通过增强而非取代标准KV缓存来工作。
+
+**核心思路：**
+1.  **子空间划分：** 将$d$维特征空间划分为$m$个子空间，每个子空间维度为$d_b$，满足$\sum d_b = d$。
+2.  **Query-centric聚类：** 在预填充阶段，对每个子空间中的Query进行聚类，得到以Query为中心的质心。
+3.  **预计算“质心→Key”分数：** 对于每个质心，预计算其与该子空间中所有Key的偏分（partial dot-products），并存储Top-L的Key索引和分数，形成固定容量的查找表。
+4.  **在线稀疏累加：** 在解码阶段，对于新的Query，在每个子空间中选择其最近的Query质心，获取$m$个短列表，然后通过Key索引在GPU上累加偏分。高分Key会因为在多个子空间中累积了高分而“浮现”。
+
+**主要步骤：**
+
+**离线预填充阶段 (Offline Prefill):**
+1.  **子空间划分和Query聚类：**
+    *   将预填充Query $Q \in \mathbb{R}^{N_{pre} \times d}$ 中的每个Query $q$ 划分为 $\{q^{(b)}\}_{b=1}^m$。
+    *   对于每个子空间$b$，使用mini-batch k-means在GPU上运行，获得$C$个质心$\{c^{(b)}_j\}_{j=1}^C$。聚类目标是最小化：
+        $$\min_{\{c^{(b)}_j\}} \sum_{q \in Q} \min_{j \in [1..C]} \left\| \frac{q^{(b)}}{\|q^{(b)}\|_2} - c^{(b)}_j \right\|_2^2, \quad \text{s.t. } \|c^{(b)}_j\|_2 = 1$$
+    *   默认使用cosine k-means（向量归一化），种子点使用k-means++。
+2.  **每质心打分（Per-Centroid Scoring）并构建查找表：**
+    *   对于每个质心$(b, j)$，计算其与所有Key $k_i$ 在子空间$b$中的偏分：$s^{(b)}_j(i) = (c^{(b)}_j)^\top k^{(b)}_i, \quad i \in [1...N_{pre}]$。这通过批处理GEMM（General Matrix Multiplication）实现。
+    *   保留Top-L的(索引$i$, 分数$s^{(b)}_j(i)$)对，并序列化为$(I^{(b)}_j, V^{(b)}_j)$存储在目标设备上（GPU或CPU DRAM）。这些表的容量是固定的，并且可以在共享长预填充的请求之间重复使用。
+
+**在线解码阶段 (Online Decode):**
+1.  **每个子空间的最近Query质心：**
+    *   对于新的Query $q$，在每个子空间$b$中，找到最近的Query质心：
+        $$\hat{j}_b = \arg \max_{j \in [1..C]} \tilde{q}^{(b)}(c^{(b)}_j)^\top, \quad \tilde{q}^{(b)} = q^{(b)} / \|q^{(b)}\|_2$$
+    *   这通过批处理GEMV（General Matrix Vector multiplication）实现。
+2.  **收集$m$个短列表并合并：**
+    *   获取每个子空间$b$对应的$(I^{(b)}_{\hat{j}_b}, V^{(b)}_{\hat{j}_b})$列表，并将其连接起来，形成最多$mL$个(索引, 分数)对。
+3.  **按Key归约（Sparse Accumulation）：**
+    *   设$U$为连接后的索引集合，计算每个Key-ID $i \in U$的聚合分数：
+        $$\text{score}(i) = \sum_{b=1}^m w_b \cdot V^{(b)}_{\hat{j}_b}[i], \quad i \in U$$
+    *   通常使用均匀子空间权重（$w_b=1$）。此步骤无分支（branchless），通过warp-synchronous reductions实现，实现了质心打分，避免了在线Q→K代码移动。
+4.  **合并最近窗口并选择Top-K：**
+    *   将最近的R个token窗口（$\{N-R+1, \dots, N\}$）与聚合分数中的Key进行合并，然后在设备上选择Top-K Key。只有这些K个Key用于注意力计算，其他被忽略。
+5.  **流式更新（Streaming Updates）：**
+    *   在注意力计算后，当新的Key $k_S$ 追加时，计算其与每个子空间$b$和质心$j$的偏分$score_{b,j} = (c^{(b)}_j)^\top k^{(b)}_S$，并尝试将其插入到固定容量的Top-L列表$(I^{(b)}_j, V^{(b)}_j)$中（必要时淘汰最低分）。在CPU↔GPU模式下，此维护操作在CPU上异步执行。
+
+**执行模式和内存/成本考量：**
+*   **CPU↔GPU模式：** 查找表和KV缓存驻留在CPU DRAM，解码通过显式重叠的CPU-GPU流水线进行。CPU执行边界搜索，只传输选定的Top-K KV条目到GPU进行注意力计算。CPU异步执行流式更新。这种模式下，GPU注意力计算与CPU搜索和更新操作重叠，PCIe传输预算确定且较小。
+*   **All-GPU模式：** 查找表和KV缓存都驻留在GPU HBM。这种模式最大化吞吐量并避免PCIe传输。
+
+**复杂性分析：**
+*   **预填充（Prefill）阶段：** 主要成本在于子空间k-means聚类和质心-Key打分，复杂度为$O(I N_{pre} C d)$，其中$I$是k-means迭代次数。这是一次性成本，可分摊到多次解码请求。
+*   **解码（Decode）阶段：**
+    *   每步Query的最近质心查找：$O(Cd)$。
+    *   合并/归约操作：$O(m \alpha N_{pre})$。
+    *   稀疏注意力计算：$O(\rho N d)$。
+    *   总时间复杂度：$T_{\text{all-GPU}}(N) = O(Cd) + O(m \alpha N_{pre}) + O(\rho N d)$。
+    *   其中，$O(Cd)$和$O(m \alpha N_{pre})$是**固定搜索成本**，不随上下文长度$N$增长。$O(\rho N d)$是**稀疏注意力成本**，随$N$线性增长。相比传统稠密注意力的$O(N d)$，CSAttention用较小的$\rho$（例如0.05）降低了线性项的系数。
+    *   查找表内存占用$O(mC\alpha N_{pre})$，在解码过程中固定。KV缓存占用$O(Nd)$，随$N$线性增长。因此，CSAttention的相对内存开销随着$N$的增长而趋近于零。
+
+**实验设置**
+*   **模型：** Llama3.1-8B, Qwen3-8B, Mistral-7B (Instruct v0.3)。在长期解码实验中还使用了Llama-70B和Qwen3-32B。
+*   **对比基线：** MagicPig (LSH sampling), SparQ Attention (bandwidth-aware fetching), H2O (heavy-hitter retention), PQCache (PQ-based KV retrieval)。所有方法均针对约5%的Token保留率（95%稀疏度）。
+*   **硬件：** 单节点服务器，配备双插槽AMD EPYC 7513 CPU（1.0 TiB系统内存），64 CPU核心用于推理。GPU方面，报告了1x NVIDIA A100（单GPU）和4x NVIDIA A100（多GPU吞吐量）两种配置。所有方法在相同的软件栈和运行时配置下执行。
+*   **数据集：** LongBench 和 LongBench v2。LongBench涵盖14个数据集，平均上下文长度约6.7k英文单词和13.4k中文字符。LongBench v2扩展了任务集和上下文范围，达到超长上下文（〜8k至超长）。
+*   **CSAttention参数：** 默认使用$m=8$子空间，$C \in \{64, 128, 200\}$每个子空间的Query质心，均匀子空间权重$w_b=1$，每步保留约5%的token（最终Top-K）。$L$的选择使得$mL$能在设备上维持边界，子空间k-means使用10次迭代。评估了All-GPU和CPU↔GPU两种执行模式。
+*   **长期解码CoT设置：** 在LongBench-v2上，每个Prompt添加简单的CoT指令，允许最多2048个生成token。系统Prompt离线预取和索引。
+
+**关键对比结果**
+1.  **准确性：**
+    *   **Near-lossless accuracy at 95% sparsity：** 在LongBench上，CSAttention在三个模型（Llama-3.1-8B, Qwen3-8B, Mistral-7B）上与全注意力（Full Attention）保持几乎相同的准确性（损失在0.7%以内）。在Mistral-7B上，CSAttention甚至与Full Attention的宏观平均值完全匹配。
+    *   **LongBench v2：** CSAttention在Llama-3.1-8B上总体得分31.2，略高于Full Attention的31.0，并超过所有稀疏基线。在Hard和Long任务上表现尤为出色，将Hard性能从28.3（Full）提升到29.3，Long性能从30.6（Full）提升到32.4。
+    *   **长期解码CoT鲁棒性：** 在LongBench-v2的CoT解码中（最大生成2048个token），CSAttention在Llama-70B和Qwen3-32B上对各种难度和长度的任务都保持了接近基线的准确性，验证了Query-centric聚类对分布漂移的稳定性。
+
+2.  **推理速度（吞吐量）：**
+    *   **CPU↔GPU模式：** CSAttention在CPU↔GPU模式下实现了最先进的解码吞吐量，且优势随上下文长度增长。在128K上下文长度下，CSAttention比最准确的基线（PQCache）实现了8.26倍的推理加速，比H2O实现了1.33倍加速，比SparQ实现了17.9倍加速，比MagicPig实现了7.85倍加速。
+    *   **All-GPU模式：** CSAttention始终优于Full Attention。在128K上下文长度下，CSAttention相比Full Attention实现了4.24倍的推理加速。
+    *   **步级开销和可预测性：** CSAttention的步级开销统计数据显示出有界的变异性，预测性强。每步的开销（搜索+追加）尾部很紧（P90 $\approx$ 0.92-0.97，P99 $\approx$ 1.01），证明其解码时间行为可预测。
+
+**潜在局限或不足**
+1.  **预填充开销：** CSAttention引入了显著的离线预填充成本，用于构建Query-centric查找表。虽然这部分成本可以被摊销，但对于每次请求都使用全新且唯一的上下文的场景，这种预填充的开销可能不划算。
+2.  **参数调优：** 尽管论文提供了默认参数和调优指南，但CSAttention涉及多个超参数（子空间数量$m$、质心数量$C$、Top-L比例$\alpha$、保留率$\rho$等），可能需要针对不同的模型、任务和上下文长度进行细致的调优以达到最佳性能。
+3.  **HBM容量：** 尽管CSAttention通过固定容量的查找表和稀疏注意力减少了GPU HBM的压力，但在All-GPU模式下，如果上下文长度非常大，KV缓存本身仍会占用大量HBM。CPU↔GPU模式虽然缓解了HBM压力，但引入了CPU-GPU数据传输，这在某些情况下可能成为瓶颈。
+4.  **Query分布假设：** CSAttention的有效性在一定程度上依赖于预填充阶段捕获的Query分布能够代表后续解码过程中可能出现的Query分布。尽管论文通过CoT实验验证了其对生成期间Query分布漂移的鲁棒性，但在极端或未预期的Query分布变化下，性能可能下降。
+5.  **工程实现复杂性：** CSAttention引入了新的数据结构（子空间查找表）和复杂的处理流程（子空间聚类、质心打分、稀疏累加、流式更新等），相对于简单的稀疏注意力方法，其工程实现和集成到现有LLM服务系统中的复杂性更高。
+
 ## FM-Agent
 FM-Agent: Scaling Formal Methods to Large Systems via LLM-Based Hoare-Style Reasoning
 
