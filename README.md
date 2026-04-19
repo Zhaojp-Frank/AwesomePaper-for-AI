@@ -1,5 +1,15 @@
 # Awesome or inspiring paper for AI
 
+
+## From Growing to Looping
+From Growing to Looping: A Unified View of Iterative Computation in LLMs
+
+https://arxiv.org/pdf/2602.16490 2026.2.18
+
+1.  📄 本文统一了大型语言模型（LLMs）中通过循环（looping）和深度增长（depth growing）增强推理能力的两种训练范式，发现它们在内部计算上表现出收敛的深度特征，暗示其益处源于共同的迭代计算形式。
+2.  📈 研究观察到，这两种方法训练的模型都更依赖后期层，并展现出与循环或增长块对齐的周期性计算模式，且在上下文学习和监督微调方面比基线模型表现出更好的适应性。
+3.  💡 关键发现是，在推理时对深度增长模型的中部块进行循环（“**先增长后循环**”）可将其在某些推理原语上的准确性提升高达2倍，且与高质量数学混合数据结合时能实现最强的推理性能。
+   
 ## Event Tensor
 Event Tensor: A Unified Abstraction For Compiling Dynamic Megakernel
 
@@ -127,7 +137,102 @@ ETC 将 Event Tensor 抽象应用于系统化的编译流程：
 3.  **Event Tensor 的自动生成**: 论文提到未来工作将研究更高级的 pass，以从标准计算图中自动生成 Event Tensor task graphs，这意味着目前 Event Tensor 的定义和任务划分可能仍需要一定程度的手动干预或 DSL 支持。
 4.  **评估范围**: 尽管评估了多种动态性，但所有评估都在单节点 8xGPU 环境下进行，大规模多节点分布式训练/推理场景的性能和调度器扩展性有待进一步验证。
 5.  **AOT 编译时间**: 虽然 AOT 编译消除了运行时 JIT 开销，但自身的编译时间（Qwen3-32B 为 107 秒）相对较长，对于快速迭代开发可能仍需考虑。
-   
+
+## SPEED-Bench
+SPEED-Bench: A Unified and Diverse Benchmark for Speculative Decoding
+
+https://arxiv.org/pdf/2604.09557 2026.2.10 NVIDIA
+
+https://huggingface.co/datasets/nvidia/SPEED-Bench
+
+1. 🚀 SPEED-Bench 旨在解决投机解码 (Speculative Decoding, SD) 评估中数据依赖性、吞吐量评估不足及生产环境表示不佳的问题，提出了一个包含语义多样化定性数据集和真实负载吞吐量数据集的统一基准。
+2. 💡 新观察发现，合成输入会虚报真实吞吐量（平均高估 23%），最佳草稿长度（draft length）与批次大小 (batch size) 相关，且现有基准数据多样性不足导致对 SD 性能（如词汇表修剪的影响）的评估存在偏差。
+3. 🛠️ SPEED-Bench 通过定制化的数据选择算法实现语义多样性，并通过集成 vLLM 和 TensorRT-LLM 等生产引擎，能够量化分析这些传统基准难以揭示的系统行为，证明了其在实际场景中评估 SD 算法的优越性。
+- MTP通常强于EAGLE3
+
+<img width="737" height="416" alt="image" src="https://github.com/user-attachments/assets/2485c044-1279-4e75-8983-5251c29c66fb" />
+
+**场景与具体问题**
+LLM推理的核心瓶颈在于自回归解码，尤其在低并发场景下，内存带宽成为限制因素。SD通过并行验证多个token来解决此问题，显著提高吞吐量。然而，SD的性能对数据高度依赖，其效率受文本领域和熵的影响。业界对SD的评估存在显著不足，导致难以准确衡量其真实世界的有效性。
+
+**业界存在不足**
+1.  **有限的数据多样性与代表性：** 现有基准测试（如MT-Bench、SpecBench）数据集规模小、任务多样性不足，且缺乏类别内多样性，未能捕获真实世界数据分布的复杂性。例如，SpecBench的许多类别只有10个样本，且其多语言子集仅限于德语-英语翻译。
+2.  **吞吐量导向评估不足：** 研究通常侧重于Batch Size (BS) = 1的延迟测量，忽略了多用户服务场景中常见的更大批次（高并发）情况，以及推理过程从内存受限向计算受限的转变。
+3.  **脱离生产环境的实现：** 大多数评估使用高层库（如HuggingFace），未能反映vLLM、TensorRT-LLM等生产级推理引擎中的额外优化。
+4.  **长上下文场景研究不足：** 现有基准测试主要关注短输入序列长度 (ISL)，未能充分研究长上下文（如16k-32k token）下SD的性能。
+5.  **合成输入数据的局限性：** 广泛使用的随机token合成输入会严重扭曲SD性能测量，因为它无法模拟真实文本的预测性，导致夸大接受率（ARs）和吞吐量，且无法触发MoE模型中真实的专家路由，造成不准确的step latency测量。
+
+**关键观察与假设**
+*   SD性能与数据领域和熵密切相关。
+*   SD的加速比在不同批次大小下表现不同，长DL在内存受限（小批次）时表现更好，但在计算受限（大批次）时可能导致减速。
+*   原生集成Multi-Token Prediction (MTP) 头（如Qwen3-Next）比后训练的SD方法（如EAGLE3）表现出更强的鲁棒性。
+*   草稿模型（drafter）的词汇表剪枝虽然减少计算量，但可能显著降低在“长尾”数据（如多语言）上的准确性，影响泛化能力。
+*   草稿模型的训练ISL和RoPE scaling配置对长上下文推理中的AL稳定性至关重要。
+
+**方法核心思路和主要步骤**
+SPEED-Bench旨在通过提供一个统一且多样化的基准测试套件来解决上述问题。它由三个核心组成部分构成：
+
+1.  **Qualitative Split (定性分割)：**
+    *   **目标：** 最大化语义覆盖，同时最小化评估成本，用于精确测量SD的猜测质量（AL和AR）。
+    *   **数据来源与构成：** 整合来自18个公开数据集的样本，分为11个精选类别（如Coding、Math、Multilingual），每个类别80个样本，共计880个样本。包含子类别分类、多轮交互（2-5轮）和难度字段，生成平均约650个token的输出。
+    *   **选择算法：** 采用基于启发式的**贪婪选择算法与局部交换优化 (Greedy Selection Algorithm with Local Swap Refinement)**。
+        *   将候选样本 $t_i$ 映射为稠密向量 $x_i \in \mathbb{R}^d$ (使用OpenAI的`text-embedding-3-large`模型)，并进行行归一化。
+        *   目标是选择一个大小为 $k$ 的子集 $S \subset \{1...N\}$，使得总成对相似度 $L(S) = \sum_{i \in S} \sum_{j \in S, j \ne i} x_i^\top x_j$ 最小化。
+        *   算法步骤：初始化 $S$ 包含一个随机索引，然后迭代地添加 $i^* = \operatorname{argmin}_{j \notin S} \sum_{k \in S} x_k^\top x_j$。为避免局部最优，进行局部交换优化，如果将 $i_{out} \in S$ 替换为 $i_{in} \notin S$ 能严格降低 $L(S)$，则执行交换，直到收敛。
+        *   此算法显著降低了平均语义相似度（比SpecBench低40%，多语言类别低83%），确保了样本多样性。
+
+2.  **Throughput Split (吞吐量分割)：**
+    *   **目标：** 评估系统级效率，尤其是在高并发和长ISL下的SD性能。
+    *   **数据来源与构成：** 聚合来自8个公开数据集的样本，构建固定ISL桶（1k, 2k, 8k, 16k, 32k）。通过截断或使用中性后缀“please answer now”进行填充，确保ISL精确且语义完整。
+    *   **类别：** 样本分为三类：Low Entropy（如编码、排序）、Mixed Entropy（如STEM）、High Entropy（如创意写作），每个ISL桶每类别包含512个样本（每桶总计1536个样本），用于构建稳定的吞吐量-延迟Pareto曲线。
+    *   **优势：** 使用真实数据而非随机token，避免了合成基准测试的缺陷，能准确测量 $\text{tar}$ 和 $\text{tsd}$，从而估算特定领域的加速比：$\text{Speedup} = \frac{\text{tar} \cdot \text{AL}}{\text{tsd}}$。
+
+3.  **Measurement Framework (测量框架)：**
+    *   **目标：** 提供统一的评估管道，隔离SD算法的影响与系统实现。
+    *   **核心功能：** 作为轻量级客户端，在外部处理所有tokenization和提示符格式化，传输预token化的输入，确保所有引擎（草稿模型和目标模型）处理相同的token序列。
+    *   **并发：** 利用Python的`asyncio`驱动异步事件循环，模拟高吞吐量服务场景。
+    *   **指标：** 捕获细粒度性能数据，包括ARs (通过响应块中新增token数量计算)、AL、Time To First Token (TTFT)、step latency、总请求延迟、User TPS和Output TPS。
+    *   **集成：** 原生集成SGLang、vLLM、TensorRT-LLM等生产级引擎，以及SpecBench等研究导向库。
+
+**实验设置**
+*   **实现基础：** 评估的SD方法包括N-Grams、Vanilla SD (外部草稿模型)、EAGLE3和原生MTP头。
+*   **目标模型：** Llama 3.3 70B, GPT-OSS 120B, Qwen3 235B, Qwen3-Next, DeepSeek R1。
+    *   GPT-OSS 120B使用Tensor Parallel (TP)=1, Expert Parallel (EP)=1；Qwen3-Next使用TP=8, EP=8；DeepSeek R1使用TP=8, EP=4。
+*   **草稿模型：** Vanilla SD使用Llama 3.2 1B (配Llama 3.3 70B) 和Qwen3 0.6B (配Qwen3 235B)。EAGLE3使用预训练的开源检查点或自定义训练的检查点。MTP用于原生支持的模型。
+*   **硬件：** 所有实验均使用单张NVIDIA B200 GPU，DeepSeek和Qwen模型推理以及GPT-OSS EAGLE3训练使用八张B200 GPU。
+*   **推理引擎：** TensorRT-LLM (v1.2.0rc1/rc7)、SGLang (v0.5.7)、vLLM (v0.13.0)。
+*   **解码策略：** 除非另有说明，所有结果均使用贪婪解码 (Temperature=0)。
+*   **EAGLE3训练：** 为8.2和8.5节实验训练了GPT-OSS 120B的EAGLE3模型，使用NVIDIA的Model-Optimizer框架和Nemotron Post-Training Dataset V2。采样50万训练样本，多语言样本权重降低10倍。训练3个epochs，AdamW优化器，余弦学习率调度。训练序列长度可变，RoPE scaling根据实验需求配置。
+
+**关键对比结果**
+1.  **SD准确性与加速比 (Table 1, Figure 3)：**
+    *   领域熵与性能相关：Coding和Math等低熵领域产生更高的AL。
+    *   N-Gram在BS=32时出现净减速，因AR不足以抵消验证成本。
+    *   Vanilla SD尽管AL与EAGLE3相当，但由于外部模型开销，加速比有时低于EAGLE3。
+    *   原生MTP（Qwen3-Next）在不同DL下均保持更高的AL，表明预训练的优势。
+    *   外部草稿模型（Vanilla SD）在较长猜测DL下比EAGLE3保持更好的准确性。
+2.  **词汇表剪枝效应 (Figure 4, Appendix J)：**
+    *   EAGLE3的词汇表剪枝（通常32k tokens）在多语言等“长尾”领域导致显著性能下降。多语言类别约22%的目标token在剪枝词汇表中缺失。
+    *   虽然在Math和Coding领域性能下降可忽略，但在Multilingual、RAG和Summarization类别中观察到显著的准确性下降。强调了广覆盖评估的重要性。
+3.  **与SpecBench的比较 (Figure 5, Appendix K)：**
+    *   SpecBench由于样本量和语义范围限制，可能导致误导性结论。例如，在SpecBench中，EAGLE3与Vanilla SD在Coding和Reasoning上表现相似，但SPEED-Bench通过更大、更多样化的数据集揭示了外部草稿模型在长DL下的优势。
+    *   SPEED-Bench在多语言类别中表现出更大的优势，因其包含更广泛的语言和任务，而SpecBench仅限于德语-英语翻译。
+4.  **延迟与吞吐量测量 (Figure 6, Figure 7, Appendix L)：**
+    *   **随机数据 vs. SPEED-Bench (Figure 6)：** 启用SD时，合成基准测试平均高估吞吐量23%。在无SD基线测试中也观察到性能差距，MoE模型中随机输入未能触发真实的专家路由，导致专家不平衡和不准确的step latency。
+    *   **最优DL选择 (Figure 7)：** 最优DL随并发情况变化。在内存受限的低批次下，DL越长越好；在高批次接近计算受限时，DL=1可能更优。SPEED-Bench有助于识别这些交叉点。
+    *   **推理框架影响 (Appendix L)：** TensorRT-LLM通过统一的CUDA图在整个草稿-验证循环中实现更高的峰值吞吐量，而vLLM的多引擎设计引入了轻微的主机通信开销。
+5.  **训练数据ISL效应 (Figure 8, Appendix M)：**
+    *   草稿模型在推理ISL超过训练ISL时，准确性会快速下降。
+    *   经验证，简单应用YaRN scaling (Peng et al., 2024) 在推理时能显著恢复草稿准确性，即使对于在相对短序列上训练的模型（≥ 2k）。
+    *   某些公开的EAGLE3模型存在长上下文不准确问题，可能归因于RoPE scaling配置不正确或训练ISL不足。
+
+**潜在局限或不足**
+*   **Python GIL限制：** 在极高吞吐量（BS > 256）下，Python全局解释器锁 (GIL) 可能引入客户端开销，限制了对这些场景的精确评估。未来将通过更高级的并行化来解决。
+*   **草稿链限制：** 实验主要集中于草稿链，尽管SPEED-Bench支持基于树的验证，但目前生产引擎中BS > 1的加速仍以草稿链为标准。
+*   **MoE专家路由的复杂性：** 尽管SPEED-Bench使用真实数据避免了随机token导致的专家不平衡问题，但MoE模型在不同真实语义负载下的复杂专家路由行为仍可能对step latency测量产生微妙影响。
+*   **训练数据分布偏差：** 例如，GPT-OSS 120B的EAGLE3草稿模型在低熵类别上性能随ISL增加而下降，可能归因于训练数据中编码内容的稀缺。
+
+总而言之，SPEED-Bench提供了一个统一的评估生态系统，用于SD研究和生产级部署。通过其多样化的Qualitative Split和专注于大批次/固定ISL的Throughput Split，该框架使从业者能够量化其方法在不同文本领域中的鲁棒性，识别批次大小和ISL依赖的最优DL，并在不同服务设置下测量加速比。实验结果强调了SD性能对数据和特定服务机制的深度依赖性。
 
 ## DDTree
 Accelerating Speculative Decoding with Block Diffusion Draft Trees
