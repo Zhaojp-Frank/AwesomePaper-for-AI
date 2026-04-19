@@ -1,5 +1,75 @@
 # Awesome or inspiring paper for AI
 
+## AsyncTLS
+AsyncTLS: Efficient Generative LLM Inference with Asynchronous Two-level Sparse Attention
+
+https://arxiv.org/pdf/2604.07815 人大 美团 2026.4.9
+
+1. ⚙️ 针对大型语言模型在长上下文推理中面临的二次注意力计算复杂度和高昂KV缓存内存消耗问题，AsyncTLS提出了一种分层两级稀疏注意力机制，通过粗粒度块过滤与细粒度令牌选择相结合，以平衡准确性和效率。
+2. ⚡️ 该方法利用新的观察，即块级过滤结果可预测后续令牌级选择，并利用时间局部性，设计了一个异步卸载引擎，通过交错执行和增量块传输，将KV缓存传输与计算重叠，从而有效隐藏内存移动延迟并最小化PCIe带宽消耗。
+3. Qwen3和GLM-4.7-Flash模型上进行评估，实现了与全注意力相当的准确性，同时在48k–96k上下文中，操作符速度提升1.2倍-10.0倍，端到端吞吐量提升1.3倍-4.7倍。
+   
+<img width="767" height="525" alt="image" src="https://github.com/user-attachments/assets/5776907e-9e0b-4b4d-87e1-ede6f88e1a1a" />
+<img width="781" height="378" alt="image" src="https://github.com/user-attachments/assets/2c74d2e2-0ec3-4503-8dcd-a621d88076ea" />
+<img width="753" height="568" alt="image" src="https://github.com/user-attachments/assets/1753b3d0-f1cc-42b7-8d9f-7948381717da" />
+<img width="825" height="584" alt="image" src="https://github.com/user-attachments/assets/138aafee-6471-4f35-ad84-42d78bb39891" />
+![Uploading image.png…]()
+
+**场景与具体问题：**
+在LLM的推理（尤其是解码）阶段，自注意力机制的计算成本与序列长度呈二次方关系，而KV cache的存储需求则与序列长度呈线性关系。当序列长度达到数万甚至数十万token时，KV cache会迅速耗尽高带宽GPU内存，导致需要将数据昂贵地卸载到较慢的内存层（如CPU内存），从而严重制约了部署效率。
+
+**业界存在不足：**
+现有稀疏注意力机制通常在粒度（token级或block级）和选择策略（静态或动态）上有所侧重，但都存在局限。
+1.  **Token级稀疏注意力（如H2O、StreamingLLM、SnapKV、Double-Sparsity、DSA）**：虽然能实现更高的准确性，因为它们能精确保留语义上重要的个体token，但其索引开销巨大，每个查询token都需要计算所有候选token的重要性得分并选择Top-K元素，这在每个解码步骤都会成为性能瓶颈，难以适应动态变化的注意力模式。
+2.  **Block级稀疏注意力（如Quest、InfLLM）**：通过对连续token块进行操作，降低了索引开销并提高了硬件效率。但其粗粒度特性不可避免地牺牲了注意力精度，可能在选择的块中包含不相关token，同时丢弃未选择区域中的关键信息，引入检索噪声并降低模型保真度。
+3.  **KV cache卸载（如FlexGen、InfiniGen、ShadowKV、RetroInfer）**：这些方法主要关注块级稀疏模式，将整个KV cache块在GPU和CPU内存之间传输。然而，它们未能针对token级稀疏注意力进行优化，尤其是在细粒度数据移动和利用时间局部性方面存在不足。
+
+**关键观察与假设：**
+本研究的核心观察和假设是：
+1.  通过结合粗粒度的block过滤和细粒度的token选择，可以平衡token级稀疏注意力的精度优势和block级稀疏注意力的效率优势，从而解决精度与效率之间的根本矛盾。
+2.  块级选择在连续解码步骤中表现出较高的时间局部性（$M_{t-1} \approx M_t$），这意味着前一步的块过滤结果可以作为下一步token级选择的可靠预测器。利用这一特性，可以通过异步预取和增量传输来有效隐藏KV cache传输延迟。
+
+**方法核心思路和主要步骤：**
+AsyncTLS提出了一种分层两级稀疏注意力系统，并结合了异步卸载引擎。
+1.  **两级稀疏注意力（Two-Level Sparse Attention）**：
+    *   **粗粒度块选择（Coarse-grained Block Selection）**：将KV cache划分为大小为$B$的块。针对Quest方法中块重要性得分计算不适配GEMM操作的问题，AsyncTLS将其重构为标准的矩阵乘法形式：$s = \sum_{h=1}^G (\mathbf{Q}_{\text{max}}^T \mathbf{K}_{\text{max}} + \mathbf{Q}_{\text{min}}^T \mathbf{K}_{\text{min}})_h$，从而充分利用现代加速器的计算能力。每一步选择得分最高的$K_b$个块，形成一个包含$K_b \cdot B$个token的粗候选集。
+    *   **细粒度Token选择（Fine-grained Token Selection）**：在粗选出的块内，应用类似Double Sparsity的方法进行token级选择。首先，通过在校准数据集上聚合查询和键的通道重要性分数，选择最重要的$d_c$个通道构成代表性通道集$C$。然后，将查询和键向量投影到这些选定的通道上，并对键向量进行量化压缩（INT4），得到$\tilde{q}^{(h)}$和$\tilde{k}_j$。注意力分数近似计算为$\tilde{\alpha}_j = \frac{1}{G} \sum_{h=1}^G \text{softmax}(\tilde{q}^{(h)} \tilde{k}_j^T / \sqrt{d})$。最终，根据这些近似分数选择Top-$K_t$个token作为最终稀疏注意力计算的索引集合$S_t$。
+2.  **异步卸载引擎（Asynchronous Offloading Engine）**：
+    *   **带时间重叠的预取（Prefetching with Temporal Overlap）**：AsyncTLS利用时间局部性，在时间步$t$计算注意力时，使用前一步的粗选结果$M_{t-1}$进行细粒度token选择$S_t$。同时，AsyncTLS并行计算当前步的块选择$M_t$（用于下一步），并异步预取$M_t$中不在GPU本地内存的块。这种流水线操作在粗选择和细粒度计算之间创建了一个一步滞后，从而实现KV传输与注意力计算的重叠。
+    *   **增量块传输（Incremental Block Transmission）**：为了最小化PCIe带宽消耗，AsyncTLS维护一个GPU上的驻留缓存$C_t$，并且只传输$M_t$与$C_t$之间的差异，即$T_t = M_t \setminus C_t$。这种策略利用注意力模式的时间局部性（$|T_t| \ll K_b$），将每步的带宽需求从$O(K_b \cdot B \cdot d)$显著降低到$O(|T_t| \cdot B \cdot d)$。
+
+**复杂度分析：**
+每个解码步骤的计算复杂度为：粗粒度块得分$O(\frac{n}{B} d)$，细粒度token级Top-K选择$O(K_b B |C|)$，稀疏注意力计算$O(K_t d)$。与全注意力（$O(nd)$）和token级稀疏注意力（$O(n|C| + K_t d)$）相比，在长上下文场景下显著降低。KV cache传输开销为$O(|\Delta_t|Bd)$，其中$|\Delta_t|$是连续步骤间选择状态变化的块数，远低于基线方法的$O(K_b Bd)$。
+
+**实验设置：**
+*   **实现依据**：使用TileLang实现四种注意力变体：AsyncTLS（两级稀疏）、DS（token级稀疏）、Quest（块级稀疏）和Full Attention（全注意力）。
+*   **模型**：Qwen3-8B、Qwen3-14B、GLM-4.7-Flash。
+*   **注意力架构**：评估GQA和MLA架构，并证明对MHA的兼容性。
+*   **负载情况**：
+    *   **上下文长度**：核函数层面测试32K-128K，端到端测试32K-96K。
+    *   **批处理大小**：核函数层面测试1-8，端到端测试时，全注意力受限于1，AsyncTLS可支持至6。
+    *   **稀疏注意力配置**：块大小设置为64，每查询检索128个块（等同于8192 token）。token级索引维度GQA模型为32，MLA架构为128，并对键向量进行INT4量化。token预算设定为512、1024和2048 token。
+*   **任务**：
+    *   **上下文内检索（In-Context Retrieval）**：使用RULER基准测试的子集。
+    *   **长上下文理解（Long Context Understanding）**：使用LongBench的14个任务。
+*   **对比基线**：Full Attention (FA)、Quest（块级稀疏注意力）、Double-Sparsity (DS)（token级稀疏注意力）。
+
+**关键对比结果：**
+*   **准确性**：AsyncTLS在相同token预算下，性能始终优于块级稀疏注意力方法（如Quest），并与Full Attention基线的表现相当。在RULER和LongBench测试中，AsyncTLS的准确率非常接近甚至有时略高于Full Attention。相比DS，AsyncTLS在LongBench上表现相当，在RULER上略有波动，但总体保持高水准。
+*   **算子层面效率**：
+    *   **GQA模型**：相比FA提速1.7×-6.2×，相比DS提速1.2×-4.0×。
+    *   **MLA模型**：相比FA提速3.3×-10.0×，相比DS提速1.9×-4.0×。
+    *   **相比Quest**：AsyncTLS仍能达到Quest推理速度的54%（GQA）和68%（MLA）。
+*   **端到端效率**：
+    *   **延迟**：AsyncTLS相比FA在Qwen3-8B上提速2.3×，在GLM4.7-Flash上提速2.7×。其推理速度接近Quest，并优于DS。
+    *   **吞吐量（启用KV cache卸载）**：在96K序列长度下，AsyncTLS在Qwen3-8B上实现比FA高1.84×的吞吐量，在GLM4.7-Flash上高4.70×。由于KV cache占用减少，AsyncTLS能够支持更大的批处理量（batch size 6），而FA受限于batch size 1。
+
+**潜在局限或不足：**
+1.  **一步滞后**：为了实现异步预取和计算重叠，AsyncTLS在粗选择和细粒度计算之间引入了一个一步的时间滞后。虽然这有助于隐藏内存传输延迟，但在某些对延迟极度敏感的场景下，仍需权衡。
+2.  **通道选择与量化**：虽然通道选择和INT4量化有助于压缩索引足迹和提高效率，但它们可能会对模型精度产生微小的影响，尤其是在非常严格的token预算下。校准数据集的选择和通道重要性计算的鲁棒性可能影响最终性能。
+3.  **动态性成本**：尽管AsyncTLS通过分层结构显著降低了动态token选择的开销，但相比纯静态或更简单的稀疏模式，动态选择本身仍需额外的计算和索引管理开销。
+4.  **硬件依赖**：异步卸载引擎的性能高度依赖于PCIe互联的带宽和延迟，以及GPU和CPU内存的性能。在不同硬件配置下，其优势可能有所不同。
+   
 ## TIP
 TIP: Token Importance in On-Policy Distillation 
 
