@@ -1,5 +1,134 @@
 # Awesome or inspiring paper for AI
 
+## Event Tensor
+Event Tensor: A Unified Abstraction For Compiling Dynamic Megakernel
+
+https://arxiv.org/pdf/2604.13327 2026.4.14 MLSys26
+
+https://mp.weixin.qq.com/s/QNXMq7vscUT4NByShv_Gpg
+
+1. ⚙️ 现代LLM推理面临核启动开销和粗粒度同步问题，限制了核间并行性，且现有megakernel难以有效处理动态形状和数据依赖计算。
+2. 💡 本文提出Event Tensor作为统一的编译器抽象，通过将任务间的依赖关系编码为符号形状的张量，首次将形变和数据依赖的动态性纳入考量，并基于此构建ETC编译器以实现静态和动态调度转换。
+3. 基于TVM，B200，典型kernel包括TP计算-通信融合，MoE kernel和Qwen30b-A3b 推理E2E（特别是decode），相比AsyncTP，flashInfer，vllm/SGLang的显著性能提升。
+Event Tensor：一个多维结构，其元素代表“一组任务的完成状态”。每个element维护一个**等待计数器（Total Wait Count）**。支持两个核心操作：E[i].notify()（信号**完成，计数器减 1**）和E[i].wait()（阻塞直至计数器归零）。在动态调度模式下，它还能主动触发依赖它的tile任务。EventTensor是graph编译的一部分。解决了shape动态变化｜数据依赖 等导致graph重新编译问题，让依赖图也具备了“符号 Shape”的能力。传统 CUDA Graph 是运行时为具体 Shape 实例化的一张固定依赖图。而Event Tensor 图则是一个符号模板。将调度逻辑编译进内核本身（fusion & persistent kernel）。可以静态调度和动态调度（数据依赖）。
+
+<img width="739" height="870" alt="image" src="https://github.com/user-attachments/assets/2b287eef-3fb5-4b3b-8fb2-367a734eb0f0" />
+
+<img width="753" height="878" alt="image" src="https://github.com/user-attachments/assets/6a48eddc-b388-4ede-98e6-5ea04eff9430" />
+<img width="726" height="855" alt="image" src="https://github.com/user-attachments/assets/b6dd2057-b8e5-43d1-b8ca-340af2e70ab5" />
+<img width="741" height="688" alt="image" src="https://github.com/user-attachments/assets/10a2e3be-0ace-40fc-bdcc-4474c60ab5cd" />
+
+本论文介绍了 Event Tensor，一种用于编译动态 megakernel 的统一抽象，旨在解决 LLM 推理工作负载中存在的性能瓶颈。
+**场景与具体问题**
+现代 GPU 工作负载（尤其是 LLM 推理）面临两大性能瓶颈：
+1.  **Kernel Launch Overheads**：每次 GPU 核函数启动都会带来 5-10 μs 的延迟，而最快的核函数可能仅需 2 μs 完成，使得启动开销成为主导因素。在 LLM 推理中，每个自回归解码步骤可能涉及数百甚至数千个细粒度操作，导致 launch overhead 难以有效均摊。
+2.  **Coarse Synchronization**：核函数边界强制执行隐式同步，阻碍了细粒度 inter-kernel parallelism（核函数间并行），导致性能损失。虽然后续核函数可能只依赖于前序核函数结果的子集，但其执行仍需等待前序核函数的完全完成。
+此外，现有 megakernel 技术在处理**动态 shapes 和数据依赖**计算时面临挑战，特别是在 LLM 服务中，continuous batching 和 MoE 等模型引入了运行时动态性。
+
+**业界存在哪些不足**
+1.  **CUDA Graphs**：通过捕获和回放固定序列的核函数来减少启动开销，但保留了核函数边界，无法暴露 inter-kernel parallelism。其**静态性质难以处理动态 shape，需要反复 recapturing 和 recompilation**，带来了显著的 startup latency 和管理复杂性。
+2.  **传统 Megakernels**：尽管将多个操作融合到单个持久核函数中消除了启动开销并暴露了 inter-kernel parallelism，但其在**处理动态 shapes 和数据依赖计算**（如 MoE 中的专家路由）时力不从心，缺乏表达细粒度数据依赖的抽象。
+3.  **Programmability Challenges**：Megakernel 编程复杂，开发者需要手动处理任务间的细粒度依赖。动态性进一步加剧了这一问题。同时，缺乏统一的抽象来灵活选择或组合静态调度和动态调度策略。
+
+**关键观察与假设**
+1.  **统一抽象需求**: 现有方法缺乏一个统一的编译器抽象来有效地表示和管理动态 megakernel 中细粒度的同步和依赖关系，尤其是在动态 shape 和数据依赖计算场景下。
+2.  **Event Tensor 作为核心抽象**: 本文**提出Event Tensor作为统一抽象，将事件（表示 GPU SM 粒度上任务集的完成）组织成多维数组**，从而提供了一种**紧凑、first-class 的方式来表示 megakernel 中的细粒度同步**。
+3.  **利用现有编译器支持**: Event Tensor 能够**利用现有编译器对 Symbolic Shape (符号形状) 的支持**，使得 Event Tensor **维度可以保持符号化**，从而**紧凑地表示动态 shape 计算**。
+4.  **数据依赖的表达**: Event Tensor 可以**通过索引表达式 (index expressions) 来表达数据依赖的动态性**，将task坐标映射到event坐标，支持**运行时解析不规则任务图**。
+5.  **Compiler-driven 优化**: 通过**将同步和调度逻辑直接编译到核函数中**，可以**实现最小化的运行时开销**，并泛化以前需要手动工程的优化。
+6.  **严格的前向依赖**: 尽管支持**动态性，但整体依赖链仍是严格的前向依赖**（例如，Attention Output → Token Routing → Token Grouping → Token Computation），这有助于简化调度和优化。
+
+**方法核心思路和主要步骤**
+Event Tensor 的核心思想是将细粒度的同步事件封装为一种类似数据张量的 first-class 对象，并在此基础上构建一套编译流程来生成高性能的动态 megakernel。
+
+**1. Event Tensor 抽象**
+*   **Event Tensor 定义**: Event Tensor 是一个多维数组，其元素表示事件（即 GPU SM 级别上任务集的完成）。每个元素包含一个初始 wait count，记录其依赖的任务数量。支持 `E[i].notify()` (信号任务完成) 和 `E[i].wait()` (阻塞直到事件被触发)。
+*   **语言构造**:
+    *   **Device Function (设备函数)**: 定义在 GPU 上并行启动的任务网格，每个任务由多维坐标标识，可以在 SM 上执行。
+    *   **Event Tensor**: 用于细粒度同步，可作为函数参数，并允许在任务内部显式调用 `notify()` 和 `wait()`。
+    *   **Graph Function (图函数)**: 表示计算图，包含 `call_device` 调用，通过 `in_edges` 和 `out_edges` 参数指定任务间的依赖关系，并使用 Event Tensor 进行协调。
+*   **Dynamic Shape Support (动态形状支持)**: Event Tensor 能够包含 Symbolic Variables (符号变量) 作为维度，例如 batch size。这使得单个 Event Tensor 图可以作为通用模板，在运行时实例化为不同的具体 task graph，无需重新编译或重复图捕获，从而处理动态 shape 工作负载。
+*   **Data-Dependent Dynamism Support (数据依赖动态性支持)**: 通过两种机制处理不规则、数据依赖的任务图（例如 MoE）：
+    *   **Data-Dependent Event Update (数据依赖事件更新)**: 允许运行时根据计算结果（如 `topk` 张量中的路由决策）动态决定哪些 producer tasks 更新哪些事件。每个专家事件的计数器可以根据路由到的 token 数量动态初始化。
+    *   **Data-Dependent Task Triggering (数据依赖任务触发)**: 事件可以根据运行时数据（如 `exp_indptr` 张量）触发可变数量的 consumer tasks。例如，根据 `exp_indptr` 激活特定范围内的 GroupGEMM tiles。
+
+**2. Event Tensor 编译 (ETC)**
+ETC 将 Event Tensor 抽象应用于系统化的编译流程：
+*   **静态调度与转换 (Static Scheduling Transformation)** (Algorithm 1):
+    1.  **Per-SM Execution Queues (每个 SM 的执行队列)**: 在主机上构建预先计算好的每个 SM 的任务队列。
+    2.  **Persistent Main Loop (持久化主循环)**: 生成一个持久化的 main kernel，使每个 SM 能够连续从其预计算队列中获取任务并执行，无需重新启动。
+    3.  **Lower Event Tensor Dependencies (降低 Event Tensor 依赖)**: 将 Event Tensor 依赖转换为显式 `notify()` 和 `wait()` 调用，以强制细粒度执行顺序。这种方法最小化了同步开销，适用于可预测的工作负载。对动态性通过采样代表性形状和保守处理数据依赖来实现。
+*   **动态调度与转换 (Dynamic Scheduling Transformation)** (Algorithm 2):
+    1.  **On-GPU Task Scheduler (片上 GPU 任务调度器)**: 实现一个轻量级的片上调度器。
+    2.  **Push/Pop Mechanism (推/弹机制)**: 当一个事件被触发（所有依赖任务完成）时，它原子地将所有相关的 consumer tasks 推送到调度器队列中，标记为就绪。任何可用的 SM 都可以原子地从队列中弹出一个就绪任务并执行。
+    3.  **Early Push Strategy (提前推送策略)** (Appendix E): 为了隐藏调度开销，调度器在 producer tasks 仅仅被 dispatch 到 SMs（而非完成执行）时就主动将 consumer tasks 推入就绪队列，并通过额外的 `wait` 确保依赖关系。这使得 `push` 操作与 producer tasks 的执行并行，有效重叠了调度成本。
+    动态调度天然支持两种动态性，适用于任务执行时间不可预测或工作负载不平衡的场景。
+*   **降低到最小运行时 (Lowering to Minimal Runtime)**:
+    1.  **Integer Tensor Representation (整数张量表示)**: 每个 Event Tensor 都被降低为整数张量，重用了现有的张量数据结构。
+    2.  **Atomic Operations (原子操作)**: `notify()` 和 `wait()` 操作通过高效的硬件原子操作实现：`notify()` 执行原子递减，`wait()` 则忙等待直到计数器归零。
+    这种 `compiled-in` 的方法比典型的 task-graph 运行时（需要物化整个任务图）具有更小的运行时开销。
+*   **端到端编译流程 (End-to-End Compilation Flow)** (Figure 15):
+    1.  从已定义 Event Tensors 和已划分为 CTA 级别 tiles 的计算图开始。
+    2.  进行标准图级优化（如内存规划）。
+    3.  进行 tile 级优化（如硬件指令映射和流水线策略）。
+    4.  通过静态或动态调度 pass 转换图。
+    5.  将生成的融合设备函数编译为持久化核函数风格的 GPU 代码。
+    6.  可选的预取 pass 根据用户注解生成权重预取函数。
+    7.  如果选择静态调度，编译器计算并物化 per-SM 任务顺序为 megakernel 的静态执行队列。
+
+**实验设置**
+*   **实现基础**: ETC 在 Apache TVM 基础上实现一系列编译器 passes。
+*   **硬件条件**: 配备 8 块通过 NVLink 连接的 NVIDIA B200 GPU 的服务器。
+*   **软件版本**: Ubuntu 24.04, PyTorch 2.8.0, CUDA 13.0, driver version 580.82.07。
+*   **负载情况**:
+    *   **融合通信与计算 (Fused Communication and Computation)**:
+        *   GEMM + Reduce-Scatter 和 All-Gather + GEMM，针对 tensor-parallel LLMs。
+        *   使用 MLP 配置（S=8192, TP=8） (来自 Qwen3-8B 到 LLaMA-3.1-405B)。
+    *   **MoE Layer (MoE 层)**:
+        *   Qwen3-30B-A3B (128 experts, top-k 8)，处理可变数量的 input tokens。
+    *   **端到端低批次服务 (End-to-End Low-Batch Serving)**:
+        *   Qwen3-30B-A3B (MoE) 和 Qwen3-32B (dense)，聚焦decode阶段。
+        *   Prefill length 512, 生成 100 output tokens，batch size 从 1 到 128。评估指标为 Time-Per-Output-Token (TPOT)。
+        *   也评估了 Qwen3-32B 的 4-way TP 性能。
+    *   **Warmup Overhead (预热开销)**: 测量从引擎启动到处理第一个请求的总时间。
+*   **对比基线**:
+    *   **融合通信与计算**: `cuBLAS+NCCL` (非重叠), `TP-Async` (PyTorch 手动异步), `Triton Distributed v0.0.2-rc`, `cuBLASMp` (NVIDIA 高性能多进程库)。
+    *   **MoE Layer**: `Triton 3.4.0` (广泛使用的高性能 MoE 实现), `FlashInfer 0.2.14.post1` (LLM 推理优化库)。
+    *   **端到端服务**: `vLLM (v0.11.0rc2)` 和 `SGLang (v0.5.3rc0)` (均使用 CUDA Graph 和 `torch.compile` 进行优化)。
+    *   **调度方法对比**: ETC 内部的静态调度、动态调度与“unfused megakernel” (在不同操作阶段之间强制全局同步的单核函数) 进行对比。
+<img width="738" height="552" alt="image" src="https://github.com/user-attachments/assets/7a0f23bd-64e6-4232-b61b-49eb7866cebf" />
+<img width="735" height="564" alt="image" src="https://github.com/user-attachments/assets/4999e75c-5ef0-4b21-89c8-5e2ef414f02c" />
+<img width="723" height="603" alt="image" src="https://github.com/user-attachments/assets/778ab8dc-9ccb-47f6-9494-9527a77b519f" />
+<img width="727" height="377" alt="image" src="https://github.com/user-attachments/assets/4e3cf369-8e5b-4d9c-ba8b-200260ac82b1" />
+
+**关键对比结果**
+1.  **融合通信与计算性能**:
+    *   **GEMM + Reduce-Scatter**: ETC 使用动态调度，在 8 块 B200 上实现高达 1.40x 的 speedup (相对于 `cuBLAS+NCCL` 基线)。
+    *   **All-Gather + GEMM**: ETC 使用静态调度，在 8 块 B200 上实现高达 1.40x 的 speedup (相对于 `cuBLAS+NCCL` 基线)。
+    *   ETC 在 larger model configurations 上优势明显，性能一致性超越其他融合基线。
+2.  **MoE Layer 性能**:
+    *   ETC 的 megakernel 实现了高达 1.23x 的 speedup (相对于 `Triton` 和 `FlashInfer`)，在 1024 tokens 时达到最佳效果。
+    *   这得益于 Event Tensor 的数据依赖处理，打破了 baselines 中的全局同步障碍，并利用 on-chip dynamic scheduler 进行不规则 token 路由的负载均衡。
+3.  **端到端低批次服务性能**:
+    *   **Qwen3-30B-A3B (MoE)**: ETC 在 batch size 1 时，相对于 `vLLM` 达到 1.48x speedup，相对于 `SGLang` 达到 1.20x speedup。
+    *   **Qwen3-32B (Dense)**: ETC 始终提供最低延迟，在 batch size 1 时比 `vLLM` 快 1.15x，在 batch size 64 时比 `SGLang` 快 1.09x。
+    *   **Qwen3-32B (TP=4)**: ETC 性能与 `vLLM` 相当或更优 (0.99x 至 1.06x speedup)。
+    *   ETC 的强大性能源于其 fused megakernel 架构，能够进行 fine-grained optimizations，如 attention 算子的并行执行，MoE 和 MLP 中 GroupGEMMs/GEMMs 的流水线化，以及权重预取以隐藏内存延迟。
+4.  **Warmup Overhead (预热开销)**:
+    *   **Qwen3-32B**: ETC 仅需 35 s 进行初始化，而 `vLLM` 需要 123 s，`SGLang` 需要 583 s。
+    *   ETC 的 AOT 编译 (得益于 Event Tensor 对 shape dynamism 的支持) 完全消除了 JIT 编译和 CUDA Graph 捕获的运行时开销。
+5.  **不同调度方法的权衡**:
+    *   **数据依赖工作负载 (MoE)**: 动态调度器在 batch size 为 1024 时，比静态调度快 4.0%，比 unfused baseline 快 8.1%。动态调度器能更好地处理工作负载不平衡。
+    *   **常规工作负载 (Qwen-3-32B TP=4)**: 静态调度器表现更优，ETC-static 比 ETC-unfused 版本持续有 6-8% 的 speedup。动态调度器在分布式设置下开销过大。
+
+**潜在局限或不足**
+1.  **工程实现成熟度**: 论文指出，ETC 偶尔落后于最佳基线是由于工程因素，例如编译器生成的 GEMM tiles 不如 cuBLAS 优化，以及 serving engine 中的 CPU 端开销较高，而非抽象的根本局限。
+2.  **动态调度器的集中式队列**: 虽然论文中实现了 on-GPU scheduler 的 `push-pop` 接口使用全局内存中的集中式队列，但承认在高并发下可能存在 contention（竞争）问题。虽然有 early push 策略缓解，但完全消除或解决所有并发挑战可能需要更复杂的分布式调度方案。
+3.  **Event Tensor 的自动生成**: 论文提到未来工作将研究更高级的 pass，以从标准计算图中自动生成 Event Tensor task graphs，这意味着目前 Event Tensor 的定义和任务划分可能仍需要一定程度的手动干预或 DSL 支持。
+4.  **评估范围**: 尽管评估了多种动态性，但所有评估都在单节点 8xGPU 环境下进行，大规模多节点分布式训练/推理场景的性能和调度器扩展性有待进一步验证。
+5.  **AOT 编译时间**: 虽然 AOT 编译消除了运行时 JIT 开销，但自身的编译时间（Qwen3-32B 为 107 秒）相对较长，对于快速迭代开发可能仍需考虑。
+   
+
 ## DDTree
 Accelerating Speculative Decoding with Block Diffusion Draft Trees
 
