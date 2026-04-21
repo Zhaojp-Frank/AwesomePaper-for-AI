@@ -1,5 +1,101 @@
 # Awesome or inspiring paper for AI
 
+## AMD Fleet
+Fleet: Hierarchical Task-based Abstraction for Megakernels on Multi-Die GPUs
+
+https://arxiv.org/pdf/2604.15379 2026.4.15 AMD
+
+1. ⚙️ 针对现代GPU chiplet架构与现有编程模型（如CUDA/HIP）在L2缓存层级上的不匹配问题，尤其是在内存密集型LLM推理中导致的L2缓存利用率低下，Fleet提出了一种新的Chiplet-tasks抽象，旨在将计算和数据绑定到特定的chiplet，并通过其共享L2缓存进行协调。
+2. 🛠️ Fleet通过实现为一种持久化megakernel运行时并采用per-chiplet调度，允许同一chiplet内的worker协同执行任务，特别是在LLM推理中，通过M-major权重遍历（M-tile traversal）优化GEMM操作，从而提高L2缓存的局部性。
+3. Qwen3-8b(bf16), AMD MI350上，Fleet相比vLLM实现了1.3–1.5x decode延迟降低（batch size 1–8）; batch32和64时，通过协同权重切片将L2命中率从39%提升至61%，有效减少了37%的HBM流量，实现了相对于chiplet-unaware megakernel基线1.27–1.30倍的加速。
+
+Fleet提出了一种用于多芯片GPU上巨型内核的层次化任务抽象，旨在解决现代GPU向chiplet（小芯片）架构演进过程中，现有编程模型（如CUDA/HIP）无法有效利用芯片内局部性和同步机制的问题。
+
+<img width="843" height="354" alt="image" src="https://github.com/user-attachments/assets/2e7d6d11-916e-46ee-b51f-7278cd441f3d" />
+<img width="861" height="495" alt="image" src="https://github.com/user-attachments/assets/65501556-e60e-4634-aa3e-61e048171881" />
+
+**1. 场景与具体问题**
+现代GPU（如AMD Instinct MI300X/MI350/MI355和NVIDIA Blackwell）已采用chiplet设计，每个chiplet拥有独立的私有L2缓存层次。然而，当前的GPU编程模型（如CUDA/HIP）暴露的是一个扁平化的执行层次，无法表达chiplet级别的内存局部性或精细同步。这种不匹配导致在内存密集型工作负载（特别是LLM推理）中出现冗余内存流量和低效的缓存利用率，从而影响性能。LLM推理的解码阶段对延迟敏感，需要毫秒级的每token解码速度，且该阶段通常受限于内存带宽。
+
+**2. 业界存在的不足**
+*   **编程模型滞后：** CUDA/HIP模型未适应chiplet架构，缺少直接表达数据亲和性或将工作限定到特定chiplet内存层次的机制。
+*   **硬件调度限制：** 硬件调度器通常将工作组均匀分布到不同XCD（chiplet）上，当工作组访问相同数据时，会导致L2缓存重复加载和浪费带宽。
+*   **传统内核启动开销：** 标准的GPU服务系统为每个操作单独启动一个GPU内核，导致大量内核启动开销（约250次/解码token），且内核边界会刷新L2缓存，强制中间数据通过HBM传输，无法实现跨内核数据重用。
+*   **图捕获（Graph Capture）局限：** CUDA/HIP Graph Capture虽然减少了启动开销，但通常需要为不同批次大小捕获单独的图，且捕获的图固定了内核参数和内存指针，缺乏灵活性；同时，图捕获仍存在残余启动开销，且内核间数据重用不足。
+
+**3. 关键观察与假设**
+*   **L2缓存局部性至关重要：** 尽管HBM带宽充足（5+ TB/s），但在chiplet架构下，L2缓存局部性成为更重要的优化目标，特别是AMD架构中L2缓存是非连贯的。
+*   **内存访问特性：** LLM解码阶段的权重数据量远大于激活数据量（Qwen3-8B每层权重368MB vs. 激活1MB），因此优化权重加载以减少外部内存带宽使用是关键。
+*   **持续内核（Persistent Kernel）优势：** 将所有操作融合到单个持续内核中，可以只支付一次启动成本，并保持L2状态跨操作，从而提供更确定的延迟。
+*   **硬件层次与软件抽象匹配：** 任务应按照硬件粒度编写，匹配操作的资源需求（寄存器、共享内存、L2缓存、HBM），利用各层次不同的容量、带宽和共享特性。
+
+**4. 方法核心思路和主要步骤**
+Fleet的核心在于构建一个多层次任务模型，并结合持续内核运行时和chiplet感知调度。
+
+**4.1 多层次任务模型（Multi-Level Task Hierarchy）**
+Fleet将操作映射到与硬件资源边界匹配的内存范围，定义了四种任务级别：
+*   **wavefront-tasks：** 最轻量级的任务单元，在一个波前（wavefront）内执行（AMD为64线程），使用寄存器和LDS（Local Data Share）。适用于元素级操作，如SiLU激活、元素乘法、残差加法、RoPE。
+*   **CU-tasks：** 占据一个计算单元（workgroup），使用LDS进行块内通信，L2进行数据访问。适用于中等数据需求操作，如独立注意力头、RMSNorm、argmax/采样。
+*   **Chiplet-tasks（关键新抽象）：** 跨越单个XCD上的所有工作单元（MI350上32个CU中的31个），具有显式的L2缓存预算。允许程序员指定数据分区、分块和L2工作集。典型的GEMM操作映射到此，权重矩阵被分区，使每个XCD处理缓存友好的切片。
+*   **Device-tasks：** 协调8个Chiplet-tasks（每个chiplet一个），共同执行一个操作。具有屏障语义，只有当所有8个Chiplet-tasks完成时才完成。每个XCD将其计算结果写入共享输出缓冲区的不同偏移量。
+
+**4.2 持续内核运行时（Persistent Kernel Runtime）**
+Fleet在Mirage Persistent Kernel系统基础上扩展，引入了chiplet感知概念和层次化同步。
+*   启动一个单一的CUDA/HIP内核，占据GPU上所有CU。
+*   每个XCD的一个workgroup被指定为调度器，负责分发具有L2局部性亲和性的工作；其余workgroup作为工作单元执行任务。
+*   调度器读取硬件HW_ID寄存器以识别其XCD身份，并在全局内存中维护每个工作单元的任务队列。
+*   调度器负责从设备内存中的数据结构检索任务描述符，并将其分发给其本地chiplet上的工作单元。
+*   对于Chiplet-tasks，调度器将同一任务广播给单个chiplet内的所有工作单元，实现协同执行和L2协同重用。
+*   对于CU-tasks和wavefront-tasks，调度器以轮询方式将独立任务分派给chiplet内的CU。
+
+**4.3 Chiplet感知GPU优化：协同权重分块（Cooperative Weight Tiling）**
+Fleet通过Chiplet-tasks控制每个chiplet访问的数据，从而提高L2缓存利用率。
+*   **GEMM操作的N-split分区：** 对于[M,K] * [K,N] GEMM，Fleet将输出矩阵按列分区，使每个Chiplet-task计算独立的[M,N/8]子矩阵。
+*   **窗口M-major遍历：** 在每个Chiplet-task内部，采用M-major遍历（受HipKittens启发），确保不同CU访问相同权重时以相同顺序进行，帮助L2缓存有效减少从外部内存的加载带宽。每个工作单元会完整计算输出的一个[m,n]瓦片，使用激活的[m, 0:K]瓦片和权重的[0:K, n]瓦片，然后再移动到下一个瓦片。
+*   **L2命中率提升：** 通过M-major遍历，当多个工作单元处理相同的权重列时，第一个工作单元将权重瓦片从HBM加载到L2，后续工作单元可以L2命中，预期权重L2命中率为$(R-1)/R$，其中$R = \min(W, m\_tiles)$是共享权重瓦片的工作单元数量（W为每个XCD的工作单元数量）。
+*   **缓存修饰符策略（Cache modifier policy）：** 利用AMD GPU上的`sc1=1, nt=1`（`cache-streaming`）指令控制L2分配策略。
+    *   权重加载：使用`cache-streaming`，允许短时重用，但当缓存空间不足时标记立即驱逐。
+    *   激活存储：使用`non-temporal (NT=1)`，绕过L2，防止瞬态GEMM输出、RMSNorm结果和SiLU激活在协同执行期间驱逐权重瓦片。
+    *   调度器通信：跨XCD事件轮询使用`non-temporal`加载，绕过过时L2副本直接从HBM读取；XCD内通信通过共享L2进行，隐式保持一致性。
+*   **操作符融合：** 将操作符融合到单个Chiplet-task中，消除中间缓冲区写入，从而避免刷新L2缓存中的脏数据。例如，将SiLU激活融合到gate+up GEMM Chiplet-task中，减少一个缓冲区写入和一个缓冲区读取，保持激活数据在寄存器/LDS中。
+
+**4.4 层次化同步机制（Hierarchical Synchronization）**
+为降低同步成本，Fleet采用精细的层次化同步方案，将每个通信模式匹配到最窄的内存范围：
+*   **任务队列（只读）：** 全局任务描述符队列在巨型内核启动前填充，执行期间不可变，无需同步。
+*   **调度器 → 工作单元分派（L2局部）：** 调度器通过在同一XCD上使用设备范围的存储和原子操作写入每个工作单元的队列。这些访问在本地L2缓存中解析，无跨XCD一致性流量。
+*   **工作单元 → 工作单元协调（L2局部）：** Chiplet-task内的工作单元通过设备范围原子操作更新XCD内计数器以积累子任务完成数。由于所有参与工作单元共享同一L2分区，无需屏障。
+*   **XCD → 全局信号（GPU范围）：** 只有每个XCD上最后一个完成任务的工作单元发出一个`__threadfence`（或`buffer_wbl2`）并使用GPU范围的原子操作（`flat_atomic_add`与`sc0 sc1`）更新全局事件计数器。这摊销了昂贵的跨XCD一致性成本。一旦全局计数器达到阈值，完成的工作单元将事件入队到负责的调度器队列，触发下游任务。
+*   两级计数：对于Chiplet-tasks，两级计数每个事件最多发出一个XCD级别的屏障，显著减少了跨XCD屏障数量。
+
+**5. 实验设置**
+*   **硬件：** 单个AMD Instinct MI350X系统。该设备有256个CU（8个XCD，每个32个CU），每个XCD有4MB L2缓存，256MB共享LLC（Infinity Cache），288GB HBM3。
+*   **软件版本：** 未明确指出ROCm版本，但实验基于HIP实现。vLLM版本为v0.17.2，并使用`--enforce-eager`模式。
+*   **实现：** Fleet在Mirage MPK的基础上实现。
+*   **工作负载：** Qwen3-8B（dense, bf16）模型。输入token 64，输出token 1024，评估解码阶段的TPOT（Time Per Output Token）。
+*   **对比基线：**
+    *   **Mirage MPK（芯片无关）：** 内部基线，移植到AMD MI350X，使用标准的2D GEMM分块，无协同调度，用于隔离Fleet的chiplet感知优化效果。
+    *   **vLLM：** 外部基线，代表最先进的服务框架，使用`hipblaslt/Tensile` GEMM，每次操作单独启动内核。
+*   **指标：** HIP层面的时间API、GPU内周期计数器、性能计数器和低层级跟踪。L2命中率和HBM流量通过`rocprofiler-sdk`的设备计数模式获取。
+
+**6. 关键对比结果**
+*   **解码延迟：**
+    *   在batch size 1-16的小批量场景下，Fleet（M-tile和M-split）比vLLM快1.54-1.56倍（例如，bs=1时Fleet M-tile为6.82ms，vLLM为10.51ms）。这主要归因于持续内核消除了启动开销以及更少的任务调度开销（每GEMM只需8个Chiplet-tasks，而Mirage基线需要96-256个CU-tasks）。
+    *   在batch size $\ge 32$的大批量场景下，Fleet（M-tile）的优势进一步扩大。bs=32时，Fleet（M-tile）比Mirage快1.27倍（12.35ms vs. 15.62ms）；bs=64时，快1.30倍（18.61ms vs. 24.10ms）。这主要得益于L2协同权重分块。
+    *   Fleet（M-split）在bs=1-16时与M-tile性能相似，但在bs $\ge 32$时与Mirage接近，验证了L2协同重用是主要加速来源，而调度开销降低在小批量下起主导作用。
+*   **L2命中率与HBM流量：**
+    *   在bs=32时，Fleet（M-tile）的L2命中率从Mirage的38.9%提高到51.0%，HBM读取流量减少18%（3190GB vs. 3906GB）。
+    *   在bs=64时，Fleet（M-tile）的L2命中率从Mirage的39.0%提高到61.4%，HBM读取流量减少37%（3925GB vs. 6203GB）。
+    *   Fleet（M-split）的L2命中率和HBM流量与Mirage基线相似，表明协同权重共享是提升L2命中率的关键。
+*   **Roofline分析：** Fleet的L2重用通过减少HBM流量有效地提高了算术强度（AI）。例如，bs=32时，有效AI从32提高到65 FLOP/byte，向计算受限区域移动。
+
+**7. 潜在局限或不足**
+*   **模型和硬件范围：** 评估仅限于一个模型（Qwen3-8B dense）和一种GPU架构（MI350）。
+*   **多GPU配置和预填充性能：** 未评估多GPU配置、预填充性能或需要张量并行才能适应内存的模型。
+*   **注册压力和占用率：** 持续巨型内核将所有任务类型编译到单个GPU函数中，组合的寄存器占用率限制了SIMD每波前的占用率，消除了波前切换带来的延迟隐藏。这意味着任何L2未命中都会直接阻塞MFMA流水线，使L2命中率更为关键。
+*   **编译器驱动优化：** 当前Fleet依赖于提供不同的输入代码给Mirage编译器，而不是编译器驱动的超优化。编译器驱动的超优化（需要合适的Chiplet-tasks成本模型）留作未来工作。
+*   **与MLIR集成：** 未来有趣的方向是与基于MLIR的内核编译器集成，提供一个统一的Python到GPU栈，其中chiplet感知调度和瓦片级代码生成共享一个通用IR。
+*   **K-splitting优化：** 在大批量（计算受限）场景下，Fleet的GEMM实现尚未包含K-splitting优化和注意力优化，导致在bs=64时，Fleet（M-tile）可能比vLLM慢。
+   
 ## Parallel and Sequential Sampling
 Understanding Performance Gap Between Parallel and Sequential Sampling in Large Reasoning Models
 
