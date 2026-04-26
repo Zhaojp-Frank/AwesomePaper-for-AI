@@ -1,5 +1,90 @@
 # Awesome or inspiring paper for AI
 
+# UCCL-Zip
+UCCL-Zip: Lossless Compression Supercharged GPU Communication 
+
+https://arxiv.org/pdf/2604.17172 2026.4.21 UC Davis, 伯克利。
+
+https://github.com/uccl-project/uccl/tree/main/p2p
+
+1. UCCL-Zip旨在解决大型语言模型(LLMs)中GPU通信的关键瓶颈，通过**将无损压缩直接集成到GPU通信原语中**，以避免量化或有损压缩引入的数值误差，同时不修改用户API或影响数值正确性。
+2. 针对GPU压缩的非线性延迟和通信框架的限制，UCCL-Zip提出两项核心创新：**Uzip-P2P采用分段发送**（split-send）流水线，**通过早期传输压缩算法首阶段产生的可传输数据**，实现**压缩与通信的重叠**；**Uzip-NCCL则通过局部频率表和单核融合执行**，消除了NCCL持久化内核模型中的全局同步、冗余内存流量和额外的内核启动开销。
+3. P2P跨机（H200）吞吐提升**52%**（图7 72.2 vs.47.2 GB/s）,float8_e5m2 +42%，float8_e4m3fn**提升30.2%**；在强化学习（RL）权重同步中，**Uzip-P2P加速高达47.5%**，且对不同浮点类型和RL训练步骤具有稳定压缩比；在vLLM分布式LLM推理中，**端到端延迟降低高达10%** 但对于NCCL基于环（ring-based）的all_reduce，由于频繁压缩/解压缩开销，性能不佳，需**转向two-shot**等更适合压缩的集体通信模式。
+- 主要是BF16，以及FP8和FP32。P2P默认用2机H200；NCCL默认用L40s。NCCL基线NCCL v2.23.4；P2P基线 UCCL-P2P。8MB以上才启用。
+  
+<img width="566" height="425" alt="image" src="https://github.com/user-attachments/assets/12323383-c3f7-4927-9853-cd0acd4a1519" />
+<img width="1147" height="258" alt="image" src="https://github.com/user-attachments/assets/9a5959b9-b57d-4dec-aebb-e7b47676a6e2" />
+<img width="557" height="391" alt="image" src="https://github.com/user-attachments/assets/347c9454-86fe-4e44-9fc4-96ee47bb939e" />
+<img width="557" height="563" alt="image" src="https://github.com/user-attachments/assets/97bd4274-9820-4a59-bcd5-6ccda12830b0" />
+<img width="747" height="442" alt="image" src="https://github.com/user-attachments/assets/374a6d6d-88da-4e48-9804-b13f8a954b3f" />
+<img width="748" height="263" alt="image" src="https://github.com/user-attachments/assets/3628c30d-60be-4d2e-b98d-539b79569ef2" />
+
+UCCL-Zip是一个旨在将无损压缩直接集成到GPU通信原语中的统一设计，以解决大型语言模型（LLM）快速增长带来的GPU通信瓶颈。现有方法通常采用量化或有损压缩来减少通信量，但这会引入数值误差，从而损害模型收敛性、准确性和稳定性。尽管无损压缩能够避免这些问题，但将其开销隐藏在通信管道中是一个关键挑战。GPU上的压缩延迟与输入大小并非线性关系，小块数据压缩效率低下，且现有框架如NCCL的持久化内核模型和细粒度分块通信模式，使得直接集成压缩会引入额外的内核启动和冗余内存流量，抵消压缩带来的益处。
+<img width="555" height="238" alt="image" src="https://github.com/user-attachments/assets/bfe20180-09f8-4b1c-bd40-8a5b3195b500" />
+
+UCCL-Zip的关键观察和假设如下：
+1.  **浮点数统计特性**：浮点数的符号位和分数位分布近似均匀，压缩机会有限；但指数位在机器学习负载中常呈现狭窄且高度偏斜的分布，非常适合熵编码（如ANS）实现高压缩比（例如，bf16张量压缩比约为0.68，float32梯度约为0.85）。
+2.  **GPU压缩子线性延迟**：GPU压缩延迟与数据大小呈亚线性关系。由于大规模并行和内核启动开销，压缩小块数据所需时间与压缩大块数据相近，导致细粒度分块策略效率低下。例如，压缩16MB数据需约90 µs，4MB数据需约70 µs，数据量减少75%但延迟仅减少22%。
+3.  **早期数据可传输性**：压缩管道的第一步（浮点数拆分与频率表构建）虽然只占总压缩时间的14%，但能立即暴露大部分最终表示（如bf16约一半，float32约四分之三的数据）。这些数据无需进一步计算即可立即传输。
+4.  **局部频率表的可行性**：由于神经网络张量中的指数分布具有稳定的统计结构，即使是采样的小数据块构建的局部频率表，也能近似全局分布，实现接近全局频率表的压缩比（仅约4.5%的压缩比损失），同时消除跨CTA同步开销。
+<img width="1131" height="313" alt="image" src="https://github.com/user-attachments/assets/1a1eb041-416b-4c35-874e-de31cef4e938" />
+<img width="578" height="545" alt="image" src="https://github.com/user-attachments/assets/6993e033-3a6a-46ff-8397-3b1fffa976ce" />
+<img width="556" height="317" alt="image" src="https://github.com/user-attachments/assets/9118720e-0ae9-460f-8f57-6c21ea7ed3ba" />
+
+UCCL-Zip的核心方法和主要步骤如下：
+1.  **Uzip-P2P (针对P2P通信)**：
+    *   采用**分拆发送（split-send）管道**设计（图4d）。它将数据传输与压缩过程中的计算密集型阶段重叠。
+    *   利用“早期数据可传输性”特性：在压缩管道的第一步（`Split`，分离指数和其余部分）完成后，UCCL-Zip立即启动未压缩部分的传输。
+    *   这部分数据（如bf16的指数部分）占据原始数据约一半，无需进一步处理即可发送。
+    *   GPU同时处理剩余的压缩阶段（`Encode`和`Coalesce`），完成后再传输体积更小的压缩数据。
+    *   这种设计在保持GPU高效利用（处理大块数据）的同时，实现了通信与压缩的有效重叠，减少了通信停滞时间。
+
+2.  **Uzip-NCCL (针对集合通信)**：
+    *   通过**融合内核**（fused kernel）将**多步压缩管道（图2中的Step 1和Step 2）合并为单个内核执行**，并消除第三步（Coalescing）。
+    *   **局部频率表（Localized Frequency Tables）**：取代传统DietGPU的全局频率表（图5a），**每个线程块（CTA）通过采样一小部分数据（如前256KB）独立构建自己的局部频率表**（图5b）。这消除了跨CTA同步的需要，将数据拆分和频率表构建阶段合并到一个内核中，减少了全局内存访问。
+    *   **消除第三步Coalescing**：每个线程块直接将压缩输出写入NCCL的FIFO缓冲区，而不是写入临时全局内存再进行合并。这使得压缩、规约和通信能够在单个内核中紧密集成，减少了全局内存访问从三趟到一趟，并避免了额外的内核启动开销。
+    *   **压缩集成到NCCL数据路径**：在`CopyReducePacks`等核心例程中集成压缩/解压缩。数据在发送前被压缩，接收后被解压缩。规约后的数据在转发前被重新压缩。
+    *   **warp级别执行**：压缩和解压缩在warp粒度上执行，与NCCL的warp协同执行模型兼容，保证了架构的可移植性。
+    *   **元数据开销分摊**：**ANS表只在集体通信的第一次调用时传输**，后续步骤复用，使元数据开销可忽略不计。
+    *   **选择性压缩**：只有跨节点或写入远程FIFO缓冲区的数据才进行压缩；中间规约步骤中本地GPU数据不进行解压缩，最小化不必要的计算。
+    *   **数据对齐**：仅对分块对齐的区域（如32KB）应用压缩，尾部元素以未压缩形式传输。
+
+**实验设置**：
+*   **实现基础**：Uzip-P2P构建在UCCL-P2P [46]之上，并扩展DietGPU [34]支持NVIDIA和AMD GPU。Uzip-NCCL集成到NCCL v2.23.4中。代码量：NCCL部分增加约1.8K行CUDA代码，UCCL-P2P部分增加约4K行C++代码。修改模块化、轻量级，易于移植到RCCL。
+*   **硬件条件**：
+    *   AWS EFA：两台p5en.48xlarge实例，每台8个H200 GPU，Xeon 8488C CPU (192核)，16个EFA网卡 (200 Gbps)。
+    *   AMD集群：两节点，每台8个MI355X GPU，EPYC 9575F CPU (128核)，8个RDMA NICs (400 Gbps)。
+    *   AWS g6e：单节点g6e.48xlarge实例，8个L40S GPU，192 vCPUs，以太网 (400 Gbps)。
+*   **软件版本**：NCCL v2.23.4，UCCL-P2P。vLLM [28]的Prefill-Decode disaggregation (P1D3) 模式。
+*   **负载情况**：
+    *   RL训练中的权重同步：GLM4-9B (9B参数) 和Qwen3.5-35B-A3B (35B MoE模型)。张量大小从32MB到214MB。
+    *   vLLM推理中的KV缓存传输：Qwen-7B-Chat模型，输入令牌长度从7,680到102,400。
+*   **默认配置**：压缩只对大于1MB的消息启用。默认数据格式为bfloat16。
+*   **对比基线**：
+    *   P2P通信：UCCL-P2P (默认同步send/recv接口)。
+        *   “naive encode-send”：完全压缩后才传输。
+        *   “conventional native pipeline”：将数据分成8MB块并重叠压缩与通信。
+    *   NCCL：NCCL v2.23.4 (默认配置)，为公平对比，NCCL受限于4个SM以匹配Uzip-NCCL。
+<img width="580" height="329" alt="image" src="https://github.com/user-attachments/assets/3996e042-9290-4666-b3d4-01770132093e" />
+
+**关键对比结果**：
+*   **Uzip-P2P吞吐量 (P2P通信)**：
+    *   bf16数据：对于中大型张量 (>8 MB)，Uzip-P2P始终优于UCCL-P2P。在1GB时，吞吐量提升高达**52.9%** (72.2 GB/s 对 47.2 GB/s)，接近理论上限73.8 GB/s (基于64%压缩比)。
+    *   RL权重同步：GLM4-9B模型中，`gate_up_proj`张量 (214 MB) 吞吐量提升高达**47.5%**。Qwen3.5-35B-A3B模型中，`self_attn.q_proj.weight`张量 (32 MB) 吞吐量提升高达**28.8%**。
+    *   不同浮点类型：float8_e5m2吞吐量提升高达**41.9%**，float8_e4m3fn提升**30.2%**。
+*   **Uzip-NCCL吞吐量 (集体通信)**：
+    *   P2P send/recv：对于大于32MB的消息，Uzip-NCCL比NCCL高出**20%以上**。
+    *   all_to_all：对于大型消息 (>32MB)，吞吐量提升约**18%**。
+    *   Ring all_reduce：Uzip-NCCL表现差于NCCL。这是因为Ring all_reduce的细粒度分块导致频繁的压缩-解压缩循环。
+    *   Two-shot all_reduce (UCCL-Zip实现)：当数据大小达到32MB时，性能开始提升，在1GB时实现**35.7%**的吞吐量提升。
+*   **应用级别性能**：
+    *   vLLM中的KV缓存传输：Uzip-NCCL持续降低KV缓存传输延迟，最高提升**30.1%**。对于7,680令牌的输入，KV缓存传输占总执行时间约23%，这意味着整体应用程序加速约**10%**。
+
+**潜在局限或不足**：
+*   **NVLink通信下的负增益**：Uzip-NCCL在NVLink上表现出负增益（图18），这是由于NCCL架构与无损压缩的不兼容性（细粒度分块导致压缩/解压缩效率低下）。需要更快的压缩算法设计和更大的压缩粒度来更好地利用GPU硬件。
+*   **Ring all_reduce的低效**：Ring all_reduce算法中，数据在环形拓扑中经过多次压缩、传输、解压缩和规约，导致显著的重复开销。
+*   **Two-shot all_reduce的当前实现**：虽然Two-shot all_reduce表现良好，但目前基于NCCL的`isend`/`irecv`实现，规约与压缩之间仍有松散耦合，带来额外的内核启动和内存拷贝开销。
+
 ## GSQ 2bit
 GSQ: Highly-Accurate Low-Precision Scalar Quantization for LLMs via Gumbel-Softmax Sampling
 
