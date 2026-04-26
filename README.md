@@ -1,5 +1,96 @@
 # Awesome or inspiring paper for AI
 
+## tool attn
+Tool Attention Is All You Need: Dynamic Tool Gating and Lazy Schema Loading for Eliminating the MCP/Tools Tax in Scalable Agentic Workflows
+
+https://arxiv.org/abs/2604.21816 2026.4.24 Infrrd
+
+https://github.com/asadani/tool-attention
+
+1. LLM agent在与外部工具交互时，由于模型MCP无状态性而导致的“工具税”（Tools Tax）问题，即每次调用都会**注入大量不必要的工具描述**，造成**高昂的令牌消耗、推理能力下降和安全风险**。
+2. 提出了名为“Tool Attention”的中间件机制，通过结合基于**句子嵌入的意图-模式重叠**（ISO）评分、强制**执行前提条件的状态感知门控函**数，以及仅**按需加载完整JSON模式**的两阶段lazy load，动态选择并优化注入的工具。
+3. 120个工具的模拟基准测试，Tool Attention将**每轮工具token量减少~20x（47k->2.4k），有效context利用率从24%提升到91%**，并**根据预测，可将任务成功率**提高22个百分点**，延迟降低52%，成本降低86%，显著优于现有基线。
+基于 LangGraph 中间件，FAISS (向量存储和搜索)，sentence-transformers (用于嵌入)，和 tiktoken.
+120个工具的合成 MCP 测试平台，(GitHub, Filesystem, Database, Slack, Web, Jira)，平均每个 schema 约 394 token, 每回合 47K; *30轮 ～= 1M token\
+
+<img width="589" height="265" alt="image" src="https://github.com/user-attachments/assets/91a7294b-e21e-422d-8e15-fcb7565a4261" />
+<img width="619" height="511" alt="image" src="https://github.com/user-attachments/assets/4223c049-ac0f-4fe1-abbc-0273eed8e792" />
+<img width="794" height="457" alt="image" src="https://github.com/user-attachments/assets/63145dd5-f266-43fe-b53b-647a50644c1f" />
+
+本文介绍了 Tool Attention 这一中间件层机制，旨在解决大型语言模型 (LLM) agent 在使用外部工具时 Model Context Protocol (MCP) 所带来的高昂开销——即“MCP Tax”或“Tools Tax”。
+
+**场景与具体问题 (Scene and Specific Problem)**
+随着LLM agent从单一聊天界面发展到自主工作流参与者，它们需要与数百种外部工具进行交互。MCP作为Anthropic在2024年11月推出并被主要LLM提供商采纳的开放规范，成为了连接LLM agent与外部工具的事实标准。然而，MCP的设计缺陷在于其无状态特性，导致在每个对话回合中都必须“急切地”（eagerly）注入所有工具的完整 schema。这种设计在典型的多服务器部署中，每回合会产生10k到60k，甚至在极端情况下超过150k的“工具税”token开销。
+
+**业界存在哪些不足 (Industry Shortcomings)**
+这种“工具税”导致了三重负面影响：
+1.  **经济成本高昂：** 大量冗余的 schema token 导致 per-session 费用大幅增加，例如 CLI-equivalent workflow $3.20 而 MCP 方式高达 $55.20。
+2.  **推理能力下降：** 一旦 context utilization **超过70%的“断裂点”**，**LLM的推理质量显著下降，表现为幻觉参数、混淆相似工具以及任务记忆缺失**，即“mid-session drift”。
+3.  **安全漏洞：** 恶意攻击者可以通过在工具描述中注入指令（Tool Poisoning Attacks, TPA）来劫持 agent 的控制流，而大规模注入的 schema corpus 扩大了攻击面。
+现有的缓解措施，如静态剪枝 (static pruning)、手动服务器范围划分 (manual server scoping)、CLI 风格的惰性发现 (CLI-style lazy discovery) 或代码执行沙箱 (code-execution sandboxes)，要么牺牲灵活性，要么需要繁重的工程改造，要么破坏了 MCP 统一的开发体验。
+
+**关键观察与假设 (Key Observations and Assumptions)**
+本文的核心观察是，“工具税”并非LLM agents不可避免的成本，而是一种协议设计缺陷，源于将工具目录中的每个工具都视为“始终在线”的上下文。受 Transformer 中“Attention Is All You Need”范式的启发，即通过自注意力机制让每个 token 动态地关注相关 token，本文提出将这种思想推广到工具层面：**让每个用户回合动态地选择与当前意图最相关的少数工具**，并**仅加载这些工具的完整 schema**。这种**协议层面的效率提升**，而非简单增加上下文长度，才是可扩展 agentic 系统面临的真正约束。
+
+**方法核心思路和主要步骤 (Core Methodology and Main Steps)**
+Tool Attention 是一种位于中间件层的机制，它结合了以下三个核心组件：
+1.  **意图-Schema 重叠评分 (Intent–Schema Overlap, ISO)：** 使用 sentence embeddings **计算查询 $q$ (用户消息) 与每个工具 $t_i$ 的压缩摘要 $s_i$ 之间的语义相似度**。ISO 分数定义为：
+    $\text{ISO}(q, t_i) = \frac{e_q^\top e_{t_i}}{\|e_q\|_2 \|e_{t_i}\|_2}$
+    其中，$e_q = \phi(q)$ 和 $e_{t_i} = \phi(s_i)$ 分别是查询和工具摘要的嵌入向量，$\phi$ 是句子编码器 (如 `all-MiniLM-L6-v2`)。ISO 作为一种廉价的嵌入空间代理，用于预测工具在即将到来的前向传递中对“总注意力能量” (Total Attention Energy, TAE) 的贡献。
+2.  **状态感知门控函数 (State-Aware Gating Function)：** 该函数根据 ISO 分数和预定义的工具先决条件 (preconditions) 来决定工具是否被激活。门控函数定义为：
+    $g(t_i; q, \text{state}_t) = \mathbf{1}[\text{ISO}(q, t_i) \geq \theta] \cdot \mathbf{1}[\text{state}_t \models \text{pre}_i]$
+    其中，$\theta$ 是 ISO 阈值，$\text{state}_t$ 是 agent 的当前执行状态。该函数确保只有语义相关且满足当前状态条件的工具才会被考虑。这一门控机制不仅提高了效率，也增强了安全性，因为不相关的工具 schema 不会被注入到 LLM 的注意力层，从而缩小了 TPA 的攻击面。
+3.  **两阶段惰性 Schema 加载器 (Two-Phase Lazy Schema Loader)：** 为了进一步优化 token 使用，Tool Attention 将 schema 注入分解为两个阶段：
+    *   **Phase 1 — Summary Pool (始终驻留):** 所有工具的紧凑摘要 $s_i$ (每个不超过60 token) 始终存在于上下文中。这允许模型知晓工具的存在，且这部分内容稳定并可进行 prompt 缓存。对于120个工具，这部分开销约为 4.8k token。
+    *   **Phase 2 — Schema Promotion (按需每回合加载):** 仅针对通过门控函数筛选出的 top-k 激活工具集合 $A_t$，才从外部注册表中惰性加载完整的 JSON schema 并注入到上下文中。这样，模型只有在需要时才获得完整的类型信息和示例。
+
+**算法步骤概览:**
+Algorithm 1 (Tool Attention pass) 描述了每回合的中间件流程：
+1.  计算查询嵌入 $e_q$。
+2.  对工具目录中的每个工具 $t_i$，计算 $e_q$ 与 $e_{t_i}$ 之间的 cosine 相似度得分。
+3.  根据 ISO 阈值 $\theta$ 和先决条件 $\text{pre}_i$ 筛选候选工具。
+4.  从候选工具中选择得分最高的 $k$ 个工具形成活跃工具集 $A_t$。
+5.  从注册表中惰性加载 $A_t$ 中工具的完整 schema。
+6.  使用两阶段布局渲染 prompt (包含 Summary Pool、完整 schema、历史和查询)。
+7.  将 prompt 发送给模型。
+8.  **幻觉拒绝门 (Hallucination Gate)：** 在 `after_model` 钩子中，如果模型尝试调用一个未在当前回合中被提升的工具 (即只看到了摘要但没有完整 schema)，中间件会拒绝该调用并返回结构化错误，促使模型纠正行为或请求澄清。这使得激进的门控策略变得安全。
+<img width="621" height="220" alt="image" src="https://github.com/user-attachments/assets/d3be69f6-9b02-46f0-b5b6-dfb9435983aa" />
+
+**实验设置 (Experimental Setup)**
+*   **实现：** 参考实现使用 Python (Appendix A)，基于 `LangGraph` 中间件，`FAISS` (用于向量存储和搜索)，`sentence-transformers` (用于嵌入)，和 `tiktoken` (用于 token 计数)。
+*   **模拟测试平台：** 包含120个工具的合成 MCP 测试平台，由六个服务器组成 (GitHub, Filesystem, Database, Slack, Web, Jira)，平均每个 schema 约 394 token。总的 full-schema 注入成本约为每回合 47,300 token，与真实部署数据吻合。
+*   **负载情况：** 500个合成任务，涵盖单步、多步和长周期 (15-40回合) 工作流，每个任务都有手动的ground-truth工具集用于校准。
+*   **硬件/软件版本：** 未明确说明，但提到 `MiniLM-L6` 在 CPU 上运行约 30-60 ms，并可 GPU 加速到 10 ms 以下。token 计数使用 `cl100k_base`。
+*   **对比基线 (Baselines)：**
+    *   **B1 Full-Schema：** MCP 朴素方法，每回合注入所有120个工具 schema。
+    *   **B2 Static Pruning：** 人工为每个项目选择30个工具子集，每回合注入这些工具的 schema。
+    *   **B3 Simple Retrieval：** 对完整 schema 进行 cosine 检索，top-k=10，无状态门控，无惰性加载。
+    *   **B4 CLI Lazy Discovery：** `mcp2cli` 模式，工具作为 CLI 暴露，模型仅在需要时调用 `--list/--help`，无完整 schema 在上下文中。
+    *   **Tool Attention (ours)：** 本文提出的完整机制，$\theta=0.28$，k=10，`MiniLM-L6` 编码器，两阶段惰性加载，幻觉门。
+*   **指标：** 直接测量 `tiktoken` 计算的每回合工具 token 数和有效上下文利用率 $\rho$。任务成功率、P50/P95 延迟、边际成本和推理质量均为结合测量 token 数和公开遥测数据的**预测值** (marked with †)。
+
+**关键对比结果 (Key Comparison Results)**
+相对于朴素的 Full-Schema 基线：
+*   **工具 Token 减少：** Tool Attention 实现了每回合工具 token **95.0%** 的显著减少 (从 47.3k 降至 2.4k)。
+*   **有效上下文利用率：** 从 24% 提高到 **91%** (3.8倍提升)。
+*   **预测任务成功率：** 提高约 **22个百分点** (从 ≈72% 提升到 ≈94%)。
+*   **预测 P50 延迟：** 降低约 **52%** (从 ≈4.2s 降低到 ≈2.0s)。
+*   **预测边际成本：** 降低约 **86%** (从 ≈$0.21 降低到 ≈$0.03)。
+*   **预测推理质量 (LLM-judge)：** 在30回合的长任务中，Tool Attention 的平均得分 (4.43) 远高于 Full-Schema (3.21)，87.6% 的任务得分 $\geq 4$ (Full-Schema 仅 43.2%)。
+*   **消融研究 (Ablation)：** 惰性加载器对成功率贡献最大 (+10.3 pp)，其次是先决条件 (+3.6 pp)。语义匹配的重要性也得到验证，`TF-IDF` 相比 `MiniLM-L6` 导致 8.1 pp 的成功率下降。
+*   **可伸缩性：** 即使在工具目录大小 $N=1,000$ 的情况下，Tool Attention 也能保持 $\rho \geq 0.87$，仅因 Phase-1 的增长而呈对数级下降。
+*   **抗攻击性 (预测)：** 在模拟评估中，Tool Attention 的门控机制能够排除 50 个中毒工具描述中的 46 个，将预测的 TPA 成功率从 Full-Schema 的 38% 降低到 6%。
+
+**潜在局限或不足 (Potential Limitations or Shortcomings)**
+1.  **应用层缓解：** Tool Attention 是一种应用层面的缓解措施，无法修复协议本身的设计缺陷，例如缺乏会话范围的能力协商。
+2.  **工具摘要质量依赖：** 该机制的检索质量完全依赖于工具摘要的质量；晦涩或命名不佳的工具目录会损害检索精度，仍需策展人努力。
+3.  **合成工作负载：** 评估基于合成（尽管经过校准）的工作负载，缺乏一个社区标准的 MCP 基准 (类似于 `SWE-bench`) 来进行更全面的比较。
+4.  **对抗性释义：** 攻击者可能精心制作工具描述，使其语义指纹与良性用户查询高度匹配，从而被可靠地门控进入并执行其 payload。建议与 MindGuard 的 TAE 运行时监控器结合使用。
+5.  **跨回合状态感知门控：** 当前的查询嵌入仅使用最新的用户消息（可选地带有滚动上下文摘要）。更强的版本应考虑学习到的状态表示，捕捉中间工具输出和演变中的任务计划。
+6.  **学习型门控：** 基于阈值的门控具有可解释性，但在准确性上可能有所牺牲。轻量级的蒸馏分类器可以替代阈值，进一步提高成功率。
+7.  **与代码执行的结合：** Tool Attention 优化了“定义”侧的工具税，而 Anthropic 的代码执行模式优化了“输出”侧。两者的融合可能进一步大幅减少端到端上下文消耗。
+8.  **协议层面趋同：** 新的 MCP-over-MOQT 草案通过原生发布-订阅轨道和边缘缓存 schema hashing，将部分取代 Tool Attention 的惰性加载功能。但基于意图的门控和先决条件在任何层面上对于塑造模型注意力仍然是必要的。
+
 ## AMD Fleet
 Fleet: Hierarchical Task-based Abstraction for Megakernels on Multi-Die GPUs
 
