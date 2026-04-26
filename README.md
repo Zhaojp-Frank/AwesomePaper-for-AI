@@ -914,11 +914,13 @@ https://github.com/HJSang/OPSD_OnPolicyDistillation
 ## TokenDance
 TokenDance: Scaling Multi-Agent LLM Serving via Collective KV Cache Sharing 
 
-https://arxiv.org/abs/2604.03143 2026.4.3
+https://arxiv.org/abs/2604.03143 2026.4.3 北大
+
+https://mp.weixin.qq.com/s/wI5ERb4aIlLlii7fNESszQ
 
 1. 🤖 TokenDance 针对多智能体LLM服务中，All-Gather通信模式导致的KV Cache冗余和低效复用问题，提出了一种通过集体共享KV Cache来提高并发代理数的方法。
 2. 💡 该系统通过轮次感知提示接口识别共享内容，利用KV Collector集体执行KV Cache复用以摊销计算成本，并采用Diff-Aware Storage以块稀疏差异存储KV Cache实现11-17倍的压缩，并通过融合差异恢复路径确保高效访问。
-3. 🚀 基于vLLM和LMCache的实现，Qwen2.5最大14b模型，A100, 在GenerativeAgents和AgentSociety等代表性多智能体工作负载上，支持的并发代理数比vLLM高出2.7x，KV Cache存储减少17.5x，预填充速度提升1.9x。
+3. 基于**vLLM和LMCache的实现**，Qwen2.5最大14b模型，A100, 在GenerativeAgents和AgentSociety等代表性多智能体工作负载上，支持的并发代理数比vLLM高出2.7x，**KV Cache存储减少17.5x**，预填充速度**提升1.9x**。
 - 理论有损？
   
 <img width="933" height="316" alt="image" src="https://github.com/user-attachments/assets/50318251-b5b4-497b-b8e1-0f6db1437a72" />
