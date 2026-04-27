@@ -1,5 +1,91 @@
 # Awesome or inspiring paper for AI
 
+## UniEP
+UniEP: Unified Expert-Parallel MoE MegaKernel for LLM Training
+
+https://arxiv.org/pdf/2604.19241 字节 清华大学 2026.4.22
+https://github.com/ByteDance-Seed/Triton-distributed
+
+1. 针对LLM训练中MoE模型的专家并行化（EP）挑战，通过将通信和计算融合到`MegaKernel`中，提出了一个统一的优化系统，解决了现有生产框架的适应性和数值稳定性问题。
+2. 核心方法是`MegaKernel`设计，通过在单个CUDA stream中实现细粒度（fine-grained）的计算-通信重叠和动态SM调度，并利用确定性token映射保证数值一致性，同时通过分析性能模型（analytical performance model）自动调优配置。
+3. 基于Triton-Distributed实现，在NVIDIA Hopper GPU集群上相比Serial和COMET等现有最先进工作实现了显著的性能提升，例如在kernel-level和layer-level基准测试中获得**1.03×-1.38×的加速**，并在大规模端到端训练中提供了1.09×的吞吐量提升，同时严格保持了数值精度。
+～21k行Python代码，在两个NVIDIA Hopper GPU集群上进行实验。H800/H100?；基线：Serial和COMET：
+12种代表性MoE模型配置（来自DeepSeek、Qwen和KimiK2系列），涵盖专家数量64-512，隐藏维度不同。序列长度评估：8k、32k和128k。
+
+<img width="694" height="355" alt="image" src="https://github.com/user-attachments/assets/c06fa4c0-7c2f-494d-bfb8-4d1e9194f447" />
+<img width="746" height="716" alt="image" src="https://github.com/user-attachments/assets/a1eadaf7-f8a0-430f-9416-9ba313d3d9b5" />
+<img width="804" height="356" alt="image" src="https://github.com/user-attachments/assets/82a62ed0-c586-4413-9d8a-9e310734dfd8" />
+
+旨在解决大型语言模型（LLM）训练中混合专家模型（MoE）专家并行（EP）的通信瓶颈。随着LLM参数的指数级增长，模型训练对资源的需求越来越高。然而，摩尔定律的停滞以及计算吞吐量与通信带宽之间日益扩大的差距，使得EP成为扩展MoE模型的关键策略。尽管业界提出了许多优化EP的方法，从通信压缩到计算-通信重叠，但它们在生产级框架（如Megatron-LM）中的应用仍然保守。现有解决方案通常依赖于ad-hoc、复杂的内核，缺乏对不同优化配置的适应性，并且经常忽略数值稳定性，无法满足大规模训练的严格精度要求。
+
+**1. 场景与具体问题**
+MoE架构已成为LLM扩展参数数量同时保持可控训练和推理成本的核心范式，例如GPT-5、Gemini3 Pro、DeepSeek-V3和Qwen3。当每层的专家数量（通常64到384个）增加时，EP成为跨GPU集群分发模型的既定标准。在此模式下，GPU之间需要交换Token以将其路由到指定专家，这引入了显著的通信开销。经验分析表明，MoE特有组件（分派、专家计算和合并阶段）可能消耗总训练预算的30%到80%，因此EP的优化对整体训练效率至关重要。
+
+核心问题在于GPU计算吞吐量与互连带宽之间日益增长的差距。EP训练通常受限于All-to-All或All-Gather通信阶段，这些阶段是Token路由所必需的。
+
+**2. 业界存在哪些不足**
+*   **计算与通信分离：** 现有方法将计算和通信视为独立操作，依赖粗粒度的流水线（如CUDA Streams）实现重叠。这需要频繁的Host端干预进行流同步，在分布式设置中，进程间的同步经常导致空闲（bubbles），抵消了重叠的益处。更重要的是，粗粒度重叠通常需要拆分Micro-batch，导致数值不稳定。由于浮点运算的非结合性（尤其在BFloat16中），拆分反向传播会改变梯度累积顺序，使训练过程对系统级调度敏感，并损害可复现性。
+*   **统一通信原语的缺失：** 最佳通信策略（AllGather或AllToAll）根据工作负载特性波动。AllGather在路由Token数量（top-k）较大时带宽效率高，而AllToAll在稀疏路由时更优。这种二元性迫使开发者维护复杂的启发式算法和独立的内核，增加了性能调优和可移植性的复杂性。
+
+**3. 关键观察与假设**
+UniEP基于两大关键见解：
+*   **细粒度MegaKernel融合：** 可以通过利用GPU的Streaming Multiprocessors (SMs) 进行块级调度，实现最佳重叠，而无需Host端多流管理。UniEP将MegaKernel技术（此前主要用于推理）应用于训练领域。与推理侧重于将整个LLM积极融合到一个内核不同，UniEP战略性地仅融合MoE特有子图（Dispatch+GroupGEMM 和 GroupGEMM+Combine）。在MegaKernel内部，不同的SMs动态地分配计算或通信角色。依赖关系通过Token粒度上的片上记分板机制进行管理。这种设计允许在单个CUDA Stream内进行激进的、细粒度的重叠，消除了CPU开销和同步空闲，同时保持高SM利用率。通过避免Micro-batch拆分，UniEP保留了操作的确定性顺序，保证了与顺序执行的数值一致性。
+*   **统一通信模式的参数化抽象：** UniEP通过参数化抽象统一了不同的通信模式，可以在不显式切换内核的情况下实现更低的AllGather和AllToAll通信量。UniEP将MegaKernel的优化空间（例如，tile sizes、SM分配、warp分配）抽象为一个统一的参数集，并提供一个严格的硬件性能模型，自动为不同的输入形状和集群拓扑识别最优配置，取代了手动调优。
+
+**4. 方法核心思路和主要步骤**
+UniEP将整个计算和通信图融合到一个MegaKernel中，将调度逻辑卸载到GPU SMs。
+*   **MegaKernel设计（以Dispatch+GroupGEMM为例）：**
+    *   **持久化工作者架构（Persistent Worker Architecture）：** 内核启动时，启动固定数量的线程块（等于GPU上的物理SM数量），每个线程块作为一个持久化工作者，在内核运行时独占SM。工作者动态地扮演三种角色：通信工作者（Comm-Worker）负责Token发送和GPU间事务；计算工作者（Comp-Worker）负责执行GroupGEMM Tiles；中继工作者（Relay Worker）管理同步信号并执行GPU内数据多播。
+    *   **确定性Token映射（Deterministic Token Mapping）：** 确保与标准顺序执行的位级别数值等价性。通过算法1实现全局寻址方案，将本地Token ID映射到 (target_rank, expert_id, destination_offset) 元组。该算法使用AllGathered偏移表来计算每个Token的全局偏移量，保证在并行执行下，目标专家缓冲区中Token的最终顺序是确定性的。Comm-Worker利用向量化加载（128位）来最大化内存带宽。
+    *   **基于记分板的同步（Scoreboard-based Synchronization）：** 通过全局内存中的记分板协调生产者（Comm/Relay）和消费者（Comp）。记分板分为Token到达（$S_{\text{token}}$）和Tile就绪（$S_{\text{tile}}$）两部分。Relay Worker监听Token到达，并在Tile就绪时设置$S_{\text{tile}}$；Comp Worker轮询$S_{\text{tile}}$以执行计算。
+    *   **动态调度（Dynamic Scheduling）：** 维护一个全局原子计数器作为任务队列游标。SM通过原子递增获取任务ID，并根据ID动态分配角色（Comm-Worker或Comp-Worker）。任务完成后，SM请求新ID，实现负载均衡。
+    *   **中继工作者带宽优化（Bandwidth Optimization via Relay Workers）：** Relay Worker通过执行GPU内多播（intra-rank multicast）来减少跨GPU通信量。当多个专家位于同一目标GPU上时，Token仅发送一次到目标GPU，由Relay Worker在本地复制给不同专家，将昂贵的GPU间带宽转换为高速HBM带宽。理论分析显示，对于Top-8路由和8个GPU，平均只需传输到5.25个唯一Rank，理论流量减少约34%。
+*   **GroupGEMM+Combine MegaKernel设计：** 采用相同的MegaKernel原则，Comp-Workers执行GEMM并向Comm-Workers发送信号。Comm-Workers将部分结果传输回源Rank。Reduce-Worker（类似于Relay Worker）聚合传入数据。为确保数值正确性，Reduce-Worker必须等待所有Top-k贡献到达后才进行求和，维持位级别一致性。
+*   **优化空间与自动调优：**
+    *   **可调原语和权衡：** 优化配置空间包含：每工作者Warp分配（$w_{\text{disp/comb}}$）、通信工作者数量（$N_{\text{disp/comb}}$）和中继工作者数量（$N_{\text{relay/red}}$）。这些参数涉及计算饱和度、通信吞吐量和资源分配之间的复杂权衡。
+    *   **分析性能模型：** 构建分析模型来预测端到端延迟$L_{\text{total}}$，考虑硬件规格、问题规模和配置参数。模型估算有效带宽、GEMM块延迟、SwiGLU延迟、Dispatch延迟和Compute延迟，并模拟重叠。
+    *   **优先级Token调度：** 为实现计算与通信的完美重叠，Comm-Workers按照Comp-Workers处理专家的顺序（升序）排列其传输队列，隐式地实现零开销优先级排序，避免Head-of-line blocking。
+
+**5. 实验设置**
+*   **实现基础：** UniEP核心逻辑约21k行Python代码，基于Triton-Distributed框架实现。Triton-Distributed提供了Native NVSHMEM支持、Memory-Semantic Signals (ld_acquire/st_release) 和Warp-Level Control。
+*   **硬件条件：** 在两个NVIDIA Hopper GPU集群上进行实验。
+    *   集群1：8个GPU/节点，HBM带宽3.35 TB/s，NVLink带宽200 GB/s/方向，峰值BF16性能989 TFLOPS。代表带宽受限环境。
+    *   集群2：8个GPU/节点，HBM带宽3.90 TB/s，NVLink带宽400 GB/s/方向，峰值BF16性能148 TFLOPS。代表高带宽环境。
+*   **软件版本：**
+    *   UniEP：基于Triton-Distributed，MegaKernel实现已开源(https://github.com/ByteDance-Seed/Triton-distributed)。
+    *   基线：
+        *   **Serial：** 使用DeepEP (commit hash 3fcf25) 处理通信，TransformerEngine (v2.11) 处理计算，无重叠的SOTA基线。
+        *   **COMET：** (commit hash 19831c) 当前企业训练中使用的SOTA重叠解决方案，采用双流（dual stream）并行NVLink通信和GroupGEMM计算，通信通过DMA引擎的AllGather，计算部分通过CUTLASS实现。
+*   **负载情况：** 12种代表性MoE模型配置（来自DeepSeek、Qwen和Kimi系列），涵盖专家数量64-512，隐藏维度不同。序列长度评估：8k、32k和128k。
+*   **自动调优：** 优化配置空间约为$10^5$种组合。自动调优器使用C++和OpenMP并行实现，搜索时间约29.7ms到149.9ms。采用桶式记忆化策略（discretize Ntok into 4096-token buckets），只在工作负载跨越桶边界时查询模型，并将最佳配置缓存复用，使得摊销开销可忽略。
+
+**6. 关键对比结果**
+*   **数值精度：** UniEP对所有测试配置（12种MoE模型）在正向和反向传播中都产生与基线（无重叠的PyTorch+NCCL实现）位级别相同的数值结果，验证了确定性Token映射方案的正确性。COMET表现出非平凡的数值偏差，最大绝对差值达0.25，22%至29%的输出元素未通过位级别相等性检查。
+*   **位级别可复现性的性能成本：** 保持位级别可复现性（BW）会引入可测量的性能成本，主要体现在反向传播中。UniEP的非位级别（NB）变体在大多数配置下提供2%–8%的端到端延迟加速，但在某些算术强度较低或计算密集型情况下，NB变体可能略微降低性能，因为拆分Micro-batch可能导致计算尾部暴露或SM利用率下降。
+*   **内核级性能：**
+    *   **Dispatch+GroupGEMM：** 在带宽受限的集群1上，UniEP比Serial加速11.20x-18.40x，比COMET加速1.30x-1.32x。在高带宽的集群2上，UniEP比Serial加速3.57x-7.44x，比COMET加速1.45x-1.57x。
+    *   **GroupGEMM+Combine：** 在集群1上，UniEP比Serial加速8.23x-11.56x，比COMET加速1.31x-1.87x。在集群2上，比COMET加速1.07x-1.21x。
+    *   COMET因缺乏针对特定Hdim和Top-k值的专门内核而无法运行某些MoE配置。
+    *   UniEP优于COMET的原因：Relay Workers通过GPU内多播减少物理通信量；UniEP通过将操作融合到单个MegaKernel中消除了COMET中双流执行导致的对齐空闲（alignment bubbles）。
+*   **层级性能：**
+    *   **集群1 (8k SeqLen)：** UniEP正向加速11.98x (vs. Serial)，1.08x (vs. COMET)；反向加速4.00x (vs. Serial)，1.03x (vs. COMET)。
+    *   **集群1 (32k SeqLen)：** UniEP对COMET的正向加速增加到1.22x，验证了通信量减少优化在Token计数增加时的益处。
+    *   **集群2：** 由于带宽充足，通信流量减少效果不那么显著，对COMET的加速稳定在1.19x (正向, 32k) 和 1.09x (反向, 32k)。
+*   **长上下文性能 (128k SeqLen)：**
+    *   **集群1：** UniEP正向加速6.90x (vs. Serial)，1.28x (vs. COMET)。
+    *   **集群2：** UniEP正向加速2.38x (vs. Serial)，1.33x (vs. COMET)。
+    *   即使在Serial基线因计算量巨大而相对更具竞争力时，UniEP仍能提供超过10%的正向+反向改进。
+*   **端到端训练吞吐量：** 在集群1的128个GPU上，512k序列长度的生产训练运行中，UniEP将训练吞吐量从1270亿Token/天提高到1380亿Token/天，实现了1.09x的加速，同时保持位级别可复现性。
+*   **消融研究：** 验证了UniEP各项优化（动态调度重叠，带宽优化，自动调优）的累积贡献。带宽优化使延迟降低1.06x–1.36x，自动调优额外贡献1.15x–1.68x的加速，最终UniEP比COMET在所有支持配置上快1.24x–1.73x。
+
+**7. 潜在局限或不足**
+*   **性能模型乐观估计：** 论文提到分析模型倾向于给出乐观的延迟估计，因为运行时缓存竞争可能以模型未充分捕捉的方式降低性能。尽管如此，模型的准确性仍然很高（平均误差3.8%）。
+*   **Triton性能：** UniEP使用Triton-distributed实现。尽管目前Triton与CUDA内核在Hopper GPU上的GroupGEMM性能相当，但论文指出，在最新的GPU架构上，Triton-based内核可能表现不如CUDA内核。UniEP的设计是与语言无关的，可以重写为CUDA以弥补这一差距，但这需要额外的工程投入。
+*   **Hopper架构特定优化：** 尽管设计理念可以推广到其他GPU平台（如AMD GPU和最新的NVIDIA GPU），但目前实现和评估主要集中在NVIDIA Hopper GPU上。具体性能表现和最优配置在其他架构上可能有所不同。
+*   **未利用TMA：** 尽管实现了高效的GroupGEMM，但当前实现并未利用Hopper GPU的Tensor Memory Accelerator (TMA) 硬件特性，未来可能还有优化空间。
+
+
+
 # UCCL-Zip
 UCCL-Zip: Lossless Compression Supercharged GPU Communication 
 
