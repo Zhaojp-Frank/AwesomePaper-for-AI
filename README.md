@@ -1,5 +1,160 @@
 # Awesome or inspiring paper for AI
 
+## Attn-QAT
+Attn-QAT: 4-Bit Attention With Quantization-Aware Training 
+
+https://arxiv.org/pdf/2603.00040 2026.3.10 UCSD 斯坦福等
+
+https://drive.google.com/drive/folders/190F6xbBDUF2kGQYIcXBt3ehSYij5jlim?usp=sharing
+
+1. 针对FP4 attention在大型模型中因**动态范围受限和激活重尾分布**导致的**显著质量下降**，本文发现**现有量化感知训练 (QAT) 方法无法稳定应用于FlashAttention的反向传播**。
+2. 提出Attn-QAT，通过**确保反向传播中attention score矩阵P的低精度重计算与前向一致**，并**引入高精度辅助输出O'来纠正FlashAttention的梯度计算中的隐含精度假设**，从而实现FP4 attention的稳定QAT。
+3. Attn-QAT在diffusion和language模型上**恢复了与BF16相似的质量水平**，无需额外的异常值缓解启发式方法，RTX 5090上实现了1.5x的推理加速。
+   
+视频扩散模型Wan-2.1（1.3B和14B），Qwen-3 14B和Llama-3.1 70B。基于SageAttention3，B200/5090上验证.
+
+<img width="952" height="612" alt="image" src="https://github.com/user-attachments/assets/76a100b1-9058-4553-a3f9-ae4bb5ef55b9" />
+
+<img width="913" height="439" alt="image" src="https://github.com/user-attachments/assets/946db2f4-f961-4736-a40c-e5c2c811024d" />
+
+<img width="500" height="554" alt="image" src="https://github.com/user-attachments/assets/56c809f7-4784-46d8-9953-ecb467f310b5" />
+
+Attn-QAT论文深入研究了4比特（FP4）Attention的量化感知训练（QAT），旨在实现在新兴FP4 GPU上的端到端FP4计算。
+
+**场景与具体问题：**
+随着模型规模和部署需求的增长，量化成为降低内存占用和提高推理吞吐的关键技术。虽然8比特推理已被广泛采用，NVIDIA Blackwell架构引入的原生FP4 Tensor Core支持为4比特量化带来了新机遇，可提供高达2倍的算术强度提升和更低的内存流量。然而，Attention作为模型中的重要组成部分，其FP4量化仍然是一个主要障碍。这是因为FP4的动态范围极小（只有15个不同的值），且Attention的激活分布呈重尾（heavy-tailed）特性，包含更多异常值（outliers），导致其对数值精度高度敏感。
+
+**业界存在哪些不足：**
+1.  **FP4 Attention的质量下降：** 尽管像SageAttention系列在Attention量化方面取得了进展，但在推向4比特Attention时，仍会出现显著的质量下降。这些方法通常依赖后训练量化（PTQ）和额外的启发式技术（如Q/K平滑和两级量化）来缓解精度损失，但对于极端的4比特量化，其精度仍不足以可靠地恢复质量。
+2.  **QAT应用于Attention的挑战：** 现有的QAT范式在线性层上已得到充分探索，即在前向传播中模拟低精度执行，在反向传播中计算高精度梯度以更新权重。然而，现代Attention实现（如FlashAttention，Dao et al., 2022）是高度融合（fused）的算子，其反向传播依赖于重计算（recomputation）和对精度敏感的代数恒等式。因此，简单地将前向传播切换到FP4，同时重用FlashAttention的BF16反向传播内核，会导致梯度爆炸，表明Attention的稳定QAT需要前向和反向重计算中间变量之间精心的精度协调。
+
+**关键观察与假设：**
+作者发现，“即插即用”（drop-in）式的QAT——即天真地将FP4前向传播与高精度FlashAttention风格的反向传播结合——会导致训练不稳定。通过详细分析，Attn-QAT确定了稳定FP4 Attention的两个关键原则：
+1.  **Attention分数矩阵$P$的低精度重计算：** 在反向传播中，Attention**分数矩阵$P$的重计算必须使用与前向传播相同的低精度**，以确保与中间激活的一致性。
+2.  **FlashAttention梯度计算中隐式精度假设的解决：** FlashAttention依赖恒等式$P^\top_i dP_i = dO^\top_i O_i$来保持反向传播的线性内存复杂度。然而，当正向传播在FP4中执行而反向传播在BF16中执行时，这个假设就不再成立。
+
+**方法核心思路和主要步骤：**
+Attn-QAT通过修改QAT范式以适应FlashAttention风格的融合操作来解决上述挑战。其核心思路是依靠QAT本身来弥补FP4 Attention引入的精度损失，而不采用SageAttention中使用的额外异常值缓解启发式方法。
+
+具体步骤和修改包括：
+1.  **前向传播的Fake Quantization：**
+    *   Attn-QAT采用最简单的NVFP4 Attention实现，即在前向传播中对Q、K、V以及中间的$\tilde{P}$进行Fake Quantization（伪量化），模拟FP4计算。这等同于在NVFP4矩阵乘法之前应用$\phi^{-1}(\phi(\cdot))$操作。
+    *   为解决FlashAttention反向传播对高精度输出的需求，Attn-QAT在前向传播中计算两个输出：$O$（低精度，用于后续层）和$O'$（高精度，仅为反向传播的梯度计算而存储）。即，
+        *   $O_i \leftarrow \text{diag}(\alpha)O_i + \tilde{P}_F V_F_j$ (低精度输出)
+        *   $O'_i \leftarrow \text{diag}(\alpha)O'_i + \tilde{P} V_F_j$ (高精度输出，用于反向传播)
+        其中$\tilde{P}_F = \phi^{-1}(\phi(\tilde{P}))$。
+2.  **反向传播的修改：**
+    *   **匹配$P$的精度：** 在反向传播中，当重计算Attention概率$P$时，Attn-QAT会显式地对重计算的$P$进行Fake Quantization，以确保梯度计算与前向传播使用的低精度激活一致。
+        *   $P \leftarrow \exp(S - L_i)$
+        *   $P_F \leftarrow \phi^{-1}(\phi(P))$ (在反向传播中重计算时进行伪量化)
+    *   **使用高精度$O'$：** 为保证softmax反向传播计算的正确性，Attn-QAT利用前向传播中存储的高精度输出$O'$来计算标量项$dO^\top_i O'_i$，这等价于FlashAttention中假定的$P^\top_i dP_i$。
+        *   $D \leftarrow \text{rowsum}(dO \odot O')$ (使用高精度$O'$)
+        *   $dS \leftarrow P \odot (dP - D)/\sqrt{d}$
+
+**实现细节：**
+*   **训练内核：** 扩展了Triton参考Attention内核，在适当位置插入Fake Quantization。在Blackwell GPU上利用内联PTX指令`cvt.rn.satfinite.e2m1x2.f32`和`cvt.rn.f16x2.e2m1x2`进行NVFP4的量化和反量化。在非Blackwell GPU上，通过显式位运算模拟NVFP4。
+*   **推理内核：** 针对性能优化，使用定制的CUDA内核，该内核基于SageAttention3的CUDA实现进行了修改。LLM评估中，修改了vLLM的Triton PagedAttention实现以支持NVFP4 Fake Quantization。
+
+**实验设置：**
+*   **模型：** 视频扩散模型Wan-2.1（1.3B和14B），Qwen-3 14B和Llama-3.1 70B。
+*   **硬件条件：**
+    *   Wan-2.1-1.3B训练：GB200 NVL72，使用16块B200 GPU。
+    *   Wan-2.1-14B训练：64块H200 GPU（8个节点，每个节点8块H200）。
+    *   LLM实验（Qwen3-8B/14B, Llama 3.1-70B）：**4块NVIDIA B200 GPU**。
+    *   内核基准测试：RTX 5090。
+*   **软件版本/库：** Triton，CUDA，vLLM。
+*   **负载情况：**
+    *   扩散模型：Wan-2.1合成潜像生成，评估使用VBENCH（Huang et al., 2024）和盲人评估。
+    *   LLMs：C4数据集上的持续训练（continued training），Dolci-instruct上的监督微调（supervised fine-tuning, SFT）。评估使用lm-eval-harness（Gao et al., 2024）的多个基准测试（WikiText, HellaSwag, PIQA, WinoGrande, ARC-C）以及EvalScope（Team, 2024）的MMLU-Redux, GPQA-Diamond, MATH-500, GSM8K, IFEval。
+*   **对比基线：**
+    *   BF16 Attention（全精度基线）。
+    *   NVFP4 Attention（未训练的简单FP4Attention）。
+    *   SageAttention3（结合了异常值缓解技术的PTQ方法）。
+    *   FlashAttention2（内核吞吐量对比）。
+
+**关键对比结果：**
+1.  **质量恢复（扩散模型）：** 在Wan-2.1 14B和1.3B上，与BF16相比，仅用FP4 Attention（未训练）导致VBENCH指标显著下降。SageAttention3部分缓解了下降但仍不如BF16。Attn-QAT成功恢复了因FP4 Attention引起的质量损失，在VBENCH指标上与BF16性能相当，并优于SageAttention3。盲人评估也显示Attn-QAT的输出与BF16基线相当。这表明QAT本身足以补偿FP4 Attention误差，无需额外的异常值缓解启发式方法。
+2.  **无需异常值缓解：** Attn-QAT在实验中验证，引入K平滑或两级P量化等SageAttention3的启发式方法，对Attn-QAT的性能提升微乎其微，甚至没有一致的改进。
+3.  **反向传播设计的关键性：** 移除高精度$O'$（改用低精度$O$）会导致严重的训练不稳定（梯度爆炸、训练损失显著更高），VBENCH分数大幅下降。在反向传播中省略$P$的Fake Quantization虽然对最终VBENCH分数影响不大，但会产生更嘈杂的梯度范数，降低训练稳定性。
+4.  **LLM性能：**
+    *   **持续训练：** 在Qwen3-14B和Llama 3.1-70B的C4数据集持续训练中，Attn-QAT恢复了大部分由FP4 Attention引入的质量损失。对于Qwen3-14B，Attn-QAT性能几乎恢复到BF16水平，甚至在某些任务上有所提高。对于Llama 3.1-70B，仍有小幅差距（作者归因于训练预算和超参数调整限制）。
+    *   **监督微调（SFT）：** Attn-QAT可作为BF16 Attention的直接替代品用于SFT。Qwen3-14B在Attn-QAT下的基准性能与BF16几乎相同。Llama 3.1-70B也接近BF16。
+5.  **内核性能：** 在RTX 5090上，Attn-QAT的CUDA内核吞吐量比SageAttention3高约1.1倍至1.5倍。这主要归因于Attn-QAT消除了Q和K的额外预处理开销（平滑和两级量化）。
+
+**潜在局限或不足：**
+1.  **硬件依赖性：** 当前的Attn-QAT实现Attn-QAT论文深入研究了4比特（FP4）Attention的量化感知训练（QAT），旨在实现在新兴FP4 GPU上的端到端FP4计算。
+
+**场景与具体问题：**
+随着模型规模和部署需求的增长，量化成为降低内存占用和提高推理吞吐的关键技术。虽然8比特推理已被广泛采用，NVIDIA Blackwell架构引入的原生FP4 Tensor Core支持为4比特量化带来了新机遇，可提供高达2倍的算术强度提升和更低的内存流量。然而，Attention作为模型中的重要组成部分，其FP4量化仍然是一个主要障碍。这是因为FP4的动态范围极小（只有15个不同的值），且Attention的激活分布呈重尾（heavy-tailed）特性，包含更多异常值（outliers），导致其对数值精度高度敏感。
+
+**业界存在哪些不足：**
+1.  **FP4 Attention的质量下降：** 尽管像SageAttention系列（Zhang et al., 2024b;a; 2025）这样的先进方法在Attention量化方面取得了进展，但在推向4比特Attention时，仍会出现显著的质量下降。这些方法通常依赖后训练量化（PTQ）和额外的启发式技术（如Q/K平滑和两级量化）来缓解精度损失，但对于极端的4比特量化，其精度仍不足以可靠地恢复质量。
+2.  **QAT应用于Attention的挑战：** 现有的QAT范式在线性层上已得到充分探索，即在前向传播中模拟低精度执行，在反向传播中计算高精度梯度以更新权重。然而，现代Attention实现（如FlashAttention，Dao et al., 2022）是高度融合（fused）的算子，其反向传播依赖于重计算（recomputation）和对精度敏感的代数恒等式。因此，简单地将前向传播切换到FP4，同时重用FlashAttention的BF16反向传播内核，会导致梯度爆炸，表明Attention的稳定QAT需要前向和反向重计算中间变量之间精心的精度协调。
+
+**关键观察与假设：**
+作者发现，“即插即用”（drop-in）式的QAT——即天真地将FP4前向传播与高精度FlashAttention风格的反向传播结合——会导致训练不稳定。通过详细分析，Attn-QAT确定了稳定FP4 Attention的两个关键原则：
+1.  **Attention分数矩阵$P$的低精度重计算：** 在反向传播中，Attention分数矩阵$P$的重计算必须使用与前向传播相同的低精度，以确保与中间激活的一致性。
+2.  **FlashAttention梯度计算中隐式精度假设的解决：** FlashAttention依赖恒等式$P^\top_i dP_i = dO^\top_i O_i$来保持反向传播的线性内存复杂度。然而，当正向传播在FP4中执行而反向传播在BF16中执行时，这个假设就不再成立。
+
+**方法核心思路和主要步骤：**
+Attn-QAT通过修改QAT范式以适应FlashAttention风格的融合操作来解决上述挑战。其核心思路是依靠QAT本身来弥补FP4 Attention引入的精度损失，而不采用SageAttention中使用的额外异常值缓解启发式方法。
+
+具体步骤和修改包括：
+1.  **前向传播的Fake Quantization：**
+    *   Attn-QAT采用最简单的NVFP4 Attention实现，即在前向传播中对Q、K、V以及中间的$\tilde{P}$进行Fake Quantization（伪量化），模拟FP4计算。这等同于在NVFP4矩阵乘法之前应用$\phi^{-1}(\phi(\cdot))$操作。
+    *   为解决FlashAttention反向传播对高精度输出的需求，Attn-QAT在前向传播中计算两个输出：$O$（低精度，用于后续层）和$O'$（高精度，仅为反向传播的梯度计算而存储）。即，
+        *   $O_i \leftarrow \text{diag}(\alpha)O_i + \tilde{P}_F V_F_j$ (低精度输出)
+        *   $O'_i \leftarrow \text{diag}(\alpha)O'_i + \tilde{P} V_F_j$ (高精度输出，用于反向传播)
+        其中$\tilde{P}_F = \phi^{-1}(\phi(\tilde{P}))$。
+2.  **反向传播的修改：**
+    *   **匹配$P$的精度：** 在反向传播中，当重计算Attention概率$P$时，Attn-QAT会显式地对重计算的$P$进行Fake Quantization，以确保梯度计算与前向传播使用的低精度激活一致。
+        *   $P \leftarrow \exp(S - L_i)$
+        *   $P_F \leftarrow \phi^{-1}(\phi(P))$ (在反向传播中重计算时进行伪量化)
+    *   **使用高精度$O'$：** 为保证softmax反向传播计算的正确性，Attn-QAT利用前向传播中存储的高精度输出$O'$来计算标量项$dO^\top_i O'_i$，这等价于FlashAttention中假定的$P^\top_i dP_i$。
+        *   $D \leftarrow \text{rowsum}(dO \odot O')$ (使用高精度$O'$)
+        *   $dS \leftarrow P \odot (dP - D)/\sqrt{d}$
+
+**实现细节：**
+*   **训练内核：** 扩展了Triton参考Attention内核，在适当位置插入Fake Quantization。在Blackwell GPU上利用内联PTX指令`cvt.rn.satfinite.e2m1x2.f32`和`cvt.rn.f16x2.e2m1x2`进行NVFP4的量化和反量化。在非Blackwell GPU上，通过显式位运算模拟NVFP4。
+*   **推理内核：** 针对性能优化，使用定制的CUDA内核，该内核基于SageAttention3的CUDA实现进行了修改。LLM评估中，修改了vLLM的Triton PagedAttention实现以支持NVFP4 Fake Quantization。
+
+**实验设置：**
+*   **模型：** 视频扩散模型Wan-2.1（1.3B和14B），大型语言模型（LLMs）Qwen-3 14B和Llama-3.1 70B。
+*   **硬件条件：**
+    *   Wan-2.1-1.3B训练：GB200 NVL72，使用16块B200 GPU。
+    *   Wan-2.1-14B训练：64块H200 GPU（8个节点，每个节点8块H200）。
+    *   LLM实验（Qwen3-8B/14B, Llama 3.1-70B）：4块NVIDIA B200 GPU。
+    *   内核基准测试：RTX 5090。
+*   **软件版本/库：** Triton，CUDA，vLLM。
+*   **负载情况：**
+    *   扩散模型：Wan-2.1合成潜像生成，评估使用VBENCH（Huang et al., 2024）和盲人评估。
+    *   LLMs：C4数据集上的持续训练（continued training），Dolci-instruct上的监督微调（supervised fine-tuning, SFT）。评估使用lm-eval-harness（Gao et al., 2024）的多个基准测试（WikiText, HellaSwag, PIQA, WinoGrande, ARC-C）以及EvalScope（Team, 2024）的MMLU-Redux, GPQA-Diamond, MATH-500, GSM8K, IFEval。
+*   **对比基线：**
+    *   BF16 Attention（全精度基线）。
+    *   NVFP4 Attention（未训练的简单FP4Attention）。
+    *   SageAttention3（结合了异常值缓解技术的PTQ方法）。
+    *   FlashAttention2（内核吞吐量对比）。
+
+**关键对比结果：**
+1.  **质量恢复（扩散模型）：** 在Wan-2.1 14B和1.3B上，与BF16相比，仅用FP4 Attention（未训练）导致VBENCH指标显著下降。SageAttention3部分缓解了下降但仍不如BF16。Attn-QAT成功恢复了因FP4 Attention引起的质量损失，在VBENCH指标上与BF16性能相当，并优于SageAttention3。盲人评估也显示Attn-QAT的输出与BF16基线相当。这表明QAT本身足以补偿FP4 Attention误差，无需额外的异常值缓解启发式方法。
+2.  **无需异常值缓解：** Attn-QAT在实验中验证，引入K平滑或两级P量化等SageAttention3的启发式方法，对Attn-QAT的性能提升微乎其微，甚至没有一致的改进。
+3.  **反向传播设计的关键性：** 移除高精度$O'$（改用低精度$O$）会导致严重的训练不稳定（梯度爆炸、训练损失显著更高），VBENCH分数大幅下降。在反向传播中省略$P$的Fake Quantization虽然对最终VBENCH分数影响不大，但会产生更嘈杂的梯度范数，降低训练稳定性。
+4.  **LLM性能：**
+    *   **持续训练：** 在Qwen3-14B和Llama 3.1-70B的C4数据集持续训练中，Attn-QAT恢复了大部分由FP4 Attention引入的质量损失。对于Qwen3-14B，Attn-QAT性能几乎恢复到BF16水平，甚至在某些任务上有所提高。对于Llama 3.1-70B，仍有小幅差距（作者归因于训练预算和超参数调整限制）。
+    *   **监督微调（SFT）：** Attn-QAT可作为BF16 Attention的直接替代品用于SFT。Qwen3-14B在Attn-QAT下的基准性能与BF16几乎相同。Llama 3.1-70B也接近BF16。
+5.  **内核性能：** 在RTX 5090上，Attn-QAT的CUDA内核吞吐量比SageAttention3高约1.1倍至1.5倍。这主要归因于Attn-QAT消除了Q和K的额外预处理开销（平滑和两级量化）。
+
+**潜在局限或不足：**
+1.  **硬件依赖性：** 当前的Attn-QAT实现基于SageAttention3，并主要在RTX 5090上验证。作者指出，未来的工作需要为SM100 GPU（如B200和B300）开发原生FP4 Attention内核。
+2.  **训练预算限制：** 对于Llama 3.1-70B，Attn-QAT**未能完全匹配BF16性能**，作者归因于**有限的训练预算和缺乏超参数调整**，暗示可能需要更长时间的训练来进一步缩小差距。
+3.  **特定于Attention：** 本文仅关注Attention操作的QAT，而模型中的其**他非Attention组件（如线性层）仍保持高精度**。未来的端到端FP4模型可能需要更全面的低精度训练策略。
+4.  **KV Cache：** 作者提到将4比特KV缓存集成到主流服务库是未来工作，以进一步减少推理期间的内存开销。
+5.  **通用性：** 尽管Attn-QAT在扩散模型和LLM上表现良好，但其发现（例如，高精度O'）在其他计算图或模型架构中是否同样适用，仍需进一步验证。。作者指出，未来的工作需要为SM100 GPU（如B200和B300）开发原生FP4 Attention内核。
+2.  **训练预算限制：** 对于Llama 3.1-70B，Attn-QAT未能完全匹配BF16性能，作者归因于有限的训练预算和缺乏超参数调整，暗示可能需要更长时间的训练来进一步缩小差距。
+3.  **特定于Attention：** 本文仅关注Attention操作的QAT，而模型中的其他非Attention组件（如线性层）仍保持高精度。未来的端到端FP4模型可能需要更全面的低精度训练策略。
+4.  **KV Cache：** 作者提到将4比特KV缓存集成到主流服务库是未来工作，以进一步减少推理期间的内存开销。
+5.  **通用性：** 尽管Attn-QAT在扩散模型和LLM上表现良好，但其发现（例如，高精度O'）在其他计算图或模型架构中是否同样适用，仍需进一步验证。
+6. 
 ## UniEP
 UniEP: Unified Expert-Parallel MoE MegaKernel for LLM Training
 
