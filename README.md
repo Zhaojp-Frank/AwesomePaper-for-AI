@@ -1,5 +1,94 @@
 # Awesome or inspiring paper for AI
 
+## RL-LoRA bench
+Evaluating Parameter Efficient Methods for RLVR
+
+https://arxiv.org/pdf/2512.23165 2025.12.30
+https://github.com/MikaStars39/PeRL 
+ckpts: https://huggingface.co/MikaStars39/PeRL
+
+1. 评估了在可验证奖励强化学习（RLVR）范式下各种参数高效微调（PEFT）方法的性能，**挑战了当前普遍采用标准LoRA**的次优性问题。
+2. 论文发现，**DoRA、AdaLoRA和MiSS等结构化变体**持续优于标准LoRA，其中**DoRA甚至超越了全参数微调**，而SVD启用的初始化策略（如PiSSA、MiLoRA）则因与RL优化机制不匹配而导致性能崩溃。
+3. verl/vllm DAPO 最大DeepSeek-R1-Distill-7b模型家族在数学推理基准上的广泛评估，强调了RLVR需要足够的表达能力，并倡导采用**更几何感知的PEFT方法**来替代默认的LoRA。
+ **标准LoRA (42.5%) 不如Full-parameter fine-tuning** (44.9%)。
+**DoRA (46.6%) 整体平均表现超越Full-parameter fine-tuning**，在AIME和AMC等基准上表现突出。
+标准LoRA对RLVR而言次优，结构变体因解耦学习动力学、分片参数或自适应参数分配，更适合RLVR。
+
+<img width="1028" height="362" alt="image" src="https://github.com/user-attachments/assets/bf91bffb-858a-4b9f-943d-1395531c6b89" />
+<img width="836" height="350" alt="image" src="https://github.com/user-attachments/assets/3c642d79-24ce-40d0-b289-869efb5c0957" />
+<img width="348" height="324" alt="image" src="https://github.com/user-attachments/assets/117109ca-b8f4-4b38-a7e5-71702d60bd9b" />
+<img width="942" height="207" alt="image" src="https://github.com/user-attachments/assets/a9f9411b-fc47-4b2e-ad20-14242c1d69c9" />
+
+本研究对强化学习结合可验证奖励（RLVR）范式下的参数高效微调（PEFT）方法进行了首次系统性评估。RLVR旨在通过可验证的反馈提升大型语言模型（LLM）的推理能力，但业界通常默认采用标准LoRA，其在RLVR场景下的最优性尚未得到证实。
+
+**1. 场景与具体问题**
+LLM在数学和科学推理任务中表现出色，而RLVR是进一步增强这些推理能力的主导范式。然而，RL训练过程复杂且资源密集，尤其是RLVR依赖稀疏奖励信号（1-bit reward），这使得更新局限于模型中的小部分子网络或稀疏参数，暗示全参数训练存在显著冗余。尽管LoRA已被证明在RL中具有竞争力，但现有研究普遍局限于标准LoRA。因此，核心问题是：哪种PEFT方法最适合强化学习？
+
+**2. 业界存在不足**
+当前，PEFT方法在强化学习中的应用主要局限于标准LoRA。这种普遍性引发了一个关键不确定性，即标准LoRA架构是否真正代表了RL独特优化动力学的最佳策略，因为在监督微调（SFT）场景下，已有许多其他PEFT变体（如DoRA）被证明比LoRA更强大。
+
+**3. 关键观察与假设**
+*   **假设**：标准LoRA可能并非RLVR的最佳PEFT策略，存在其他结构变体可能更优。
+*   **观察1**：结构变体（如DoRA、AdaLoRA、MiSS）表现优于标准LoRA。
+*   **观察2**：基于SVD的初始化策略（如PiSSA、MiLoRA）出现谱崩塌（spectral collapse）现象。
+*   **观察3**：极端参数缩减（如VeRA、Rank-1）严重限制了推理能力。
+*   **核心假设**：RLVR的优化动力学具有“非主成分”（off-principal）特性，即模型更新倾向于低曲率、非主成分子空间以保留预训练模型的谱几何结构。基于SVD的初始化策略若强制在主成分上更新，将与RLVR的内在特性产生冲突。
+
+**4. 方法核心思路和主要步骤**
+本研究通过大规模、系统的评估来回答核心问题。
+*   **PEFT方法选择与分类**：评估了12种以上的PEFT方法，将其分为五类：
+    *   **Baselines**：Full-Parameter Fine-Tuning和标准LoRA。
+    *   **Structural Variants**：DoRA（解耦权重幅度和方向）、AdaLoRA（自适应秩结构）、MiSS（子网络选择）。这些方法改变了标准LoRA的BA乘积的架构形式。
+    *   **Initialization Strategies**：PiSSA（使用W0的主成分初始化A、B）、MiLoRA（使用W0的次要奇异分量初始化A、B）、LoRA+（差异化学习率）、rsLoRA（稳定秩缩放因子）。
+    *   **Efficiency-Oriented Variants**：LoRA-FA（冻结A，仅训练B）、VeRA（冻结随机投影矩阵，仅训练缩放向量）。
+    *   **Other PEFT Mechanisms**：IA3（元素级激活向量缩放）、LayerNorm Tuning（仅调整LayerNorm参数）。
+*   **RLVR算法**：采用DAPO作为标准训练算法，并对GRPO和Dr. GRPO进行了消融实验，以验证结果的通用性。
+*   **目标模块**：遵循先前的研究，所有PEFT方法均应用于LLM中的所有线性模块（`{q, k, v, o, gate, up, down} proj`）。
+*   **超参数设置**：为确保公平比较，所有方法统一设置LoRA秩（32）、dropout率（0.05）、alpha（64）。
+
+**5. 实验设置**
+*   **模型**：DeepSeek-R1-Distill-Qwen-1.5B 和 DeepSeek-R1-Distill-Qwen-7B。这些模型已经过SFT，具备初始推理能力和格式。
+*   **数据集**：open-r1/DAPO-Math-17k-Processed（约17.4k数学查询），强制输出格式（`<think>...</think>`和`\\boxed{}`）。
+*   **奖励机制**：严格的基于结果的二元奖励（1表示数学等价的正确答案，0表示错误）。
+*   **训练环境**：Accelerate with DeepSpeed ZeRO-2 优化（offloading optimizer states），vLLM引擎用于Rollout生成。
+*   **训练参数**：G=8 个Rollout/prompt，恒定学习率1e-5，无warmup。最大prompt长度512，completion长度16384。DAPO epsilon=0.28（clip-higher），KL系数β=0。
+*   **批次配置**：
+    *   1.5B模型：per-device batch size=4，global batch size=128，训练1024步。
+    *   7B模型：per-device batch size=1，global batch size=32，训练8192步。
+    *   梯度累积步数均为8。
+*   **评估基准**：数学推理基准，包括MATH-500、AIME24/25、AMC、Minerva、HMMT。
+*   **评估指标**：Average Accuracy @k 和 Pass@1 in k，其中k代表生成样本数量，以降低小数据集的统计变异性。
+*   **硬件/软件**：未明确提及具体GPU型号和软件版本，但使用了DeepSpeed ZeRO-2和vLLM。
+
+**6. 关键对比结果**
+*   **结构变体优于标准LoRA**：
+    *   **标准LoRA (42.5%) 不如Full-parameter fine-tuning** (44.9%)。
+    *   **DoRA (46.6%) 整体平均表现超越Full-parameter fine-tuning**，在AIME和AMC等基准上表现突出。
+    *   AdaLoRA (44.2%) 和 MiSS (43.4%) 也持续优于标准LoRA。
+    *   **结论**：标准LoRA对RLVR而言次优，结构变体因解耦学习动力学、分片参数或自适应参数分配，更适合RLVR。
+*   **SVD-based初始化策略的失败**：
+    *   PiSSA表现灾难性（0.2%），MiLoRA表现也显著落后（18.0%）。
+    *   **机制解释**：RLVR的更新倾向于低曲率的非主成分子空间。PiSSA强制更新在主成分子空间，导致设计冲突而崩塌。MiLoRA虽初始化于次要奇异分量，但由于初始适配器权重近似为零，优化轨迹仍被梯度谱特性（倾向于主成分方向）主导，导致模型退化回主成分更新，最终失败。
+    *   **结论**：现有的SVD-based初始化策略不适合RLVR。
+*   **表达能力的下限**：
+    *   LoRA-FA（冻结A，仅训练B）仍能保持竞争力，与标准LoRA相当。
+    *   VeRA（冻结低秩矩阵，仅学习缩放向量）性能下降至40.7%。
+    *   IA3（向量级更新）严重退化至22.3%。
+    *   **结论**：RLVR需要最小的表达能力阈值。适度参数缩减有效，但极端参数缩减（如仅向量更新）会形成结构瓶颈，无法有效学习复杂的推理行为。Rank-1适配器也表现不佳。
+*   **消融实验与可扩展性**：
+    *   **Batch Size**：较大的batch size在RLVR中可能表现更好，SFT中小batch的启发式方法在RLVR中表现不佳。
+    *   **RLVR算法**：PEFT方法的有效性不受具体RLVR算法（GRPO, DAPO, Dr. GRPO）的影响，性能保持一致，说明PEFT效果由稀疏可验证奖励学习的基本动力学驱动。
+    *   **学习率**：学习率大小是RLVR稳定性的关键因素，遵循`MLoRA · (2000/hidden_size)^(model_pow + LoRA_pow)`的缩放法则。
+    *   **LoRA Rank**：高秩（如16和32）优于低秩（如1），表明不应过度进行秩缩减，应保持适度的秩以确保足够的表达能力。
+    *   **7B模型扩展**：在7B模型上，DoRA和LoRA+（55.0%）仍优于标准LoRA（54.8%），验证了结论在更大模型上的通用性。
+
+**7. 潜在局限或不足**
+*   **基础设施**：当前使用的TRL框架在大型分布式训练方面存在局限性，未来需要迁移到更高性能的框架（如VeRL）。
+*   **训练时间**：当前评估局限于短期的训练计划，未来的工作需要进行更长时间的训练以验证PEFT-RL的稳定性和渐近性能。
+*   **理论解释不足**：尽管实验揭示了结构变体的有效性和SVD-based初始化失败的现象，但其精确的数学原因尚待充分阐明。需要更深入的谱演化和优化景观分析来建立理论基础。
+*   **适用性范围**：目前仅限于数学推理领域。未来工作需要扩展到多模态环境、多轮交互和异步RL设置，以验证发现的普适性。
+*   **部署稳定性**：论文提及了权重合并的数值稳定性以及训练和推理阶段之间潜在不一致等实际部署挑战，这些问题在现有工作中尚未完全解决。
+  
 ## UniToolCall
 UniToolCall: Unifying Tool-Use Representation, Data, and Evaluation for LLM Agents
 
