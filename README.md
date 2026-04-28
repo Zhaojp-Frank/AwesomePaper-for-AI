@@ -1,5 +1,108 @@
 # Awesome or inspiring paper for AI
 
+## SAW-INT4
+SAW-INT4: **System-AWare 4-Bit KV-Cache** Quantization for Real-World LLM Serving
+
+https://arxiv.org/pdf/2604.19157 2026.4.21
+
+https://github.com/togethercomputer/saw-int4
+
+1. 旨在解决真实世界LLM服务中KV缓存内存的瓶颈问题，尤其指出现有KV缓存压缩方法常因**违反分页内存布局和融合attn**等实际服务约束而失效。
+2. 核心发现是，在这些约束下，采用**块对角Hadamard旋转**（Block-Diagonal Hadamard Rotation）的**简单逐令牌INT4量化**（token-wise INT4 quantization），能始终实现最佳的精度-效率权衡，恢复近乎所有由朴素INT4量化造成的精度损失。
+3. 实现了融合旋转-量化CUDA核（fused rotation–quantization CUDA kernel），能**无缝集成并匹配原始INT4吞吐量**，提升吞吐8%到41%, 同时在敏感模型上**提供近无损精度**，远超更复杂但服务兼容性差的方法。
+SGLang, FA3 prefill + Triton decode attn; H100 80GB GPU;Qwen3-4B~32B, GLM-4.7-FP8(GQA)
+没测试MLA模型
+
+<img width="741" height="709" alt="image" src="https://github.com/user-attachments/assets/6e59d530-000f-44ae-96b5-f3faccc0bd88" />
+
+
+**场景与具体问题 (Scenario and Specific Problem):**
+在真实世界的LLM服务中，KV-Cache的内存是主要瓶颈。系统必须同时支持延迟敏感的小批次请求和高吞吐量的并发工作负载。随着LLM上下文窗口的不断增长（例如，Llama 4 Scout的10M上下文需要约1.8 TiB的KV-Cache），KV-Cache的内存占用与序列长度呈线性增长，这直接限制了给定硬件上可以并发服务的请求数量，成为吞吐量的主要瓶颈。因此，急需一种有效的KV-Cache压缩方法。
+
+**业界存在哪些不足 (Industry Shortcomings):**
+尽管现有许多KV-Cache压缩方法（如KIVI、Kitty、向量量化方法、通道量化、token逐出或学习码本）在离线精度或压缩比上有所改进，但它们往往违反了实际服务系统所固有的约束，导致在部署中效果不佳或带来负面影响。这些约束包括：
+1.  **Paged Memory Layouts:** 现代系统（如vLLM、SGLang）将KV-Cache划分为固定大小、非连续的块。
+    *   Token逐出（Token Eviction）若不清理整个块会导致大量内部碎片。
+    *   混合精度（Mixed-Precision）方案破坏了高效页表索引所需的统一布局。
+    *   通道级缩放（Channel-Wise Scaling）需要跨非连续块进行内存访问，效率低下。
+2.  **Attention Kernel Constraints:** 高吞吐量解码依赖于FlashAttention风格的内核，直接从Paged buffer读取，因此反量化必须在内核中融合完成。
+    *   码本查找（Codebook Lookups）引入不规则的、数据相关的内存访问模式，不适合GPU执行，增加解码延迟。
+    *   基变换（Basis-Transforms）需要即时矩阵-向量乘法，增加寄存器压力，破坏内核平铺效率。
+    *   跨步内存访问（Strided Memory Access）破坏了GPU Attention内核所需的内存合并（memory coalescing）。
+
+**关键观察与假设 (Key Observation and Hypothesis):**
+论文的核心观察是，在现代LLM服务系统的严格约束下，**token-wise quantization**是唯一可行且兼容的范式。这是因为token-wise操作在每个token上独立进行，避免了跨块依赖，并保留了合并内存访问模式。在此基础上，论文发现并假设一个简单的设计——**token-wise INT4 quantization with block-diagonal Hadamard rotation**——能在满足这些系统兼容性的同时，始终实现最佳的精度-效率权衡。复杂的量化方法（如向量量化和Hessian-aware量化）在考虑服务兼容性后，仅能提供边际增益。
+
+**方法核心思路和主要步骤 (Core Methodology and Main Steps):**
+论文提出了SAW-INT4，其核心方法是**基于分块对角Hadamard旋转的Token-Wise INT4量化**。
+1.  **Token-Wise INT4 Quantization:** 采用非对称的token-wise INT4方案，对每个head vector $x_{t,h}$ 进行量化，使用每个token和每个head单独的scale和zero-point。
+    *   尺度因子 $s_{t,h} = \frac{\max(x_{t,h}) - \min(x_{t,h})}{2^4 - 1}$
+    *   零点 $z_{t,h} = \text{round}(-\frac{\min(x_{t,h})}{s_{t,h}})$
+    *   量化 $q_{t,h,i} = \text{clip}(\text{round}(\frac{x_{t,h,i}}{s_{t,h}}) + z_{t,h}, 0, 15)$
+    *   反量化 $\hat{x}_{t,h,i} = s_{t,h}(q_{t,h,i} - z_{t,h})$
+    这种方法系统友好，将KV-Cache占用减少4倍，但直接应用会导致严重的精度下降，主要是因为通道范围异质性。
+2.  **Block-Diagonal Rotation (BDR) Quantization:** 为了缓解通道级异常值问题并避免数据驱动的校准，引入正交变换Hadamard旋转。
+    *   在量化前，对KV-Cache进行旋转：$\tilde{K} = \text{quant}(KH)$, $\tilde{V} = \text{quant}(VH)$。
+    *   Hadamard变换H是正交的，能保留L2范数，同时在维度间重新分布能量，减少通道方差并平滑异常值。
+    *   为了实现高效，采用**分块对角旋转 (Block-Diagonal Rotation)**：将每个head vector $x$ 划分为大小为 $h$ 的块，即 $K = [K^{(1)}, \dots, K^{(d_h/h)}]$。每个块独立旋转和量化：$\tilde{K}^{(i)} = \text{quant}(K^{(i)} H_h)$，其中 $H_h \in \mathbb{R}^{h \times h}$ 是Hadamard矩阵。
+    *   解码时，查询向量 $q$ 也被旋转 $q_{rot} = q \cdot H_{transform}$，注意力计算在旋转空间进行：$\text{Score} = \text{softmax}(\frac{q_{rot} \cdot \text{dequant}(\tilde{K}_{rot})^\top}{\sqrt{d_h}})$, $\text{Output} = \text{Score} \cdot \text{dequant}(\tilde{V}_{rot}) \cdot H_{transform}$。
+3.  **Fused Implementation:** 关键在于将旋转操作直接融合到解码注意力内核中。查询向量可以在读取时即时旋转，并立即被QK点积循环消费，无需物化中间结果，避免了额外的内核启动和全局内存流量，从而隐藏了大部分旋转开销，使总内核时间与纯INT4接近。
+
+**实验设置 (Experimental Setup):**
+*   **实现 (Implementation):**
+    *   基于Together AI的系统，实现了融合的旋转-量化CUDA内核。
+    *   内核集成到Paged KV-Cache布局和FlashAttention风格的解码中。
+    *   使用SGLang作为服务引擎，配备FA3预填充和Triton解码后端。
+*   **硬件条件 (Hardware Conditions):**
+    *   NVIDIA H100 80GB GPU，数量从1到8不等。
+    *   多数实验在2x H100 (tp=2) 或 8x H100 (tp=8) 上进行。
+*   **软件版本 (Software Versions):**
+    *   对比基线中的vLLM、SGLang、TensorRT-LLM代表了业界生产服务引擎。
+    *   Hugging Face `model.generate` 用于对比一些复杂方法的性能，其未采用连续批处理和PagedAttention，因此低估了这些方法的性能。
+*   **负载情况 (Workload Characteristics):**
+    *   **并发级别 (Concurrency):** 从1到256不等。
+    *   **上下文长度 (Context Length):**
+        *   **长上下文 (Long context):** 平均输入长度8192或16384 tokens，输出长度1024 tokens。
+        *   **短上下文 (Short context):** 平均输入长度256 tokens，输出长度1024 tokens。
+    *   **模型 (Models):** Qwen3-4B, Qwen3-8B, Qwen3-32B, GLM-4.7-FP8 (358B)。
+    *   **解码设置 (Decoding Settings):** Temperature = 0.6, top-p = 0.95, max sequence length 32k。
+*   **对比基线 (Baselines):**
+    *   **BF16:** 全精度KV-Cache，作为无量化基线。
+    *   **INT4:** 朴素的token-wise 4-bit量化。
+    *   **KMeans (Vector Quantization):** 基于KMeans的向量量化，使用不同数量的码本（C=1, 16, 256, 2048）。
+    *   **Hessian-Aware Quantization:** Hessian-aware量化（基于Qwen3-8B的查询统计进行校准）。
+    *   **Kitty:** 现有的一种2-bit KV-Cache量化方法。
+    *   **各种BDR配置:** BDR-k（k为分块大小，例如16, 64, 128），以及BDR仅应用于Key（K）或同时应用于Key和Value（K&V）。
+
+**关键对比结果 (Key Comparison Results):**
+1.  **精度表现:**
+    *   **朴素INT4 (Naive INT4):** 在Qwen3-4B和Qwen3-8B上，朴素INT4的准确率几乎为0，表明其不可用。对于GLM-4.7，朴素INT4表现尚可，接近BF16，表明该模型对低位KV-Cache量化本身具有更强的鲁棒性。
+    *   **Hadamard旋转 (BDR):**
+        *   **主要增益来源:** BDR恢复了朴素INT4丢失的大部分精度。对于Qwen3-4B，BDR-128将平均分数从0恢复到73.78，接近BF16的75.64。对于Qwen3-8B，BDR-128实现了69.97，仅比BF16的70.84低0.87点。
+        *   **分块大小影响:** 适度的分块大小（如64或128）在Qwen3模型上表现最佳，而较小的分块（如16）会导致显著的精度下降。对于Qwen3模型，增加分块大小到128，精度提升不再显著。
+        *   **仅Key旋转:** 仅对Key进行旋转（BDR-k(K)）在实践中已足够，精度与K&V同时旋转相当，且通常略优，有助于进一步降低运行时开销。
+    *   **复杂方法:**
+        *   **KMeans (Vector Quantization):** 即使使用更大的码本（如C=2048），KMeans的精度略低于BDR-128，且受码本大小影响较大。
+        *   **Hessian-Aware Quantization:** 在Qwen3-4B上表现明显不如BDR-128，且需要额外的校准开销。
+        *   **结合:** KMeans与BDR结合（KM + BDR-128）在Qwen3-4B上能提供微小的额外精度增益（73.35），但与单独BDR-128相比提升有限。
+    *   **结论:** 旋转是有效INT4 KV-Cache量化的单一最重要因素，而更复杂的量化方案在旋转的基础上提供的边际收益微乎其微。
+2.  **吞吐量与系统效率:**
+    *   **Prefill阶段 (Table 6):** 融合的BDR实现（INT4-Fused-RotateK）引入的开销非常小，对总运行时间贡献仅0.10%到0.28%。未融合的旋转和KMeans引入了明显更高的开销。
+    *   **Decode阶段 (Table 7):** 融合的BDR与纯INT4的内核开销相当，因为KV量化成本在小批量、延迟主导的执行中微不足道。未融合旋转引入约1.5%的额外开销。KMeans方法由于每token的聚类计算和Attention内核内的额外内存加载开销，导致Attention内核速度慢1.4倍到2.5倍，总开销显著。
+    *   **端到端吞吐量 (Figure 4, 6, 7):**
+        *   **INT4+BDR vs. Pure INT4:** 融合的INT4+BDR在所有工作负载下，始终匹配或略微超过纯INT4的吞吐量，这证明了Hadamard旋转的开销在端到端层面是可忽略不计的。
+        *   **INT4+BDR vs. BF16:** 在长上下文高并发场景下，INT4和INT4+BDR显著优于BF16，系统吞吐量（TPSsys）提升高达8%到41%。这是因为INT4减少了KV-Cache内存占用，使得在相同内存预算下能够支持更大的解码批次。
+        *   **复杂方法 (KMeans, Hessian):** 在端到端吞吐量测试中，KMeans和Hessian-based方法未能达到BF16或INT4+BDR的性能，印证了它们在实践中会因系统兼容性问题而失败的观点。
+    *   **结论:** 论文的融合实现成功地保留了INT4的效率优势，同时显著提升了模型质量。
+
+**潜在局限或不足 (Potential Limitations or Shortcomings):**
+1.  **Hadamard矩阵的适用性:** 论文主要使用了Hadamard变换，虽然其具有计算效率和正交性，但其固定性可能不总是最优的，特别是在某些数据分布下。更通用的正交变换或数据自适应变换可能理论上更好，但会增加系统复杂性。
+2.  **小分块的性能未充分挖掘:** 论文提到较小的分块尺寸 $h$ 可以减少每次旋转的计算量并提高内核效率，但这些增益并未始终转化为端到端吞吐量的提升。这表明内存带宽是主要瓶颈，旋转的算术成本不占主导。这虽是BDR设计的合理性，但也可能是未来优化方向，比如在其他更计算密集型的阶段进行应用。
+3.  **校准开销的详细评估:** 虽然论文提及了Hessian-aware和KMeans方法需要额外的离线校准开销，但并未详细量化这些校准的实际时间和资源消耗，这对于评估其部署复杂性很重要。
+4.  **模型泛化性：** 尽管在Qwen3系列和GLM-4.7上进行了验证，但LLM模型架构众多，不同模型的激活分布特性可能存在差异，BDR在其他架构上的表现可能需要进一步验证。
+5.  **与其他前沿量化方法的深入对比：** 论文主要关注与满足系统约束的量化方法的对比，但业界仍在涌现新的KV-Cache量化技术（如一些基于低秩分解或更精细的混合精度方案）。与这些最新、同时也在努力解决系统兼容性问题的量化方法进行更全面的端到端对比可能会提供更全面的图景。
+   
+
 ## Attn-QAT
 Attn-QAT: 4-Bit Attention With Quantization-Aware Training 
 
