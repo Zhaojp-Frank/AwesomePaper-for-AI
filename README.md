@@ -1,5 +1,90 @@
 # Awesome or inspiring paper for AI
 
+
+## GeoRA
+GeoRA: Geometry-Aware Low-Rank Adaptation for RLVR
+
+https://arxiv.org/pdf/2601.09361 2026.4.23 美团 北大
+
+1. 针对RLVR 面临的**几何结构敏感性**和现有参数高效微调PEFT LoRA、PiSSA、稀疏微调存在的**几何失配与硬件效率**瓶颈，GeoRA 提出了一种**几何感知的低秩适应框架**。
+2. 新观察在于 RLVR 的有效**更新子空间是各向异性且可压缩**的，**具有结构化的低秩形式**；其核心方法是**通过对几何约束视图 `WGeo` 进行 SVD 来初始化低秩适配器**，并冻结残差矩阵作为结构锚点。
+3. 在 Qwen 和 Llama 模型（1.5B 至 **32B**）上，于数学、医学和编码等 RLVR 任务中，持续超越了强大的低秩基线，同时展现出更强的泛化能力、更少遗忘，并实现了更高的训练稳定性与硬件效率。
+GRPO，DeepMath-103K，80GB GPU 上进行训练（
+
+本论文提出了 GeoRA (Geometry-Aware Low-Rank Adaptation)，一种专为可验证奖励强化学习 (RLVR) 设计的低秩适应框架。
+<img width="769" height="621" alt="image" src="https://github.com/user-attachments/assets/761c4e6e-85ac-4b2d-95f3-baa8f1da7d66" />
+<img width="771" height="323" alt="image" src="https://github.com/user-attachments/assets/850aa10d-2a96-4dfa-8215-41e7bd912414" />
+<img width="776" height="317" alt="image" src="https://github.com/user-attachments/assets/990f2af7-2531-4fa7-8571-6ebf4df9f586" />
+
+**1. 场景与具体问题**
+RLVR 是提升大型推理模型能力（如 OpenAI-o1 和 DeepSeek-R1）的关键范式。与监督微调 (SFT) 不同，RLVR 更像一个约束优化过程，通过奖励诱导的采样偏差来放大潜在的推理行为，并且对预训练几何结构的保持高度敏感。过度激进的更新可能导致行为崩溃或通用能力下降。
+然而，现有参数高效微调 (PEFT) 方法在 RLVR 场景下存在局限性：
+*   **SFT-oriented 低秩适应方法**（如 PiSSA）存在几何不匹配问题。它们主要为 SFT 设计，将更新强制推到主成分上，这与 RLVR 偏好的更新子空间（通常是“偏离主成分”的低幅度方向）相冲突。
+*   **非结构化稀疏微调方法**（如 SparseFT）虽然与 RLVR 的更新模式更一致，但由于现代硬件对非结构化稀疏性的支持有限，无法转化为实际的效率提升，甚至可能引入额外开销，从而导致效率瓶颈。
+
+**2. 关键观察与假设**
+GeoRA 基于以下关键观察：
+*   有效的 RLVR 更新子空间是**各向异性** (anisotropic) 且**可压缩** (compressible) 的，而非各向同性。它呈现出一种结构化的低秩形式。
+*   RLVR 更新在几何上偏向于**保留预训练结构**，即“偏离主成分” (off the principals)，倾向于低幅度且正交于预训练特征的方向。
+
+**3. 方法核心思路和主要步骤**
+GeoRA 的核心思想是**识别一个可压缩、几何对齐的更新子空间，并通过结构化 SVD 初始化来对其进行参数化，同时使用冻结的残差锚点来保持预训练结构**。
+
+具体步骤如下：
+**a. 几何感知低秩结构 (Geometry-Aware Low-Rank Structure)**
+GeoRA 不像标准 LoRA 那样随机或零初始化适配器，而是利用一个**几何约束视图 $W_{Geo}$** 的可压缩结构来推导结构化初始化。
+*   **SVD 分解**: 对 $W_{Geo}$ 执行奇异值分解 (SVD)：
+    $$W_{Geo} = U_{Geo}\Sigma_{Geo}V_{Geo}^\top \quad (1)$$
+*   **适配器初始化**: 提取前 $r$ 个奇异分量以捕获主要几何信息，并用它们初始化低秩适配器 $A_{Geo}$ 和 $B_{Geo}$：
+    $$A_{Geo} = \Sigma_{Geo}^{1/2}[:r,:r]V_{Geo}^\top[:,:r] \quad (2)$$
+    $$B_{Geo} = U_{Geo}[:,:r]\Sigma_{Geo}^{1/2}[:r,:r] \quad (3)$$
+    通过这种设计，初始的 $B_{Geo}A_{Geo}$ 构造了 $W_{Geo}$ 的秩 $r$ 近似。
+*   **残差矩阵 (Residual Matrix) 与前向传播**: 为了确保模型输出在初始化时不变并保留核心能力，GeoRA 计算一个残差矩阵 $W_{res}$：
+    $$W_{res} = W - \frac{\alpha}{r} B_{Geo}A_{Geo} \quad (4)$$
+    在训练过程中，$W_{res}$ 被冻结。隐藏状态 $h$ 的计算如下：
+    $$h = W_{res}x + \frac{\alpha}{r} B_{Geo}A_{Geo}x \quad (5)$$
+    其中 $W_{res}$ 是冻结部分，$\frac{\alpha}{r} B_{Geo}A_{Geo}$ 是可训练部分。这种构造使得模型在初始化时保持功能不变 ($W_{res}x + \frac{\alpha}{r} B_{Geo}A_{Geo}x = Wx$)，并且施加了一个硬性结构约束：优化器只能更新由 $A_{Geo}$ 和 $B_{Geo}$ 参数化的几何对齐流形，而 $W_{res}$ 则作为稳定锚点，防止预训练表示的侵蚀。
+
+**b. 几何先验构造 (Geometric Prior Construction)**
+为了实例化一个几何感知的更新区域，GeoRA 使用一种掩码策略构建 $W_{Geo}$：
+*   **谱先验 (Spectral Prior) $M_{Spec}$**: 通过选择秩 $r$ 近似 $\hat{W}_r$ 中绝对值最小的 $\rho$ 分数条目来促进几何稳定性：
+    $$(M_{Spec})_{i,j} = I\left(\left|(\hat{W}_r)_{i,j}\right| \le \tau_{Spec}(\rho)\right) \quad (6)$$
+    其中 $\tau_{Spec}(\rho)$ 是 $\hat{W}_r$ 中绝对值的第 $\rho$ 个分位数。该掩码抑制高幅度（通常是高曲率）分量，将更新限制在更稳定、低幅度的区域。
+*   **欧几里得先验 (Euclidean Prior) $M_{Euc}$**: 选择原始权重 $W$ 中低幅度的权重以捕获参数可塑性：
+    $$(M_{Euc})_{i,j} = I\left(|W_{i,j}| \le \tau_{Euc}(\rho)\right) \quad (7)$$
+    其中 $\tau_{Euc}(\rho)$ 是 $|W|$ 的第 $\rho$ 个分位数。
+*   **最终几何约束矩阵**: 最终的 $W_{Geo}$ 由这两个稳定子空间的并集形成：
+    $$W_{Geo} = W \odot (M_{Spec} \cup M_{Euc}) \quad (8)$$
+    这确保了优化后的权重保留小参数的灵活性，同时尊重预训练模型的谱约束。
+
+**4. 实验设置**
+*   **实现**: 所有实验均采用 GRPO 作为默认 RLVR 优化算法。为了公平比较，所有 PEFT 方法在训练数据、rollout 配置和优化预算上保持一致。
+*   **参数**: 所有 PEFT 方法使用秩 $r = 16$，缩放因子 $\alpha = 32$，`target_modules` 设置为 `all-linear`（适配器应用于所有线性层）。GeoRA 使用稀疏度比 $\rho = 0.2$。
+*   **优化器**: 使用 AdamW 优化器，bfloat16 精度。
+*   **硬件**: 在 80GB GPU 上进行训练（DeepMath-103K 和 AlphaMed 为 1 节点 8 GPUs，Eurus-2-RL-Data 为 2 节点 8 GPUs/节点）。
+*   **超参数**: 学习率通常设为 $1 \times 10^{-6}$，全局 batch size 为 128，rollout 数量为 8。KL 正则化时，KL 系数为 0.001。
+*   **基线**: GeoRA 与 MiLoRA、PiSSA、LoRA、Sparse Fine-Tuning (SparseFT) 和 Full Fine-Tuning (FullFT) 进行比较。
+*   **模型**:
+    *   **数学 RLVR**: Qwen3-8B-Base 和 Llama-3.1-8B-Instruct (DeepMath-103K 数据集)，以及 Qwen3-4B-Base 和 Qwen2.5-1.5B-Instruct (GSM8K 数据集)。
+    *   **医学 RLVR**: Llama-3.1-8B-Instruct (AlphaMed19K 数据集)。
+    *   **编码 RLVR**: Qwen3-32B (Eurus-2-RL-Data 数据集)。
+*   **评估**:
+    *   **域内 (ID)**: 数学推理性能在 AIME24, AIME25, MATH500, OlymMATH 上评估。医学推理在 MedQA, MedMCQA, PubMedQA 上评估。编码在 LiveCodeBench, HumanEval, MBPP 上评估。
+    *   **域外 (OOD)**: 泛化能力和能力保持在 HumanEval (编码), GPQA (科学), MMLU (通用知识), IFEval (指令遵循), TruthfulQA (真实性) 上评估。
+
+**5. 关键对比结果**
+*   **性能**: GeoRA 在数学 RLVR 基准测试中实现了最强的整体性能，在 AIME 和 OlymMATH 上表现最佳，并在 MATH500 上保持竞争力，持续优于 LoRA、MiLoRA 和 PiSSA。
+*   **泛化能力**: GeoRA 在 OOD 任务上泛化良好，在 HumanEval、GPQA 和 MMLU 上取得了最强或接近最强的结果，并且在 IFEval 和 TruthfulQA 上通常比其他微调基线保持更高的能力。
+*   **跨领域验证**: GeoRA 成功扩展到医学和编码 RLVR 领域，持续优于 LoRA，并与 FullFT 保持竞争力。
+*   **训练稳定性**: GeoRA 在训练过程中始终表现最佳，并且比其他低秩基线更快达到强劲性能。在激进优化下，GeoRA 保持最高的奖励轨迹且无崩溃，同时将 KL 散度保持在低且受控的水平。
+*   **效率**: GeoRA 仅更新极少部分的参数（**相对于 FullFT 减少 99.5%**），同时降低了 VRAM 使用并提高了每次迭代的训练速度。与 SparseFT 相比，GeoRA 避免了非结构化稀疏计算的开销，将参数效率转化为实际硬件效率。SVD 初始化成本为一次性预处理开销，可忽略不计。
+*   **鲁棒性**: GeoRA 对学习率、秩和稀疏度等超参数变化表现出卓越的鲁棒性，即使在极低秩或高稀疏度下也能保持稳定收敛和持续高奖励。
+*   **消融研究**: 几何感知初始化和几何掩码（谱先验和欧几里得先验）对 GeoRA 的性能至关重要。移除任何一个先验都会导致性能明显下降，这表明它们捕获了不同的参数子集，并扮演着互补的几何角色。
+
+**6. 潜在局限或不足**
+*   **初始化成本**: GeoRA 的初始化过程需要执行截断 SVD 和双重掩码操作。尽管这是一次性预处理成本，且可以通过随机化 SVD 大幅加速（对 72B 模型仅需约一分钟），但与标准 LoRA 的随机初始化相比，它引入了额外的预处理步骤。
+*   **泛化验证**: 论文的实验主要集中在推理领域的 RLVR。尽管 GeoRA 在这些任务上表现出色，但其在更广泛的模型架构和可验证奖励之外的其他强化学习场景中的通用性仍需进一步验证。
+  
 ## RL-LoRA bench
 Evaluating Parameter Efficient Methods for RLVR
 
