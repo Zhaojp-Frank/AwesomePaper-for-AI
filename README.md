@@ -1,5 +1,16 @@
 # Awesome or inspiring paper for AI
 
+## UniToolCall
+UniToolCall: Unifying Tool-Use Representation, Data, and Evaluation for LLM Agents
+
+https://arxiv.org/pdf/2604.11557 2026.4.13
+
+https://github.com/EIT-NLP/UniToolCall
+
+1. ⚙️ 本研究针对LLM智能体工具使用中存在的表示不一致、结构建模不足和评估不兼容的碎片化问题，提出了UniToolCall统一框架。
+2. 🚀 该框架通过构建22k+工具池和390k+混合训练语料库（涵盖单跳、多跳、单轮、多轮及串行/并行执行模式），并引入Anchor Linkage机制处理跨轮依赖，实现了工具学习的标准化。
+3. UniToolCall数据集上微调Qwen3-8B模型，其单轮Strict Precision在distractor-heavy Hybrid-20设置下达到93.0%，显著超越了GPT、Gemini和Claude等商业模型。
+
 ## SMC-SD
 Faster LLM Inference via Sequential Monte Carlo
 
