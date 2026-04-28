@@ -1,5 +1,83 @@
 # Awesome or inspiring paper for AI
 
+## SMC-SD
+Faster LLM Inference via Sequential Monte Carlo
+
+https://arxiv.org/pdf/2604.15672 2026.4.17 康内尔 MIT等
+
+[GitHub - abdelfattah-lab/smcsd: Sequential Monte Carlo Speculative Decoding](https://github.com/abdelfattah-lab/smcsd)
+
+1. 提出Sequential Monte Carlo Speculative Decoding (SMC-SD) 方法，旨在加速大语言模型(LLM)推理，通过用基于重要性采样的重采样替代传统Speculative Decoding中的token级拒绝机制。
+2. SMC-SD维护一个草稿粒子群，并行扩展每条粒子固定数量的token，再由目标模型进行批处理评分和重加权，避免了传统方法中因草稿不匹配而导致的序列截断和回滚，利用了GPU的闲置计算资源。// 牺牲了一些精度
+3. SMC-SD在多GPU设置下，相比自回归解码器实现了5.2x的速度提升，相比优化的Speculative Decoding提高了2.36x的吞吐量，同时在推理、指令遵循和编码基准上保持了目标模型3%以内的准确率。
+基于SGLang, H100单卡/多卡；Qwen最大14b，Llama最大70b; GSM8K (数学推理)、MATH500 (数学)、AlpacaEval (指令遵循) 和 DS1000
+
+<img width="588" height="598" alt="img_v3_02116_ab95e86d-0b5d-4258-b5b4-762f5f15f6eg" src="https://github.com/user-attachments/assets/00ea056c-4697-478e-864b-59036c16512b" />
+<img width="1120" height="1034" alt="img_v3_02116_bffff53c-66e0-40c8-8d37-7c4fa9d64e4g" src="https://github.com/user-attachments/assets/c04b3fa1-18e6-41f5-86ea-c5896ef11ad1" />
+
+**场景与具体问题：**
+LLM的自回归生成本质上是序列化的，每个token的生成都依赖于前序token，导致推理速度受限。推测解码（Speculative Decoding, SD）通过利用一个更“廉价”的草稿模型（draft model）来提议（draft）token，并由一个更“昂贵”的目标模型（target model）来验证（verify），从而加速推理。然而，SD采用拒绝采样机制：一旦草稿token在验证过程中被拒绝，草稿块就会在第一个错误处被截断，导致吞吐量下降，尤其当草稿模型和目标模型行为差异较大时。
+
+**业界存在哪些不足：**
+1.  **自回归解码（Autoregressive Decoding, AR）：** 效率低下，每个token都需要一次完整的模型前向传播。
+2.  **推测解码（SD）：** 尽管加速了推理，但其加速效果具有随机性。由于验证失败会导致草稿块被截断和回滚，实际生成的token数量（accepted tokens）远低于提议的K个token，尤其在草稿模型和目标模型发散时，吞吐量会显著下降。此外，SD是一种精确采样器，但这种精确性有时以牺牲稳定性加速为代价。
+3.  **内存带宽限制：** LLM推理通常受内存带宽限制，每次前向传播都需要加载完整的模型权重，而算术强度（FLOPs per byte of memory load）较低，导致大量计算资源闲置。
+
+**关键观察与假设：**
+1.  **重加权而非拒绝：** 核心观察是，与其完全拒绝不匹配的草稿token并回滚，不如通过重加权（reweighting）的方式来利用它们。这允许即使草稿和目标模型存在差异，也能持续利用草稿模型的输出。
+2.  **SMC框架的适用性：** 将LLM生成视为一个序列推断问题，并引入序贯蒙特卡洛（SMC）框架。SMC通过维护一个“粒子”（particle）种群，并通过重要性采样（importance sampling）和重采样（resampling）来近似目标分布，这与LLM生成中的token序列性质天然契合。
+3.  **计算资源利用：** LLM推理受内存带宽限制，这意味着存在大量闲置的计算资源。SMC-SD通过并行化草稿粒子的生成和评分，能够更有效地利用这些闲置计算，将验证过程向量化为固定大小的操作，且无需回滚。
+4.  **近似性与速度的权衡：** SMC-SD是一种近似推理方案，它用可控的近似误差换取更高的确定性速度提升。
+5.  **KV Cache优化：** 观察到SMC-SD中的粒子可能共享共同的前缀，并且在重采样步骤中，高权重粒子会被复制。通过利用页式KV Cache管理和RadixAttention，可以在内存中进行高效的指针交换而非实际数据复制，从而显著减少KV Cache的内存使用和数据移动。
+
+**方法核心思路和主要步骤：**
+SMC-SD将SD的token级拒绝替换为重要性加权重采样，将验证步骤变为一个序贯蒙特卡洛过程。它维护一个包含N个候选序列（粒子）的种群，每个粒子代表一个部分生成的字符串。每个推理循环包含三个主要操作：
+1.  **草稿（Draft）阶段：** 并行地为种群中的每个粒子，由廉价的草稿模型$q$从其当前前缀下生成K个序贯草稿token。这一步是高度可并行的。
+    *   对于每个粒子$n$，生成序列$d^{(n)} = d^{(n)}_1 \dots d^{(n)}_K$，其中$d^{(n)}_t \sim \vec{q}(\cdot | x^{(n)} d^{(n)}_{<t})$。
+2.  **评分与奖励token（Score and Bonus Token）阶段：**
+    *   昂贵的目标模型$p$对所有N个粒子的K个草稿token进行一次批处理前向传播，计算其在目标模型下的条件概率$\vec{p}(d^{(n)}_j | x^{(n)} d^{(n)}_{<j})$。
+    *   为每个粒子从目标模型中采样一个奖励token（bonus token）$x^{(n)}_+ \sim \vec{p}(\cdot | x^{(n)} d^{(n)})$。
+3.  **重加权（Reweight）阶段：**
+    *   根据重要性采样原理，更新每个粒子的权重$w^{(n)}$。新的权重是旧权重乘以一个增量块权重，该增量块权重由K个草稿token在目标模型和草稿模型下的概率比率的乘积决定。具体为：
+        $$w^{(n)} \leftarrow w^{(n)} \cdot \prod_{j=1}^{K} \frac{\vec{p}(d^{(n)}_j | x^{(n)} d^{(n)}_{<j})}{\vec{q}(d^{(n)}_j | x^{(n)} d^{(n)}_{<j})}$$
+    *   对所有粒子权重进行归一化：$w^{(n)} \leftarrow w^{(n)} / \sum_{m=1}^{N} w^{(m)}$。
+    *   计算有效样本量（Effective Sample Size, ESS）：$\text{ESS} = (\sum_{n=1}^{N} w^{(n)})^2 / \sum_{n=1}^{N} (w^{(n)})^2$。
+4.  **重采样（Resample）阶段：**
+    *   如果ESS低于预设阈值$\eta$，则进行重采样。从当前归一化权重定义的类别分布中，独立地采样N个祖先索引$a_1, \dots, a_N$。
+    *   用选定的祖先粒子及其新扩展的序列（K个草稿token + 1个奖励token）替换当前粒子，并重置所有权重为$1/N$。这样，低权重粒子被淘汰，高权重粒子被复制。
+    *   如果ESS高于阈值，则不进行重采样，粒子直接被K个草稿token和1个奖励token扩展，并保持现有祖先关系。
+每个循环，SMC-SD保证每个粒子都被精确地扩展了K+1个token，避免了SD中因拒绝而导致的回滚和可变生成长度问题。最终输出序列通过从终止时的归一化权重中采样一个完整序列获得。
+
+**近似误差分析：**
+SMC-SD的近似误差（L1偏差、L2偏差和均方误差）与粒子数量N呈$O(1/\sqrt{N})$或$O(1/N)$的关系，并受草稿模型和目标模型之间的$\chi^2$-散度影响。这意味着增加粒子数量N可以收敛到目标分布，并缩小近似误差。
+
+**实验设置：**
+1.  **实现基础：** SMC-SD引擎基于SGLang (Zheng et al., 2024) 分支构建，利用了动态批处理、PagedAttention和RadixAttention等优化技术。
+2.  **硬件条件：** 主要实验在一块H100 SXM GPU上进行，多GPU测试在4块H100 GPU上进行。
+3.  **模型负载：** 评估了Llama (3.2-1B草稿模型 $\to$ 3.1-8B目标模型，以及1B草稿模型 $\to$ 70B目标模型) 和Qwen (0.5B草稿模型 $\to$ 14B目标模型，以及3B草稿模型 $\to$ 14B目标模型) 两个模型家族。
+4.  **基准测试：** GSM8K (数学推理)、MATH500 (数学)、AlpacaEval (指令遵循) 和 DS1000 (代码生成)。
+5.  **对比基线：**
+    *   自回归解码（AR）。
+    *   优化后的树形推测解码（SGLang SD）。
+    *   推测推测解码（Speculative Speculative Decoding, SSD）。
+
+**关键对比结果：**
+*   **端到端吞吐量：** 在多GPU设置下（Llama 1B $\to$ 70B模型对，4块H100 GPU），SMC-SD实现了342 token/s的吞吐量，比自回归基线加速5.2倍，比优化后的树形推测解码（SGLang SD）加速2.36倍。
+*   **速度-准确率帕累托前沿：** 在所有四个基准测试和两个模型家族中，SMC-SD的帕累托前沿都位于SD基线之上或右侧，表明在相同准确率下吞吐量更高，或在相似吞吐量下准确率更高。
+*   **等准确率下的加速：** 在目标模型准确率3%以内，SMC-SD的吞吐量是SD的1.1倍至2.5倍。
+*   **最大速度下的加速：** 允许10%的准确率放宽，SMC-SD的吞吐量可达SD的3.4倍。
+*   **近似准确率：** 尽管SMC-SD是近似采样器，但在帕累托前沿上，其准确率与目标模型准确率的差距保持在15%以内。
+*   **温度鲁棒性：** SMC-SD的吞吐量在不同采样温度下几乎保持不变，而SD的吞吐量随温度升高（接受率下降）而显著下降。在T=0.2时，SMC-SD/SD吞吐量比约为1.5倍；在T=1.0时，该比率增至约3倍。
+*   **KV Cache利用率：** 对于Llama-1B $\to$ 8B，N=8，K=16配置，SMC-SD的KV Cache使用量减少了72.3%。
+
+**潜在局限或不足（和未来工作）：**
+1.  **理论与实践差距：** 论文中提出的屋脊模型（roofline model）理论速度提升在实践中尚未完全实现，未来工作可以进一步优化。
+2.  **重采样开销：** 重采样步骤引入的性能开销，可以通过预先推测ESS阈值并在草稿阶段进行重叠操作来消除。
+3.  **异步调度：** 草稿模型和目标模型可以在不同硬件上解耦，并异步调度草稿和评分调用，进一步优化效率。
+4.  **动态N和K：** 允许N（粒子数量）和K（草稿长度）动态变化，以适应底层硬件和工作负载特性，从而在运行时探索可调优的帕累托前沿。
+5.  **更复杂的目标分布：** SMC-SD的权重机制使其能够近似采样更复杂的非归一化目标分布，如功率采样（power sampling）、约束生成（constrained generation）和奖励加权解码（reward-weighted decoding），而标准SD无法实现。这是SMC-SD超越加速本身的重要潜力。
+6.  **块$\chi^2$-散度随K的变化：** 对自回归模型中，块$\chi^2$-散度$\chi^2(p_K || q_K)$如何随K（草稿长度）增长的理解，是一个有趣的未来研究方向。
+    
 ## SAW-INT4
 SAW-INT4: **System-AWare 4-Bit KV-Cache** Quantization for Real-World LLM Serving
 
