@@ -1,5 +1,103 @@
 # Awesome or inspiring paper for AI
 
+## Expert Activation Patterns
+Scaling Multi-Node Mixture-of-Experts Inference Using Expert Activation Patterns
+https://arxiv.org/pdf/2604.23150v1 2026.4.25 佐治亚 Meta
+
+1. 研究了多节点MoE模型推理中因专家**负载不平衡和令牌路由效率**低下导致的高昂all-to-all**通信开销**问题，并发现**专家激活模式具有跨任务域的可预测聚类特性和预填充-解码阶段的高度相关性**。
+2. 针对这些发现，作者提出了Data-based Expert Placement的**微批次分组和专家放置策略**，通过将具有相似专家激活模式的请求分批处理，并协同放置经常共同激活的专家来最大化令牌局部性。
+3. 方法在最先进的MoE模型上显著减少了**~20%的all-to-all通信量**，并将MoE层decode延迟降低了~6%，从而提高了加速器利用率。
+Llama 4 Maverick, **DeepSeek V3-671B, Qwen3-230B-A22B**, vLLM v0.9, H100, vs. EPLB。
+都不做专家冗余
+
+<img width="560" height="353" alt="image" src="https://github.com/user-attachments/assets/d8a7bf36-9cc9-4b15-9cd1-8d0efebbc5ef" />
+<img width="587" height="559" alt="image" src="https://github.com/user-attachments/assets/63662415-c38f-499c-ac89-7f5c91cb20b2" />
+
+**1. 场景与具体问题**
+MoE模型通过激活专家子集实现高模型容量和较低的每 token 计算成本，成为SOTA LLM的主流架构。然而，在多节点分布式推理场景下，MoE推理面临根本性的瓶颈：
+*   **专家负载不均衡**：不同专家接收的 token 数量差异巨大。
+*   **低效的 token 路由**： token 未能保证被路由到本地专家。
+*   **显著的节点间 all-to-all 通信开销**：由于上述两点，token 经常需要路由到不同节点上的专家，导致昂贵的节点间通信。
+这些问题在多节点部署时尤为突出，尤其在对延迟敏感的 decode 阶段，原生扩展专家并行度（expert parallelism, EP）往往无法带来预期性能提升。
+
+**2. 业界存在不足**
+*   **动态计算模式的挑战**：MoE模型具有输入依赖的专家激活模式，计算模式高度动态，与物理硬件拓扑不匹配。
+*   **现有放置策略的局限**：
+    *   **线性放置策略（Linear placement, vLLM）**：完全忽略专家激活模式，仅按专家 ID 顺序放置专家。
+    *   **负载均衡专家放置（Expert Placement with Load Balancing, EPLB, DeepSeek）**：利用历史负载统计平衡专家负载，但未能捕捉细粒度的 token-专家路由模式。
+*   **缺乏细粒度感知**：上述方法均未考虑将具有相似专家激活模式的请求共同批处理（co-locate）以最大化节点内计算并最小化节点间通信。
+
+**3. 关键观察与假设**
+作者通过分析 Llama 4 Maverick、DeepSeek V3-671B 和 Qwen3-230B-A22B 等 SOTA MoE 模型在多种数据集上的专家激活模式，收集了超过 10 万条专家激活轨迹，得到以下关键观察：
+*   **可变的专家负载不均衡**：专家负载在不同模型、数据集和层之间显著变化（如 GSM8K 在 Llama 4 Maverick 中表现出极端不均衡，可达 80 倍）。
+*   **领域特定的专家激活**：专家流行度随任务家族（代码、数学、聊天、通用）而变化。同领域数据集（如 MATH 和 GSM8K）在专家激活上表现出高相关性，尤其在 decode 阶段。DeepSeek V3 展现了更强的领域内相关性与较低的跨领域相关性，表明更好的专家专业化。
+*   **Prefill 与 Decode 专家激活的强相关性**：Prefill 阶段的专家激活模式与 Decode 阶段的模式高度相关（Llama 4-Maverick 平均相关性 0.82，Qwen 3 0.68，DeepSeek V3 0.55）。这意味着 prefill 阶段可以预测 decode 阶段的专家需求。
+*   **专家激活模式的可预测聚类**：请求级的专家激活向量（使用 t-SNE 可视化）显示，来自相似领域的请求会聚类，尤其在 decode 阶段更加明显。这意味着可以根据激活模式对请求进行分组。
+*   **潜在安全风险**：专家激活模式可以泄露请求类型和用户意图，可能被对手用于请求画像。
+
+**4. 方法核心思路和主要步骤**
+论文提出了一种数据驱动的方法，利用专家激活模式优化请求批处理和专家放置，以最大化 token 局部性并减少节点间通信。核心思路是“工作负载感知”：
+**A. 工作负载感知微批处理分组（Workload-aware Micro-batch Grouping）**
+该阶段在 prefill 之后进行，根据请求的专家激活模式对请求进行聚类，确保共同批处理的请求激活相似的专家集合。
+1.  **聚类方法**：
+    *   **数据准备**：对于每个请求 $r_i$，收集其在 decode 阶段的专家激活向量 $a_i \in \mathbb{R}^E$，表示发送到每个专家 $E$ 的 token 数量。
+    *   **归一化**：对每个激活向量进行 L2 归一化，以关注相对激活模式：$\tilde{a}_i = \frac{a_i}{\|a_i\|_2}$。
+    *   **K-Means 聚类**：将归一化后的请求向量聚类成 $K$ 个簇，目标是最小化簇内平方和：
+        $\min_{C} \sum_{k=1}^K \sum_{i \in C_k} \|\tilde{a}_i - \mu_k\|_2^2$
+        其中 $C = \{C_1, \dots, C_K\}$ 是簇分配，$\mu_k$ 是簇 $C_k$ 的质心。
+2.  **簇到组的分配（Cluster-to-Group Assignment）**：将 $K$ 个请求簇分配给 $DP$ 个专家组（expert groups）。
+    *   **一对一映射 ($K=DP$)**：每个请求簇分配到一个专家组。
+    *   **多组对单簇 ($DP>K$)**：流量大的簇可以分配多个组以获得更好的并行度。首先给每个簇分配一个组，然后将剩余的 $DP-K$ 个组以轮询方式分配给最大的簇。
+    *   **单组对多簇 ($K>DP$)**：将多个请求簇合并到 $DP$ 个元簇中，通过在簇质心上再次运行 K-Means 实现。
+
+**B. 数据驱动专家放置（Data-based Expert Placement）**
+该阶段负责将专家策略性地放置到设备组中，以最大化 token 在节点内的处理，从而最小化昂贵的节点间 all-to-all 通信。
+1.  **问题公式化**：给定 $E$ 个唯一专家和 $D$ 个专家组，以及冗余预算 $R$。放置规则为：
+    *   每个组包含 $M = \frac{E+R}{D}$ 个专家。
+    *   所有 $E$ 个唯一专家必须被所有组覆盖。
+    *   专家放置应最大化与分配到的请求簇的相关性。
+    *   对于每个专家组 $G_d$，计算其分配簇的聚合专家使用量：$U_{d,e} = \sum_{k: d \in \text{map}(C_k)} \sum_{i \in C_k} a_{i,e}$。
+2.  **两阶段专家放置算法**：
+    *   **阶段 1: 唯一专家分布（Unique Expert Distribution）**：将所有 $E$ 个唯一专家分布到 $D$ 个组中，平衡覆盖率和相关性。
+        *   计算全局专家重要性：$I_e = \max_{d \in [1,D]} U_{d,e}$。
+        *   按重要性降序排序专家。
+        *   按排序顺序遍历专家，对于每个专家 $e$，找到使用它最多的组 $d_1$，并将其分配给 $G_{d_1}$，但要受容量限制（每个组不超过 $M_{max}$ 个专家）。
+    *   **阶段 2: 冗余专家添加（Redundant Expert Addition）**：填充每个组的剩余槽位，以达到目标大小 $M$。
+        *   对于每个组 $G_d$，计算还需要 $M - |G_d|$ 个专家。
+        *   选择不在 $G_d$ 中但与 $G_d$ 最相关的专家作为冗余副本加入。
+    *   **组平衡与验证**：确保每个组都包含 $M$ 个专家，并且所有唯一专家都被覆盖。
+
+**C. 请求路由**：根据请求的聚类分配，将请求路由到其推荐的专家组。
+
+**D. 生产堆栈部署**：
+*   **微批处理分组**：请求到来时，分析 token 激活的专家，决定请求数据集和应放入的 decode 微批。
+*   **数据感知专家放置**：解码专家放置由具有相关激活模式的专家决定，将这些专家放置在同一节点，以最小化节点间通信。专家放置刷新频率较低，主要在节点内专家相关性下降时进行。
+
+**5. 实验设置**
+*   **实现基础**：在 vLLM v0.9 (Vllm-Project, 2025) 的基础上，仪表化 `fusedMoE` router 进行激活日志记录。
+*   **模型**：Llama-4-Maverick、DeepSeek-V3、Qwen 3-235B-A22B。模型参数如表1所示。
+*   **数据集**：GSM8K、MATH、MBPP、HumanEval、LMSYS-Chat、XSUM、TL;DR。数据集大致均匀分布。
+*   **硬件条件**：数据收集使用 8 块 H100 GPU，耗时 300 小时。推理评估的具体硬件配置未明确说明，但配置为 DP8TP8→EP64，意味着使用 64 块 GPU。
+*   **负载情况**：全局批次大小为 $8 \times 128$ 个请求。
+*   **对比基线**：
+    *   **Linear (vLLM, 2025)**：线性专家放置。
+    *   **Expert Placement with Load Balancing (EPLB) (Deepseek, 2025; Huang et al., 2024b)**：基于历史专家负载的放置。
+    *   **Data-based Expert Placement**：本文提出的方法。
+
+**6. 关键对比结果**
+*   **Prefill 请求类型分类准确率**：基于专家激活模式的请求分类准确率极高：Qwen3-235B 达到 98.9% ± 0.4，DeepSeek-V3 达到 98.4% ± 0.4，Llama-Maverick 达到 94.4% ± 6.8。这证明 prefill 阶段的专家激活模式高度预测请求类型，为微批处理分组提供了依据。
+*   **节点间 All-to-All 通信量**：在 DeepSeek-V3 上，数据感知专家放置（Data-based Expert Placement）使 all-to-all 通信量中位数降低至线性基线的 0.94 倍（即减少 6%），而 Linear 和 EPLB 均为 1.00 倍。这表明 token 更多地被路由到本地专家，显著减少了节点间通信。
+*   **MoE Decode 运行时**：
+    *   **Llama Maverick**：与 EPLB 相比，本文方法减少了 9% 的 all-to-all 通信时间，从而使整体 MoE 层运行时减少了 5.5%。
+    *   **Qwen3-235B-A22B**：与 EPLB 相比，本文方法减少了 12% 的 all-to-all 通信时间，从而使整体 MoE 层运行时减少了 6%。
+这些结果一致表明，通过将更多 token 路由到本地专家并最小化节点间通信，数据感知专家放置能够持续提升 MoE 层的效率。
+
+**7. 潜在局限或不足**
+*   **All-to-All 通信内核效率**：尽管 all-to-all 消息量显著减少，但由于当前 all-to-all 内核实现中，数据会填充到最大 EP 秩的 all-to-all 数据大小，限制了运行时改进的幅度。这意味着底层通信原语的效率是最终性能提升的上限。
+*   **冗余专家使用**：在评估中，作者没有使用任何冗余专家。实际部署中，冗余专家可能带来额外的收益，但也可能增加内存开销。
+*   **专家负载均衡的优化空间**：论文指出，在专家分组时使用专家负载信息可以进一步改进整体层延迟，使其更接近理想运行时。
+  
+   
 ## STOP
 Cut Your Losses! Learning to Prune Paths Early for Efficient Parallel Reasoning
 https://arxiv.org/pdf/2604.16029 2026.4.17 港中文（深圳）等
