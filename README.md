@@ -1,5 +1,76 @@
 # Awesome or inspiring paper for AI
 
+## LLMFolder
+LLMFolder: Revisiting Constant Folding in Large Language Models  EuroSys26 陈海波团队
+
+1. LLMFolder提出一种创新的LLM压缩方法，灵感来源于编译器中的常量折叠，旨在解决大型语言模型参数庞大导致部署困难和推理I/O开销大的问题。
+2. 核心在于观察到FFN中激活函数输入分布的偏斜性及层与神经元重要性的非均匀性，通过离线阶段对**非线性激活函数进行分层自适应的局部线性近似**，并将其与FFN权重矩阵合并为单个常量折叠矩阵；在线阶段则进行推测性计算，并对超出近似范围的神经元进行动态结果修正。
+3. LLMFolder能实现FFN 80%的参数缩减（结合量化和剪枝可达92.5%），在保持高精度的同时，**相较现有剪枝方法**性能显著提升，并在vLLM 实现1.6x推理加速。
+精心挑选了5个老模型Falcon-7B、Falcon2-11B、BLOOMZ-7B1、GPT2-XL和OPT-6.7B；4090单卡。不支持当今主流模型的GLU-variant Gated（Qwen/LLama）
+
+<img width="442" height="187" alt="image" src="https://github.com/user-attachments/assets/edf4e30e-f963-4f45-9f9b-3a8eb76c478d" />
+<img width="458" height="210" alt="image" src="https://github.com/user-attachments/assets/4973f2fc-c8a8-492a-a4ae-efc06777ef0d" />
+
+LLM拥有庞大的参数数量（数十亿到数万亿），导致部署时面临巨大的挑战。推理过程中，FFN (Feed-Forward Network) 块通常占据总参数的67%至80%，并且其参数加载I/O是主要的性能瓶颈，尤其在自回归生成时，每次生成token都需要从内存加载模型参数到硬件缓存。现有的LLM压缩技术如剪枝 (pruning)、量化 (quantization) 等，虽然能减小模型大小，但在高压缩比下（例如80%的剪枝）会导致严重的精度下降，甚至在某些基准测试上精度降至零，使得模型失效。对于非ReLU激活函数（如GELU、SiLU）的LLM，简单的线性近似会导致模型性能急剧下降。
+
+关键观察与假设有两点：
+1.  **激活函数输入分布的偏斜性 (Skewed distribution of activation function inputs)**：通过对Wikitext-2、C4和PTB等数据集的分析，作者发现LLM中激活函数的输入分布具有显著的偏斜性，大约65%的输入集中在总输入范围的20%以内。这一模式在不同模型架构（GELU和SiLU）和数据集上都保持一致。这表明可以对激活函数进行局部线性近似而保持较低的近似误差。
+2.  **层和神经元重要性的非均匀分布 (Non-uniform distribution of layer and neuron importance)**：通过测量线性近似的MSE (Mean Squared Error)，作者发现不同层和不同神经元对模型性能的贡献是非均匀的。例如，第一层的误差可能比第二层大一个数量级，同一层内神经元的误差可能相差近三个数量级。这提示在近似时需要采用自适应的策略，对不同的层和神经元分配不同的近似要求。
+
+基于这些观察，LLMFolder提出了一种受编译器优化中“常量折叠” (constant folding) 启发的创新方法。其核心思路是将FFN中的**非线性激活函数近似为线性函数**，从而利用矩阵乘法的结合律将FFN中的两个权重矩阵合并为一个更紧凑的矩阵，实现参数的大幅缩减。对于超出线性近似范围的“异常”输入，系统将动态回退到原始的非线性计算以保证精度。
+
+LLMFolder的方法主要分为**离线 (Offline)** 和**在线 (Online)** 两个阶段：
+
+**离线阶段：**
+1.  **非线性函数近似 (Non-linear Function Approximation, Section 5.1)：**
+    *   **单范围近似策略：** 为避免多范围近似导致的指数级存储开销，LLMFolder对每个神经元采用单一线性函数近似其非线性激活。即对于每个神经元$n$，找到一个线性函数$y = ax + b$在特定范围$[l_1, l_2)$内近似激活函数$\sigma(x)$。
+    *   **自适应阈值化 (Adaptive Thresholding)：** 为了满足用户指定的目标“在范围内的输入比例”阈值$t$，并兼顾不同层和神经元的非均匀重要性，LLMFolder采用两级自适应阈值化：
+        *   **层级阈值化：** 最小化每层经验误差$E_i$与分配的阈值$t_i$的比值，同时确保所有层平均阈值等于目标$t$。
+        *   **神经元级阈值化：** 进一步将层级阈值$t_i$分配给层内神经元，更重要的神经元（误差贡献更大）将被分配更严格的阈值$t_{in}$。
+    *   **范围搜索：** 对于每个神经元，LLMFolder使用贪婪搜索策略来确定最优线性近似范围。首先通过核密度估计 (KDE) 找到输入分布的中心点，然后围绕中心点逐步扩展范围边界，每次选择能产生最小近似误差的方向（左或右），直到达到神经元特定的覆盖阈值$t_{in}$。最后使用最小二乘回归拟合线性函数。
+
+2.  **常量折叠矩阵生成 (Constant Folded Matrix Generation, Section 5.2)：**
+    *   在得到每个神经元的线性近似参数$a$和$b$后，将原FFN的计算$FFN(x) = \sigma(xW_1)W_2$替换为$FFN(x) \approx (axW_1 + b)W_2$。
+    *   利用矩阵结合律，将$(axW_1 + b)W_2$重排为$x(aW_1W_2) + bW_2$。
+    *   对于每个神经元$n$，将其对应的$W_{1,:,n}$和$W_{2,n,:}$与线性近似参数$a,b$进行常量折叠，生成该神经元的折叠矩阵$C_n = aW_{1,:,n}W_{2,n,:}$和偏置向量$B_n = bW_{2,n,:}$。
+    *   最终，整个FFN层的常量折叠矩阵$C = \sum_n C_n$和偏置向量$B = \sum_n B_n$。
+
+3.  **预测器生成 (Predictor Generation, Section 5.3)：**
+    *   预测器的作用是在线识别哪些神经元的输入超出了其预设的线性近似范围。
+    *   LLMFolder使用量化后的$W_1$权重矩阵作为预测器，在精度和简洁性之间取得平衡。
+
+**在线阶段 (Inference Runtime, Section 5.4)：**
+1.  **推测性近似 (Speculative Approximation)：** 推理时，LLMFolder首先乐观地假设所有输入都在线性范围内，并使用预计算的常量折叠矩阵和偏置向量进行快速计算：$FFN(x) \approx xC + B$。
+2.  **结果修正 (Result Fixing)：**
+    *   预测器会识别出实际输入超出其近似范围的神经元。
+    *   对于这些被识别出的神经元，LLMFolder会执行修正：首先从推测性计算结果中减去这些神经元对应的错误线性近似结果，然后使用原始的非线性激活函数对这些神经元重新进行精确计算，并将结果加回到最终输出中。
+    *   内存占用：模型会保留所有原始权重，但推理时只有需要修正的神经元的原始权重才需要从内存加载到缓存。
+
+**实现和设置：**
+LLMFolder是使用PyTorch实现的，并已集成到HuggingFace Transformers (v4.41.0) 和vLLM (v0.6.6) 推理引擎中。
+*   **硬件环境：** 单张NVIDIA RTX 4090D GPU (24GB显存)。
+*   **模型：** 评估了Falcon-7B、Falcon2-11B、BLOOMZ-7B1、GPT2-XL和OPT-6.7B五种LLM，参数范围从1.6B到11.1B，涵盖GELU和ReLU激活函数。
+*   **校准数据集：** 默认使用C4数据集的第一部分中随机选择的8个样本，每个样本2048个token。
+*   **评估基准：**
+    *   语言生成任务：使用lm-evaluation-harness评估Wikitext-2、C4和Penn Treebank (PTB) 上的困惑度 (perplexity)。
+    *   零样本任务：评估PIQA、Lambada和ARC-Challenge上的准确率。
+*   **对比基线：**
+    *   **剪枝：** Wanda (非结构化剪枝)、RIA (非结构化剪枝)、PowerInfer (上下文剪枝)。
+    *   **量化：** GPTQ、AWQ。
+
+**关键对比结果：**
+*   **与剪枝方法的对比：** LLMFolder在各种压缩比下均优于Wanda和RIA。在50%和70%的低压缩比下，LLMFolder性能略优；在80%的高压缩比下，LLMFolder展现出显著优势，困惑度比Wanda和RIA低215倍到406倍，零样本任务准确率平均提高20.1%到19.1%，最高可达65.7%。PowerInfer主要适用于基于ReLU的模型。
+*   **与量化方法的对比：** LLMFolder与GPTQ和AWQ等领先量化方法相比，仍具高度竞争力。在80%压缩比下，LLMFolder平均能达到量化方法90.5%的精度，在50%压缩比下达到98.9%。
+*   **可组合性：** LLMFolder可与量化 (GPTQ) 和剪枝 (Wanda) 结合使用。实验证明，这种组合方法在92.5%的参数缩减下，对于7B模型仅导致平均4.4%的精度下降，这是单一技术或单独组合无法达到的。例如，GPTQ+LLMFolder的组合在性能-压缩比权衡上优于GPTQ+Wanda。
+*   **推理速度提升：**
+    *   在Falcon-7B上，LLMFolder在80%压缩比下实现FFN块1.86倍的加速，端到端推理在HuggingFace上达到1.39倍，在vLLM上达到1.59倍。
+    *   HBM内存I/O量随压缩比线性下降，是加速的主要原因。
+    *   对于批处理推理，随着批大小增加，LLMFolder的端到端加速效果会下降，因为需要访问的原始权重比例增加。
+    *   对于更大的模型 (Falcon-40B)，LLMFolder在70%压缩比下实现高达6.97倍的端到端推理加速，这主要得益于显著减少了CPU与GPU内存间PCIe总线的数据传输，尤其是在模型无法完全载入GPU显存时。
+
+**潜在局限或不足：**
+LLMFolder的一个主要限制是其对使用GLU (Gated-FFN) 变体的前馈网络（例如LLaMA3.1和Qwen 2.5）的处理。这类模型包含元素级乘法运算($\sigma(xW_1) \odot (xW_2)W_3$)，会导致折叠矩阵数量的指数级增长，从而抵消压缩效果。然而，非门控 (non-gated) 模型仍广泛流行且性能具有竞争力，例如GPT-2和Falcon系列，这表明LLMFolder仍具有广泛的适用性。未来研究可以探索针对这种二次操作的专门折叠技术。
+
 ## Expert Activation Patterns
 Scaling Multi-Node Mixture-of-Experts Inference Using Expert Activation Patterns
 https://arxiv.org/pdf/2604.23150v1 2026.4.25 佐治亚 Meta
