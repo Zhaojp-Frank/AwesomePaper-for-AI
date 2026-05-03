@@ -1,5 +1,85 @@
 # Awesome or inspiring paper for AI
 
+## PolyKV
+PolyKV: A Shared Asymmetrically-Compressed KV Cache Pool for Multi-Agent LLM Inference
+
+https://arxiv.org/pdf/2604.24971 2026.4.27
+
+1. 旨在解决多agent LLM推理中KV缓存的内存瓶颈，通过创建一个**单一的、共享的、非对称压缩KV缓存池**，替代传统为每个agent分配独立缓存的做法。
+2. 系统将Keys量化为int8，Values通过TurboQuant MSE（FWHT旋转和3比特Lloyd-Max量化）压缩，实现了稳定的2.91倍内存压缩率，同时在Llama-3-8B模型上，将15个代理共享4K上下文的KV缓存内存从19.8 GB大幅降低至0.45 GB。
+3. 在节省内存的同时，保持了高质量的推理表现，Llama-3-8B的困惑度仅增加0.57%，BERTScore F1平均达到0.928，并且发现随着上下文长度增加，困惑度甚至可以低于未压缩基线（例如，在1,851个连贯tokens上降低0.26%），支持了**量化噪声具有隐式正则化作用的假设**。
+
+在多智能体 (multi-agent) 推理场景下。当前范式是为每个agent分配独立的KV cache，导致共享同一文档上下文的多个智能体之间存在大量冗余和内存浪费。
+
+**业界不足：**
+1.  **KV cache压缩技术**：通过量化K和V张量来减少单个KV cache的内存占用，但未解决多智能体间的冗余问题。
+2.  **多智能体KV共享技术**：通过重用公共前缀缓存来减少智能体间的冗余，但这些系统均使用全精度 (full-precision) cache，未结合压缩技术。
+PolyKV填补了这一空白，首次结合了共享的、有损压缩的KV池与多读并发智能体访问。
+
+**关键观察与假设：**
+1.  **非对称敏感性**：Key (K) 和 Value (V) 在Transformer注意力机制中对量化敏感度不同。K参与softmax计算，对低比特量化敏感；V对有损压缩更鲁棒。这促成了K和V的非对称量化方案。
+2.  **量化噪声的正则化效应**：文章提出了一个假说，即在较长的连贯上下文中，TurboQuant FWHT (Fast Walsh-Hadamard Transform) 引入的**量化噪声可能起到隐式正则化的作用，类似于推理时的dropout**，这能够改善甚至反转（降低）困惑度 (PPL)。
+
+**方法核心思路和主要步骤：**
+PolyKV引入了两个核心抽象：`SharedKVPool` 和 `PooledAgent`。
+1.  **SharedKVPool的构建**：
+    *   接收共享文档上下文和模型引用。
+    *   执行一次前向预填充 (prefill) 过程，计算完整的KV状态。
+    *   对KV状态进行非对称就地压缩。
+    *   压缩后的KV池作为单个对象存储在内存中，其内存占用与智能体数量无关 (O(1))，而非传统方法的O(N)。
+2.  **压缩方案**：
+    *   **Keys (K) 量化 (q8_0)**：
+        *   采用逐张量 (per-tensor) 线性int8量化。
+        *   量化步骤：对于形状为`[batch, heads, seq_len, head_dim]`的K张量：
+            *   计算缩放因子 $s = \frac{\max(|K|)}{127}$。
+            *   量化：$K_{quant} = \text{clip}(\text{round}(\frac{K}{s}), -128, 127)$。
+        *   反量化步骤：$K_{dequant} = K_{quant} \cdot s$。
+    *   **Values (V) 量化 (TurboQuant MSE, 3-bit)**：
+        *   TurboQuant MSE是一种针对在线KV cache压缩设计的矢量量化算法，分两阶段操作：
+            *   **旋转**：对V张量应用归一化的FWHT旋转：$V_{rot} = \text{FWHT}(V) / \sqrt{d}$，其中$d$是向量维度。FWHT将数据旋转到正交基，分散量化误差。
+            *   **Lloyd-Max量化**：将`FWHT`旋转后的每个坐标独立地量化到最近的3比特Lloyd-Max质心。这些质心是针对N(0,1)分布预计算的，例如：$c = [-2.152, -1.344, -0.756, -0.245, 0.245, 0.756, 1.344, 2.152]$。量化后存储对应的索引（用`uint8`表示）。
+        *   反量化步骤：根据存储的索引检索质心值，应用非归一化逆FWHT，再除以$d$。
+    *   **压缩比**：K为8比特，V为3比特（相对于bfloat16基线，即16比特），理论压缩比为 $r = \frac{16}{8 + \frac{3}{2}} = \frac{16}{5.5} \approx 2.91 \times$。
+3.  **DynamicCache注入**：
+    *   `PooledAgent`在推理时，从`SharedKVPool`中获取解压缩的KV张量，并逐层注入到其自身的HuggingFace `transformers.cache_utils.DynamicCache`实例中。这绕过了标准的逐前向传递KV积累过程。
+    *   每个智能体接收的是`SharedKVPool`的引用，而非压缩池的副本，因此不产生额外的内存拷贝开销。
+
+**实验设置：**
+*   **实现基础**：基于HuggingFace `DynamicCache`对象。
+*   **硬件条件**：主要验证实验在Kaggle T4×2 GPU上进行。
+*   **模型**：
+    *   SmolLM2-1.7B-Instruct (HuggingFaceTB)：概念验证，CPU推理。
+    *   Llama-3-8B-Instruct (Meta)：主要验证模型，32层，GQA (8 KV heads)，4比特NF4权重，bfloat16 KV cache。
+*   **基线**：每个智能体使用全精度 `DynamicCache` 进行标准预填充。在Llama-3-8B上，基线KV张量转换为bfloat16以匹配模型精度。
+*   **负载情况**：
+    *   **并发智能体数量**：3到15个。
+    *   **上下文长度**：600到7,194 tokens。
+    *   **共享上下文类型**：自定义连贯文档（如阿波罗11号任务文档、ARPANET/互联网历史）、WikiText-2（2K和4K版本）。
+*   **评估指标**：
+    *   **困惑度 (PPL)**：在上下文最后30%令牌上计算。 $\Delta = (PPL_c - PPL_b) / PPL_b \times 100\%$。
+    *   **BERTScore F1 (roberta-large)**：衡量压缩和基线智能体输出之间的语义相似性。阈值 $\ge 0.92$ 视为“Good”。
+    *   **令牌重叠 (Token overlap)**：仅在SmolLM2-1.7B实验中用于Unigram重叠。
+    *   **KV cache内存**：以GB为单位，仅测量KV cache部分。
+    *   **压缩比**：理论值（经验证实稳定在2.91×）。
+
+**关键对比结果：**
+1.  **稳定压缩比**：在所有配置下，实现了稳定的2.91×压缩比，这被证实是压缩方案的数学属性，而非模型特有现象。
+2.  **PPL对智能体数量的鲁棒性**：PPL delta在3、5、10、15个并发智能体之间保持不变。例如，在Llama-3-8B上，1,837 tokens的WikiText-2上下文，PPL delta始终为+1.59%，且平均BERTScore F1随智能体数量略有提升（从0.957到0.970），表明压缩池本身是稳定的，质量差异主要来源于查询难度。
+3.  **PPL随上下文长度改善**：
+    *   在SmolLM2-1.7B上，当使用1,851个连贯tokens时，PPL delta反转为-0.26%，即压缩cache表现优于全精度基线。
+    *   在Llama-3-8B上，上下文从1,837 tokens (2K) 增加到7,194 tokens (4K) 时，PPL delta从+1.59%降至+0.57%。
+    *   这支持了量化噪声作为隐式正则化的假说，尤其是在连贯的长文档中。
+4.  **显著的内存节省**：在Llama-3-8B模型上，当15个智能体共享一个4K tokens上下文时，PolyKV将KV cache内存从19.8 GB减少到0.45 GB，实现了97.7%的内存削减，同时保持了+0.57%的PPL退化和0.928的平均BERTScore F1。KV池内存占用与智能体数量无关（O(1)）。
+5.  **语义等价性**：BERTScore F1通常在0.928到0.970之间，表明压缩输出与基线输出之间的措辞变化保留了语义等价性。
+
+**潜在局限或不足：**
+1.  **模型规模限制**：实验范围为1.7B和8B参数模型，70B+参数规模下的行为未知，尽管TurboQuant MSE的Gaussian近似在高维度下会改善。
+2.  **WikiText-2可比性**：实验中WikiText-2结果使用了固定上下文窗口，而非标准的滑动窗口评估，因此无法与现有论文直接进行数值比较。
+3.  **系统指标**：未报告首次令牌生成时间 (TTFT)、吞吐量或端到端延迟等关键系统性能指标，这些将留待未来工作。
+4.  **上下文上限**：受限于Kaggle T4×2硬件，Llama-3-8B在约8,000 tokens以上会因预填充注意力计算而内存不足，这并非PolyKV本身的限制。
+5.  **PPL反转机制**：尽管观察到PPL改善趋势与正则化假说一致，但需要受控的消融实验才能确认因果关系。
+   
+
 ## Arena
 Arena: Efficiently Training Large Models via Dynamic Scheduling and Adaptive Parallelism Co-Design
 EuroSys26 上海交大等
