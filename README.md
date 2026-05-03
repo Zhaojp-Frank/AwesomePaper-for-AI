@@ -1,5 +1,23 @@
 # Awesome or inspiring paper for AI
 
+## TCRM
+Reward Models Are Secretly Value Functions: Temporally Coherent Reward Modeling
+
+https://arxiv.org/pdf/2604.22981 Meta 2026.4.24
+
+1. 提出了TCRM（Temporally Coherent Reward Modeling）框架，旨在解决现有RLHF奖励模型仅评估最终token，导致中间token输出噪声大、难以解释的问题。
+2. 核心观察是奖励模型的输出在任何token都应代表给定当前响应的最终奖励的条件期望，并通过加入与蒙特卡洛和时序差分价值学习目标结构对应的**2个正则化项**来实现这一属性。
+3. 🚀 TCRM无需更改模型架构或数据，显著提升了中间token预测准确性（从50%提升至88.9%），实现了无需步骤标签的PRM性能（ProcessBench平均F1达44.9%），并能作为PPO中统一的奖励/价值模型，将峰值GPU内存降低27%，训练步长缩短19%，同时保持LLM质量。
+在**标准Bradley-Terry损失之上添加两个正则化项来实现时间连贯性**，这两个正则化项的最小化目标被证明是条件期望：
+
+**Lookahead Consistency (前瞻一致性):** 该正则化项惩罚中间令牌输出与最终令牌输出之间的显著差异。其基于均方误差(MSE)，旨在使r(x, y_{0..k})r(x,y0..k)r(x, y_{0..k})r(x,y0..k​)预测最终奖励r(x, y)r(x,y)r(x, y)r(x,y)。为了稳定学习，最终奖励r(x, y)r(x,y)r(x, y)r(x,y)的梯度会被停止（stop-gradient）。这个正则化项在结构上与强化学习中的Monte Carlo (MC) 价值学习目标（即使用完整的未来回报作为目标来更新价值函数）是等价的，其中奖励模型自身的最终令牌输出扮演了MC目标的角色。
+
+**Smoothness (平滑性):** 该正则化项鼓励相邻令牌的奖励分数相似，惩罚奖励轨迹中的急剧变化。其基于相邻令牌输出的均方差，旨在使r(x, y_{0..k-1})r(x,y0..k−1)r(x, y_{0..k-1})r(x,y0..k−1​)预测下一个令牌的奖励r(x, y_{0..k})r(x,y0..k)r(x, y_{0..k})r(x,y0..k​)。下一个令牌的奖励r(x, y_{0..k})r(x,y0..k)r(x, y_{0..k})r(x,y0..k​)的梯度也会被停止。
+这个正则化项在结构上与强化学习中的Temporal Difference (TD) 价值学习目标（即使用自举（bootstrapping）的方法，用下一个状态的价值估计来更新当前状态的价值）是等价的，体现了Bellman一致性。
+
+整体损失函数是将标准Bradley-Terry损失与这两个正则化项加权求和
+
+
 ## MFS
 MFS: An Efficient Model Family Serving System for LLMs
 
