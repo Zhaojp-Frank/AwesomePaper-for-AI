@@ -1,5 +1,34 @@
 # Awesome or inspiring paper for AI
 
+## Arena
+Arena: Efficiently Training Large Models via Dynamic Scheduling and Adaptive Parallelism Co-Design
+EuroSys26 上海交大等
+
+1. 旨在解决**多种异构GPU集群**中大型模型（LMs）训练效率低下问题，其根源在于现有调度器基于静态并行（SP）进行调度而实际执行采用自适应并行（AP）导致的不匹配。
+2. 提出通过“网格”抽象将调度与并行优化空间分片，并发现固定流水线度下AP计划间相对性能可分析评估，实现了低成本解耦分析和AP定制的负载感知性能估计。
+3. 系统协同设计动态调度与自适应并行，通过对分析过的作业进行弹性与异构调度，并执行剪枝后的AP，与基线相比，将作业完成时间减少多达49.3%，集群吞吐量提高达1.60倍。
+
+分层统一了 AP 感知估算和低成本分析，以高效导航联合调度-并行优化空间。
+**实现基础**： Arena 使用 Python 实现（13K LoC），调度器和模拟器共享代码逻辑。训练后端基于 JAX 框架上的 Alpa，并对 stage_construction 和 stage_profiling 模块进行了少量修改以支持并行剪枝。操作符信息通过 XLA 和 HLO IR 进行静态模型分析，ILP 求解器用于最小化阶段内通信成本。单设备分析通过基于 NVIDIA CUPTI 的 C++ kernel profiler 实现，通信原语通过 XLA、NCCL 和 Ray 进行离线分析。调度器使用 gRPC 与分布式训练进程通信。
+**硬件条件**：
+集群 A： 32 个节点，64 个 GPU，其中 16 个节点配有 2x NVIDIA A40 GPU，另 16 个节点配有 2x NVIDIA A10 GPU。
+集群 B： 16 个节点共 128x NVIDIA H100 GPU，另 16 个节点共 256x NVIDIA L20 GPU。
+模拟集群： 1,280 个 GPU，包含 4 种类型：A100（80 节点）、A40（160 节点）、A10（160 节点）、V100（20 节点）。模拟器通过预测量 AP 性能数据来代替实际模型训练，包括网络拓扑影响和 AP 搜索/检查点恢复开销。
+
+
+**软件版本**： CUDA 11.8，Python 3.8。
+**负载情况**：使用 Philly trace（两周，超过 13,000 个任务）、Helios Venus trace 和 PAI trace。针对异构场景，随机生成 GPU 数量、类型、模型配置和迭代次数。
+评估模型：Wide-ResNet、GPT-3、GShard MoE，参数量范围从 0.5B 到 27B。
+
+
+**对比基线**：
+FCFS： 严格按到达顺序调度，资源固定。
+Gavel： 异构感知调度，通过 ILP 解决优化问题（如吞吐量最大化）。
+ElasticFlow (EF)： 弹性伸缩 GPU 数量，侧重截止时间感知和吞吐量最大化。
+Sia： 调度静态并行任务，调整 GPU 数量、类型和超参数，解决 goodput 最大化问题。
+
+任务执行与性能分析： 对比基线在执行时也启用 AP。所有调度器都预先进行性能分析，并将相应的分析开销计入调度实验。
+
 ## TCRM
 Reward Models Are Secretly Value Functions: Temporally Coherent Reward Modeling
 
