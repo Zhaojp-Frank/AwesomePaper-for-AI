@@ -1,5 +1,107 @@
 # Awesome or inspiring paper for AI
 
+## Dynamic Latency-Throughput Balancing
+Dynamic Latency-Throughput Balancing in Distributed Large Model Inference with Interleaved Parallelism 
+
+https://dl.acm.org/doi/full/10.1145/3797040 TACO 2026, 中山大学
+
+1. ⚙️ 本文提出Liger+系统，旨在解决分布式大模型推理中现有并行策略（Tensor Parallelism和Pipeline Parallelism）在延迟和吞吐量之间难以动态平衡的困境。
+2. 💡 Liger+通过创新的交错并行（Interleaved Parallelism）方法，在多个请求之间交错计算和通信，并包含任务感知的批处理管理模块及一个分布式运行时模块，后者利用混合同步、运行时内核分解和资源争用预测等GPU调度技术实现高效重叠。
+3. 🚀 实验结果显示，Liger+在判别式任务中相比Pipeline Parallelism显著降低P90延迟，相较Tensor Parallelism则提升吞吐量并改善延迟；在生成式任务中也实现了P90延迟降低和吞吐量提升。
+   TBO+调度控制+精细sm/kernel管理？
+   
+<img width="791" height="749" alt="image" src="https://github.com/user-attachments/assets/9f4dfebb-f6b4-46a3-ac0a-c0e5f266bbb7" />
+<img width="861" height="525" alt="image" src="https://github.com/user-attachments/assets/ea0bdd09-7bca-458e-a6ab-111396801cca" />
+<img width="876" height="354" alt="image" src="https://github.com/user-attachments/assets/ecddb5c5-599e-4dbf-94dd-7346c0425bba" />
+
+
+**场景与具体问题：**
+大规模预训练模型（Large Models, LMs）的快速发展，例如Vision Transformer、Diffusion Model和LLM，对AI基础设施提出了巨大的计算与内存挑战。在在线推理场景中，低延迟对于用户体验至关重要，而高吞吐量则是满足服务需求的关键。现有的分布式推理框架主要采用两种并行方法：Tensor Parallelism (TP) 和 Pipeline Parallelism (PP)。TP通过切分算子并并行执行以降低延迟，但引入了高昂的通信开销，限制了吞吐量。PP则将模型划分为多个阶段，每个阶段分配给不同设备，通过流水线方式处理请求，从而实现高吞吐量和较低的通信需求，但无法缩短单个请求的延迟。一旦选定并行策略，其性能指标便固定，导致在延迟和吞吐量之间难以动态平衡。
+
+**业界存在哪些不足：**
+1.  **静态的并行策略选择：** 现有框架中，TP和PP的选择是静态的，一旦确定，延迟和吞吐量特性即被固定，无法根据实际负载或需求进行动态调整。
+2.  **GPU调度挑战：** 实现计算与通信的交织并行面临多重挑战，包括：
+    *   **通信核执行滞后：** 异步核启动时，GPU上观察到的执行顺序常与编程指定不符，尤其是在多流配置中。计算密集型核（computation kernels）可能导致通信核（communication kernels）启动延迟，即使使用了NCCL的高优先级流。
+    *   **硬件资源争用：** 计算核和通信核虽然主要资源需求不同，但并发执行时仍会发生资源争用（Compute resource Contention和Memory Bandwidth Congestion），延长核持续时间，降低重叠效果。
+    *   **核持续时间差异大：** 大模型推理中，不同核以及相同核在不同输入下的执行时间差异巨大，这严重限制了核重叠的可能性。
+3.  **异构任务管理复杂：** 大型模型任务分为判别式任务（discriminative tasks，单次推理）和生成式任务（generative tasks，自回归迭代，包含prefill和decode阶段）。现有批处理策略（例如为生成式任务设计的单独批处理或混合批处理）主要针对单批次执行，难以有效管理多批次并发，以支持交织并行。
+
+**关键观察与假设：**
+1.  **计算与通信的交织潜力：** 观察到TP中计算和通信在时间上存在间隙，PP中不同阶段在不同设备上处理不同请求，这启发了交织并行（interleaved parallelism）的思路：在TP的切分基础上，利用计算核执行期间通信资源的空闲，或通信核执行期间计算资源的空闲，来调度另一批次的对应类型核。
+2.  **动态调整重叠比例：** 通过调整计算-通信重叠比例，可以动态适应不同的延迟和吞吐量目标。
+3.  **多GPU架构适用性：** 论文假设所关注的多GPU架构（单个节点内含多GPU）能够覆盖绝大多数模型尺寸的需求。
+4.  **分阶段解决调度问题：** 将复杂的调度问题分解为批管理、核执行顺序控制、资源争用缓解和核粒度细化等子问题。
+
+**方法核心思路和主要步骤：**
+Liger+的核心思想是**交织并行（Interleaved Parallelism）**，其在单设备上的操作执行层面，类似于TP切分一个算子在多设备上并发执行，但不同于PP将不同阶段分配给不同设备，而是将新到达批次的负载整合到当前批次不同类型资源（计算或通信）的空闲时段，利用时间复用（time-division multiplexing）的概念。
+Liger+系统由两大部分组成：前端的**任务感知批管理模块（Task-aware Batch Management Module）**和后端的**分布式运行时模块（Distributed Runtime Module）**。
+
+1.  **任务感知批管理模块：**
+    *   **批次编排（Batch Orchestration）：**
+        *   **判别式任务：** 采用固定大小批处理，请求累积到固定数量即生成批次，按到达时间排序，最先到达的批次被指定为主批次（primary batch）。允许同时处理多个批次以最大化计算-通信空间。
+        *   **生成式任务：** 采用“生产者-消费者”模型，交织prefill批次和decode批次的计算与通信。积累请求形成prefill批次进行KV Cache初始化；初始化后，这些请求加入decode批次进行迭代处理。当decode批次不足以完全利用设备时，prefill批次被指定为主批次；一旦decode请求足够多，decode批次则被优先处理。
+    *   **函数组装（Function Assembly）：** 将每个批次的核启动函数指针、持续时间、类型等信息组织成列表，供运行时模块调度。还管理中间结果的内存和跟踪批次类型。
+
+2.  **分布式运行时模块（Multi-GPU Multi-Stream Scheduler）：** 实现交织并行的核心。
+    *   **调度原则：** 1) 优先保证早期到达批次的低延迟；2) 调度器需灵活处理任意输入尺寸；3) 在前两点基础上，最大化重叠程度。
+    *   **混合同步方法（Hybrid Synchronization Approach）：**
+        *   结合了**CPU-GPU同步**（用于启动控制和隐藏启动开销）和**流间同步（Inter-stream Synchronization）**（利用CUDA事件在GPU内部控制核执行顺序）。
+        *   在核类型转换的核周围插入两个CUDA事件：第一个触发CPU启动两个核子集（通信子集优先），同时隐藏启动开销（一个核仍在GPU上活跃）；第二个CUDA事件实现流间同步，确保核精确交错执行，消除CPU等待开销。
+    *   **基本调度算法（Algorithm 1）：**
+        *   周期性地识别并启动来自主批次和后续批次的两个不同核子集。
+        *   主批次核子集的长度由计算核与通信核类型切换点决定，并记录累积执行时间。
+        *   后续批次寻找与主批次互补的核类型，并匹配持续时间进行重叠。
+    *   **资源争用缓解与预测（Contention Mitigation and Anticipation）：**
+        *   **通信核资源优化：** 通过NCCL环境变量（`NCCL_NTHREADS`和`NCCL_MAX_NCHANNELS`）调整通信核的CUDA blocks和threads数量，避免过度分配资源。
+        *   **精细粒度资源映射（Fine-grained Resource Mapping）：** 利用`libsmctrl`库将核动态绑定到特定的TPCs（Thread Processing Clusters），增强空间局部性，减少争用。为通信核分配固定的GPC内TPC，为计算核根据主批次核类型和相对持续时间选择`Isolated-TPC`（隔离）或`Shared-TPC`（共享）策略。
+        *   **争用因子预测（Contention Factor Strategy）：** 离线分析计算密集型核和通信核在不同输入下的并发剖析，生成精细粒度争用因子。调度时，根据这些因子调整后续批次的核持续时间，确保调度决策的准确性，从而提升重叠效果并满足主批次优先级。
+    *   **运行时核分解（Runtime Kernel Decomposition）：**
+        *   对于执行时间过长的核，在运行时动态地将其分解为更小、更易管理的子单元。
+        *   通过手动预定义等效计算能力的分解策略（例如GEMM的垂直分解优于水平分解）。调度器根据剖析结果，在超过潜在重叠空间时，识别并选择最佳分解模式。
+
+**实验设置：**
+*   **实现：** Liger+原型系统用C/C++实现，重用了FasterTransformer中优化过的CUDA核。
+*   **硬件条件：**
+    *   节点1：4块NVIDIA Tesla V100 GPU (16 GB, Volta架构)，通过NVLink互联。
+    *   节点2：4块NVIDIA A100 GPU (80 GB, Ampere架构)，通过PCIe Switch互联。
+    *   节点3：4块NVIDIA L20 GPU (48 GB, Ada Lovelace架构)，通过PCIe互联。
+*   **软件版本：** `gcc~8.4.0`，`CUDA~11.3`，`MVAPICH~3.2.1`，`NCCL~2.18.5`。
+*   **模型：** 选择了三种Transformer大模型作为目标：OPT-30B (60 GB)、OPT-66B (132 GB) 和 GLM-130B (260 GB)，均使用FP16精度。
+*   **负载情况：**
+    *   **判别式任务：** 随机生成输入序列长度在16到128之间的trace，批次大小为4和8。通过持续增加请求到达率来测试。
+    *   **生成式任务：** 合成请求trace，输入token数量在256到512之间均匀采样，生成token数量在1到128之间均匀采样。通过持续增加请求到达率来测试。
+*   **对比基线：**
+    *   **Tensor Parallelism (TP)：** 基于Megatron-LM的TP实现，判别式任务使用与Liger+相同的批处理策略，生成式任务使用vllm类似的独立批处理策略。
+    *   **Pipeline Parallelism (PP)：** 判别式任务中将模型等分到不同设备。生成式任务中，由于两阶段差异大且存在“气泡”问题，未进行PP对比。
+    *   **Hybrid Tensor + Pipeline Parallelism (Hybrid)：** 在4-GPU设置下，将GPU分为两组，组内TP，组间PP。仅在判别式任务中进行对比。
+
+**关键对比结果：**
+*   **判别式任务：**
+    *   在低请求到达率下，Liger+与TP表现相似，P90延迟优于PP和Hybrid。
+    *   在高请求到达率下（在Liger+吞吐量饱和前）：
+        *   相较于TP：吞吐量提升显著（V100上1.18倍，L20上1.59倍，A100上1.63倍），同时P90延迟保持优势。
+        *   相较于PP：在保持相同吞吐量的同时，P90延迟平均降低43.8%（V100上57.4%，L20上46.2%，A100上37.7%）。
+        *   相较于Hybrid：在大多数情况下，Liger+实现了更低的P90延迟和可比的吞吐量（V100上P90延迟平均降低19.0%，L20上17.5%）。但在A100上服务OPT-30B/66B时，高请求率下Hybrid可能更快，这与Liger+切分更细、GPU利用率和通信开销有关。
+    *   Liger+的性能提升与批次大小正相关（批次越大，GPU饱和度越高，优化潜力越大），与模型尺寸负相关（模型越大，计算需求增长更快，通信相对比例减小，Liger+优势减弱）。在网络带宽受限的系统（如PCIe互联的A100）上，Liger+性能增益更显著。
+*   **生成式任务：**
+    *   在低请求到达率下，Liger+与TP性能相近。
+    *   在高请求到达率下（在基线吞吐量饱和后，Liger+吞吐量饱和前）：
+        *   相较于TP：峰值吞吐量平均提升1.15倍（L20上1.14倍，A100上1.16倍），P90延迟平均降低26.2%（L20上21.6%，A100上28.5%）。
+    *   **TTFT (Time To First Token) 和 TPOT (Time Per Output Token)：** Liger+的P90 TTFT低于TP，响应更快，主要因为排队时间缩短。Liger+的P90 TPOT也低于TP，因为它解耦了prefill和decode的调度，实现了并行执行，有效避免了TP中新请求插入导致的延迟。
+*   **消融实验：**
+    *   **混合同步：** 相较于纯CPU-GPU同步，混合同步显著提升了P90延迟和吞吐量，因为它有效隐藏了核启动开销，并保证了精确的核执行顺序。
+    *   **核分解：** 分解因子越大，Liger+的P90延迟和吞吐量越好，因为能找到更匹配的核子集进行重叠。但分解过细后，GPU利用率下降，性能增益会递减。
+    *   **争用缓解：** NCCL_Ctrl（仅限制通信核资源）相比无优化有提升。Liger+（结合精细粒度资源映射和争用因子）进一步提升了性能，因为它增强了空间局部性，并更准确地预测了争用。
+*   **强扩展性：** 随着GPU数量增加，Liger+的延迟和吞吐量均得到提升。在4-GPU配置下，Liger+在吞吐量上超越TP，在延迟上超越PP。在2-GPU配置下，由于通信开销本身较低，Liger+的优势相对有限。
+
+**潜在局限或不足：**
+1.  **额外内存开销：** Liger+为了并发处理多个批次，需要额外的中间结果工作空间，导致每个GPU峰值内存占用增加约200 MiB（占总内存足迹不到1%），尽管论文认为这可以忽略不计。
+2.  **调度复杂性：** 运行时核分解、精细粒度资源映射和争用因子预测等机制增加了调度器的复杂性，需要仔细的离线剖析和在线动态调整。
+3.  **模型与硬件相关性：** 论文指出Liger+的性能受模型特性（计算与通信比例）和互联配置（NVLink vs. PCIe）影响。在计算密集型且通信开销相对较低的大模型或互联带宽很高的系统上，Liger+的优势可能不如通信瓶颈明显的场景那么突出。
+4.  **手动引导的核分解：** 当前的核分解是手动引导的决策过程，需要预定义策略，这可能增加了系统适配新模型的成本。
+5.  **生成式任务中PP的未对比：** 论文解释了由于生成式任务的“气泡”问题，未将PP作为生成式任务的基线进行对比，这使得在生成式任务上缺乏与PP的全面比较。
+6.  **通用性与特定场景：** Liger+专注于多GPU架构下的单节点推理优化，对于更广阔的集群场景或异构硬件的通用性可能需要进一步验证。
+
 ## PolyKV
 PolyKV: A Shared Asymmetrically-Compressed KV Cache Pool for Multi-Agent LLM Inference
 
