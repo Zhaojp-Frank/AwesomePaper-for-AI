@@ -1,5 +1,15 @@
 # Awesome or inspiring paper for AI
 
+## BitSnap
+BITSNAP: CHECKPOINT SPARSIFICATION AND QUANTIZATION IN LLM TRAINING
+
+https://arxiv.org/pdf/2511.12376 2025.11.18 清华大学 上海交大
+
+1. 🚀 针对大型语言模型（LLM）训练中检查点**存储过大、内存占用高以及故障恢复时间长**等挑战，本文提出了BitSnap系统，通过**异步检查点保存机制有效加速了检查点过程**。
+2. 💡 BitSnap的核心是创新的**检查点稀疏化和量化方法**：针对模型状态，基于观察到**连续检查点之间变化极小的特性**，采用**位掩码（bitmask）稀疏化，实现了高达16倍的无损压缩**；对于**优化器状态，基于其数值分布特性，采用聚类量化方法将其压缩至uint8**，取得了2倍的压缩率并保持了极低的精度损失。
+3.  BitSnap不仅大幅提升了检查点保存速度（例如，3B模型提速11.73倍），并且位掩码稀疏化对模型训练收敛无影响，而聚类量化在少量精度损失下表现出比朴素8位量化更好的鲁棒性，同时结合内存冗余机制有效提升了故障恢复效率。
+   
+
 ## Dynamic Latency-Throughput Balancing
 Dynamic Latency-Throughput Balancing in Distributed Large Model Inference with Interleaved Parallelism 
 
