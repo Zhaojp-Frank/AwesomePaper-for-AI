@@ -1,5 +1,107 @@
 # Awesome or inspiring paper for AI
 
+## FlashOverlap
+Efficient and Adaptable Overlapping for Computation and Communication via Signaling and Reordering
+
+https://arxiv.org/pdf/2504.19519 **EuroSys26** 清华大学 无问等 2025.10.9 
+ https://github.com/infinigence/FlashOverlap
+ 
+1. 提出FlashOverlap，旨在解决多GPU计算中**GEMM与通信重叠的瓶颈**，特别是针对PCIe-GPU，通过提供瓦片级重叠、无干扰计算和通信无关性，克服了现有分解式和融合式方法的局限。
+2. 作者发现GEMM计算中的“波浪模式”特性，并**利用信号机制**在wave组（而不是单个tiling）完成计算后触发通信，同时引入**前通信重排序**将非连续tiling数据**组织为连续地址**以调用标准NCCL API，并在**通信后进行后通信重排序**以恢复数据顺序。
+3. FlashOverlap在基于多steam overlap，而不是fusion。多种通信原语（AllReduce, ReduceScatter, All-to-All）和实际生成模型任务中，实现了1.65x，并通过基于预测的实时搜索方法优化波浪分组，证明了其在效率和适应性方面的卓越表现。
+   基于CUTLASS，4090加速最大；prefill推理和训练。对标串行，asyncTP，FLux等。
+
+      
+本文提出了一种名为 FlashOverlap 的高效且自适应的计算与通信重叠方案，旨在解决多 GPU 计算系统（特别是消费级 GPU）中因大规模生成模型部署而日益凸显的 GPU 间通信瓶颈。
+<img width="1020" height="480" alt="image" src="https://github.com/user-attachments/assets/4db7dbe5-1935-4e26-9496-d33a605b9e90" />
+<img width="476" height="230" alt="image" src="https://github.com/user-attachments/assets/4041f61d-b4e3-4bbc-9efb-05b42f56c575" />
+<img width="1016" height="548" alt="image" src="https://github.com/user-attachments/assets/ce70bb04-693a-4ef4-b9fd-9ba3000a3de3" />
+<img width="483" height="319" alt="image" src="https://github.com/user-attachments/assets/034b7b20-40f9-45ca-98b1-0092d5808eaa" />
+<img width="1020" height="227" alt="image" src="https://github.com/user-attachments/assets/f3f7b241-324b-4138-b93b-4eb418776e9d" />
+
+<img width="494" height="220" alt="image" src="https://github.com/user-attachments/assets/61a4dc81-4a48-45ce-9710-0eee61a90e97" />
+
+
+**场景与具体问题**
+随着生成模型参数量的急剧增长（例如 DeepSeek-V3 达 671B 参数，Llama 4 Behemoth 达 2T 参数），单 GPU 已无法满足部署需求，多 GPU 计算成为必然，引入了不可忽略的 GPU 间通信开销。在消费级 GPU 上，PCIe 互连（16-64 GB/s）作为主要通信通道，进一步加剧了这一问题。通过重叠计算和通信来隐藏通信延迟是一种有效技术。然而，现有的重叠设计未能同时满足以下三个关键特性：
+1.  **Tile-wise overlapping（细粒度重叠）**: 最大化重叠机会，因为 Tile 是 GEMM 输出中逻辑上最小的并行数据单元。
+2.  **Interference-free computation（无干扰计算）**: 保持原始计算性能，避免对 GEMM 进行分割、分块或逻辑修改。
+3.  **Communication agnosticism（通信原语无关性）**: 减少针对不同通信原语的开发负担。
+
+**业界存在哪些不足**
+当前主流的重叠方法主要分为两类：
+1.  **Decomposition-based methods（分解式方法）**: 将计算输出分解为多个子张量，异步触发通信。
+    *   **不足**: 无法实现 Tile-wise overlapping（因 Tile 的非连续性及数据对齐要求），且对原始 GEMM 进行碎片化可能导致计算资源利用率下降，非 Interference-free computation。
+    *   **优点**: 实现相对简单，能够利用 NCCL 等标准通信库（Communication agnosticism）。
+2.  **Fusion-based methods（融合式方法）**: 将 GEMM 计算和通信原语融合到单个 GPU 内核中。
+    *   **不足**: 能够实现 Tile-wise overlapping，但需要手动优化和定制通信原语，适应性差，不具备 Communication agnosticism；且可能需要修改计算逻辑或分块策略来协调计算与通信，导致性能下降或需要额外调优，非 Interference-free computation。
+
+**关键观察与假设**
+FlashOverlap 的设计基于以下关键观察和假设：
+1.  **GEMM 中的波浪模式 (Wave Pattern)**: GEMM 计算中，Tile 的完成时间呈现出明显的波浪模式，即某些 Tile（一个波浪）几乎同时完成。这表明 Tile 级别的细粒度信号不总是必要的，可以以“波浪”为单位触发通信，既能保持重叠机会，又能提升带宽利用率。
+2.  **块调度 (Block Swizzling) 导致的 Tile 顺序不规则**: 为提高内存访问效率，GEMM 计算中通常会采用块调度技术，使得完成的 Tile 在内存中并非连续排列，导致无法直接进行通信。
+3.  **通信过程中数据顺序的灵活性**: 并非所有通信原语都严格要求数据保持原始内存顺序。例如，AllReduce 仅需保持所有 GPU 上的 Tile 顺序一致即可；ReduceScatter 可以允许行分配的变化，只要后续 AllGather 能恢复；All-to-All 可以在子令牌级别进行处理。这为数据重排提供了空间。
+4.  **重叠效率与通信分段的权衡**: 过小的通信粒度（如单个 Tile）会导致通信碎片化，带宽利用率低下，API 调用开销过大，反而抵消重叠收益。因此，需要根据工作负载动态调整通信粒度。
+
+**方法核心思路和主要步骤**
+FlashOverlap 的核心思想是利用**信号机制**在不中断 GEMM 计算的前提下触发通信，并通过一对**重排序操作**解决数据连续性问题。
+
+1.  **信号机制 (Signaling Mechanism)**:
+    *   **核心思想**: 在 GEMM 内核中，当一部分输出完成计算时，发送一个信号（开销可忽略不计）来触发对应部分的通信，同时 GEMM 继续计算剩余部分。这确保了数据依赖性的同时，实现了 Interference-free computation。
+    *   **信号时机优化**:
+        *   从 Tile 到 Wave: 识别 GEMM 中的波浪模式，以“波浪”为单位触发通信，而非单个 Tile。这在保持 Tile-wise overlapping 机会的同时，显著提升了通信带宽利用率。
+        *   从 Wave 到 Group: 为进一步优化，将多个波浪（$\text{Wave}$）组成一个“波浪组”（$\text{Wave Group}$），当整个组完成计算后才触发通信。组的大小是可调的，以在重叠机会和通信效率之间取得平衡。
+    *   **实现方式**: 引入一个计数表 (Counting Table) 来跟踪 Tile 的完成情况。该表记录每个波浪组已完成的 Tile 数量。当某个波浪组的计数达到其总 Tile 数时，触发该组的通信。
+
+2.  **重排序 (Reordering)**:
+    *   **动机**: 解决由于块调度导致的 Tile 数据在内存中不连续的问题，以及满足通信库（如 NCCL）对连续内存区域的要求。
+    *   **实现方式**:
+        *   **通信前重排序 (Pre-communication Reordering)**: 将已完成的 Tile（或子 Tile、子 Token）重新排列到连续的内存地址。这种重排序被融入 GEMM 的尾声 (Epilogue) 部分，避免中断主循环，且由于 Tile 间的逻辑映射关系可通过一个映射表 (Mapping Table) 建立，开销很小。这种重排序使得可以直接调用 NCCL 等标准 API，实现 Communication agnosticism。
+        *   **通信后重排序 (Post-communication Reordering)**: 在通信完成后，将数据恢复到原始逻辑顺序，以确保后续操作的正确性。此操作同样通过与后续的逐元素操作（如 RMSNorm）融合来实现，将恢复逻辑集成到数据加载/存储中，避免额外内核启动开销。
+    *   **重排序粒度**: 根据不同的通信原语，重排序粒度可以是 Tile、子 Tile（用于 ReduceScatter），或子 Token（用于 All-to-All），以兼顾通信正确性和重叠机会。
+
+3.  **实时调优 (Real-Time Tuning)**:
+    *   **动机**: 不同的 GEMM 大小和硬件条件，导致最优的波浪分组策略不同。
+    *   **挑战**: 传统的在线调优开销巨大（$2^{T-1}$ 的搜索空间）。
+    *   **预测搜索 (Predictive Search)**:
+        *   **设计空间剪枝**: 基于先验知识（如第一组和最后一组大小不宜过大以避免冷启动和长尾效应）剪枝搜索空间。
+        *   **延迟预测器**: 构建一个准确的延迟预测器替代在线测试。该预测器综合考虑计算延迟（受 SM 争用影响）和通信延迟（受数据量和带宽曲线影响），通过迭代累积计算和通信时间来预测总延迟。
+        *   **算法**: 离线阶段预先获取 GEMM 配置、通信带宽曲线和资源争用信息；在线阶段通过预测搜索寻找最佳波浪分组策略。
+
+**实验设置**
+*   **实现基础**: 基于 CUTLASS 模板化 GEMM 实现，使用 CUDA Stream 管理并发执行，通信通过 NCCL API 调用。
+*   **硬件环境**: NVIDIA A800 GPU (NVLink 互联) 和 RTX 4090 GPU (PCIe 互联)。额外在华为昇腾 910B NPU 上进行验证（使用 TBE 和 HCCL）。
+*   **软件版本**: CUDA 12.1, NCCL 2.19.3, PyTorch 2.5.1, CUTLASS 3.6.0。
+*   **负载情况**:
+    *   **算子级 (Operator-level)**: GEMM+AllReduce (AR), GEMM+ReduceScatter (RS), GEMM+All-to-All (A2A)。测试了超过 50 种不同 GEMM 尺寸，覆盖主流 LLM 和 T2V 工作负载。
+    *   **端到端 (End-to-end)**: LLM 推理 (Llama3-70B), LLM 训练 (Llama3-70B, Mixtral-8x7B), 文本到视频生成 (Step-Video-T2V)。
+*   **对比基线**:
+    *   **非重叠 (Non-overlap)**: 串行执行 GEMM 和通信（通过 cuBLAS 和 NCCL）。
+    *   **分解式方法**: Async-TP (PyTorch), VanillaDecomposition (自定义 cuBLAS/NCCL 实现)。
+    *   **融合式方法**: FLUX, cuBLASMp。
+
+**关键对比结果**
+1.  **算子级性能**:
+    *   FlashOverlap 在 RTX 4090 GPU 上，相对于非重叠基线实现了 **1.02-1.65 倍**的加速，在多数情况下优于现有方法。
+    *   在 A800 GPU 上（NVLink 带宽更高），加速比略低，但其相对理论上限的利用率仍高达 **80% 以上**。
+    *   对于 K 值较小的情况，融合式方法（如 FLUX）因减少内存访问可能表现更好，但 FlashOverlap 仍具备竞争力。
+2.  **端到端性能**:
+    *   在 LLM 推理、LLM 训练和 T2V 生成任务中，FlashOverlap 带来了 **1.05-1.13 倍**的吞吐量提升。T2V 生成任务因其大输入 token 数受益最大。
+3.  **调优算法有效性**:
+    *   预测搜索方法的平均预测误差率在 RTX 4090 和 A800 GPU 上分别仅为 3.41% 和 3.44%。
+    *   基于预测器的搜索结果，性能可达到穷举搜索最优解的 **99% 以上**，显著降低了在线调优开销。
+4.  **重排序开销**:
+    *   融合到 GEMM 尾声的通信前重排序，平均开销极低（A800/RTX 4090 上分别为 0.07%/0.35% (Tile), 0.67%/0.68% (Subtile/Subtoken)）。
+    *   融合到 RMSNorm 等逐元素内核的通信后重排序，平均开销在 7.46% 到 9.63% 之间，即使在最小尺寸矩阵上，开销也保持在 10% 左右。
+    *   高 HBM 带宽的 GPU（如 A800）能有效缓解重排序带来的内存访问开销。
+5.  **跨平台验证**: 在华为昇腾 910B NPU 上，FlashOverlap 同样实现了 GEMM+AR 操作总延迟最高达 **1.37 倍**的加速。
+
+**潜在局限或不足**
+1.  **极端内存密集型场景**: 对于 K 值极小（例如 K=2048）的 GEMM，内存访问是主导因素，融合式方法因其内存访问优化可能略优。
+2.  **动态资源争用**: 虽然预测器考虑了 SM 争用，但如果系统中的资源争用模式快速变化或无法预测，预测准确性可能会下降，进而影响调优效果。
+3.  **跨节点通信**: 当前实现主要针对节点内多进程通信。跨节点通信需要切换到 PyTorch 分布式通信包，但 GEMM 和通信后端的核心逻辑保持不变。
+4.  **热节流影响**: 热节流会降低 GEMM 计算速度，但波浪执行模式不变。需要通过更新 GEMM 性能数据来适应。
+
 ## IBP压缩
 Reducing the GPU Memory Bottleneck with Lossless Compression for ML EuroSys26
 
