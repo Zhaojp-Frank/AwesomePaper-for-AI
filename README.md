@@ -1,5 +1,17 @@
 # Awesome or inspiring paper for AI
 
+## COPUS动态训练并行
+COPUS: Co-adaptive Parallelism and Batch Size Selection in Large Language Model Training
+
+https://arxiv.org/pdf/2604.26687 2026.4.29
+
+1. 🎯 LLM训练中，全局批次大小和3D parallelism策略的配置紧密耦合，现有独立优化方法会导致次优性能；本文发现，**throughput-optimal并行策略会随全局批次大小变化而动态调整**。
+2. 🚀 COPUS系统首次实现了在训练中对**全局批次大小、微批次大小和3D parallelism策略的协同自适应调整**，通过Goodput指标（吞吐量与统计效率的乘积）联合优化硬件和统计效果。
+3. 📈 在LLM预训练任务中，4节点32卡 dense模型最大32b，相比固定parallelism的基线，平均将time-to-convergence加速3.9%–8.0%（峰值达11.1%），并利用在线状态resharding将重配置延迟降低2–16倍。
+   
+<img width="976" height="583" alt="image" src="https://github.com/user-attachments/assets/1e62851c-606d-4f24-83e1-cadc4a145424" />
+<img width="970" height="551" alt="image" src="https://github.com/user-attachments/assets/ce2cee53-cdaa-4566-8e83-bacef1094db8" />
+
 ## MLLM Module Multiplexing
 Efficient Multimodal Serving via Module Multiplexing
 **EuroSys26** 港科，中山大学等
