@@ -1,9 +1,23 @@
 # Awesome or inspiring paper for AI
 
+## MLLM Module Multiplexing
+Efficient Multimodal Serving via Module Multiplexing
+**EuroSys26** 港科，中山大学等
+
+1. 针对多模态模型在现有单模态推理系统上存在严重的GPU利用率低下问题，本文提出，该问题源于模型内部模块异构性、输入模式不平衡及预处理开销。
+2. 引入了"模块复用"（Module Multiplexing）新范式，将多模态模型**分解为独立的、可调度的模块单元，并允许它们在同一个GPU上并发执行，且具备独立的batching和资源分配，就能实现更细粒度的GPU共享** 从而提升GPU内部并行性并提高请求吞吐量。
+3. CLIP、BLIP、LLaVA等多种多模态模型上的评估显示，显著优于Triton和Gpulet等现有系统，**平均吞吐量提高157%，延迟降低约90%**，并将GPU利用率提升至高达90%。
+基于vLLM，借助NVIDIA MPS；A100单机 3090单机
+
+<img width="500" height="276" alt="image" src="https://github.com/user-attachments/assets/8da1d96d-8908-46c7-8b35-508c68b0eaad" />
+<img width="1049" height="270" alt="image" src="https://github.com/user-attachments/assets/1b456e1f-c389-4253-a9e1-b211014ce529" />
+
+
 ## FlashOverlap
 Efficient and Adaptable Overlapping for Computation and Communication via Signaling and Reordering
 
 https://arxiv.org/pdf/2504.19519 **EuroSys26** 清华大学 无问等 2025.10.9 
+
  https://github.com/infinigence/FlashOverlap
  
 1. 提出FlashOverlap，旨在解决多GPU计算中**GEMM与通信重叠的瓶颈**，特别是针对PCIe-GPU，通过提供瓦片级重叠、无干扰计算和通信无关性，克服了现有分解式和融合式方法的局限。
