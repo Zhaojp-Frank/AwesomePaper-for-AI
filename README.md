@@ -1,5 +1,22 @@
 # Awesome or inspiring paper for AI
 
+## NemoRL投机
+Accelerating RL Post-Training Rollouts via System-Integrated Speculative Decoding 
+
+https://arxiv.org/pdf/2604.26779 2026.4.29 NVIDIA NeMo-RL
+
+1. 在NeMo-RL中实现了基于vLLM后端并支持EAGLE-3和MTP头的推测解码，并发现draft初始化质量、draft长度以及在线适应性是实现加速的关键因素，且其与异步RL是互补的。
+2. 同步RL下，8B模型推理工作负载的rollout加速1.8x，整体训练速度+1.4x；通过高性能**模拟器预测**，异步RL下，235B模型有望2.5x的端到端训练加速。
+
+草稿初始化影响：与Rollout分布对齐的域内（in-domain）DAPO初始化草稿，显著优于通用Chat域的UltraChat初始化草稿。DAPO初始化下，RL-Zero的加速从1.51×提升到1.77×，RL-Think从1.19×提升到1.53×。
+草稿长度影响：草稿长度k=3通常给出最佳端到端加速。增加草稿长度（如k=5, 7）虽然提高了平均接受长度，但可能因推测工作量增加而降低整体加速。在RL-Think上，k=5和k=7甚至比自回归解码慢。
+在线更新草稿适应影响：对于已良好初始化的草稿（DAPO），在线更新带来的额外收益有限。对于初始较弱的草稿（UltraChat），在线适应能带来额外收益（RL-Zero从1.51×提升到1.63×，RL-Think从1.19×提升到1.26×）。在线草稿维护作为防止分布不匹配的保障，而非普适性改进策略。
+与异步执行的结合：推测解码与异步执行互补。在异步RL中（如16节点，12个生成节点，4个训练节点，策略滞后policy lag为1），推测解码将暴露在关键路径上的生成时间从10.4s降至0.6s，使有效步长从75.0s降至60.5s（1.24×加速）。尽管收益小于同步RL，但它能进一步降低Rollout成本。
+部署规模预测：
+- 在大型模型（如Qwen3-235B-A22B）和大规模部署（512-2048 GB200 GPU）下，模拟预测Rollout加速可达6.49×，端到端训练加速可达2.22×。
+- 最有利的模拟运行点（Qwen3-235B-A22B，2048 GPU，滞后2）下，Rollout加速达到约3.5×，结合前沿模型高生成占比的特点，预计端到端训练加速可达约2.5×。
+- 更大的部署规模通常从推测中受益更多，但在零滞后情况下，2048-GPU配置可能因批量太稀疏而表现略逊于512-GPU配置，但增加异步重叠后能恢复优势。
+
 ## FP4 explore
 FP4 Explore, BF16 Train: Diffusion Reinforcement Learning via Efficient Rollout Scaling 2026.4.8 NV, HKU, MIT
 
