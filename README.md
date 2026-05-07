@@ -16,6 +16,9 @@ https://arxiv.org/pdf/2604.26779 2026.4.29 NVIDIA NeMo-RL
 - 在大型模型（如Qwen3-235B-A22B）和大规模部署（512-2048 GB200 GPU）下，模拟预测Rollout加速可达6.49×，端到端训练加速可达2.22×。
 - 最有利的模拟运行点（Qwen3-235B-A22B，2048 GPU，滞后2）下，Rollout加速达到约3.5×，结合前沿模型高生成占比的特点，预计端到端训练加速可达约2.5×。
 - 更大的部署规模通常从推测中受益更多，但在零滞后情况下，2048-GPU配置可能因批量太稀疏而表现略逊于512-GPU配置，但增加异步重叠后能恢复优势。
+  
+<img width="798" height="286" alt="image" src="https://github.com/user-attachments/assets/9074b473-0992-426b-8fe2-b9cb36031cee" />
+<img width="797" height="679" alt="image" src="https://github.com/user-attachments/assets/a3704da7-6d43-43d6-bece-4b12f5475af2" />
 
 ## FP4 explore
 FP4 Explore, BF16 Train: Diffusion Reinforcement Learning via Efficient Rollout Scaling 2026.4.8 NV, HKU, MIT
