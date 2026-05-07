@@ -1,5 +1,25 @@
 # Awesome or inspiring paper for AI
 
+## FP4 explore
+FP4 Explore, BF16 Train: Diffusion Reinforcement Learning via Efficient Rollout Scaling 2026.4.8 NV, HKU, MIT
+
+paper: https://www.alphaxiv.org/abs/2604.06916
+
+code：https://github.com/NVlabs/Sana/
+https://nvlabs.github.io/Sana/Sol-RL/
+
+https://mp.weixin.qq.com/s/ny4G2CHLTreII1e1MDj1qA
+1. 🚀 针对 text-to-image 扩散模型的 RL 对齐，该研究发现**增加 rollout 规模可显著提升性能但引入计算瓶颈**，且直接**使用 FP4 等低精度量化 rollout 进行优化会引发性能退化**。
+2. 💡 为解决效率与训练完整性之间的困境，本文提出 Sol-RL，一个 FP4 增强的两阶段 RL 框架：第一阶段利用 NVFP4 进行高效探索以筛选出对比性强的样本，第二阶段则在 BF16 精度下重新生成这些样本并优化策略。
+3. 在 SANA、FLUX.1 和 SD3.5-L 等模型上**实现了~4x训练收敛加速，同时保持甚至超越了 BF16 精度的对齐性能**。
+   
+第一阶段（FP4 探索）：利用 NVFP4 的高吞吐量，以极低成本（6 步采样）快速筛选海量种子池（），仅保留奖励最高与最低的种子（）。
+第二阶段（BF16 训练）：仅对筛选出的少量种子，使用高精度 BF16 模型进行重生成（10 步采样），并基于这些高质量样本计算损失、更新权重。
+这种架构设计，本质上是对计算资源的按需分配：让廉价的 FP4 算力承担容错率高的“筛选”杂务，而将宝贵的 BF16 算力聚焦于不容有失的“精修”环节。
+<img width="798" height="288" alt="image" src="https://github.com/user-attachments/assets/8321ffff-034b-445f-8a9b-776094a321ab" />
+
+<img width="747" height="604" alt="image" src="https://github.com/user-attachments/assets/9f8e0c42-6591-4a1c-a1c7-2e5b6ddba882" />
+
 ## COPUS动态训练并行
 COPUS: Co-adaptive Parallelism and Batch Size Selection in Large Language Model Training
 
