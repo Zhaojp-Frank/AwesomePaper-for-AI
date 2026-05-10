@@ -1,5 +1,129 @@
 # Awesome or inspiring paper for AI
 
+## SLQ
+Statistically-Lossless Quantization of Large Language Models
+
+https://arxiv.org/pdf/2605.02404 IST 2026.5.4
+
+https://github.com/IST-DASLab/SLQ 待开源
+
+1. 定义了大型语言模型（LLM）的统计无损量化，引入了“**任务无损**”（TL）和更严格的“**分布无损**”（DL）概念，并提出了可解释的“**预期接受率**”（EAR）作为DL保真度指标。
+2. 提出的SLQ方法通过**非均匀分层量化**、**非对称量化**（被证明为DL的关键）以及 **基于Shapley敏感度估计**和整数线性规划（ILP）的**位宽分配**来实现，能为特定保真度目标寻找最小位宽配置。
+3. 基于GPTQ，vLLM + Humming kernel, L40s SLQ在低至3.3 bpp时实现了任务无损压缩，在5-6 bpp时实现了分布无损压缩（EAR ≥ 0.99），并在NVIDIA L40s GPU上相比FP16实现了1.7-3.6倍的推理加速，优于FP8并提供无损精度。
+Qwen3-32b, Qwen3.5-27b, Llama3.3-70b
+
+<img width="979" height="647" alt="image" src="https://github.com/user-attachments/assets/78fe1f31-8462-4245-b586-bfd1835c2224" />
+<img width="898" height="538" alt="image" src="https://github.com/user-attachments/assets/936fc39d-882e-462b-a8f0-e036e650accb" />
+
+### 场景与具体问题
+
+LLM 的高计算和内存成本使得模型量化成为高效部署的关键技术。然而，现有方法存在明显权衡：
+1.  **有损压缩方法（Lossy compression techniques）**如 Round-to-Nearest (RTN)、GPTQ、AWQ 等，虽然实现了实用的压缩，但会降低模型精度。例如，4-bit 量化可能导致零样本（zero-shot）准确率下降 3-5%。更复杂的矢量量化（vector-quantized）或网格（trellis-based）方法能减少精度损失，但难以与 vLLM 等主流推理管线集成。
+2.  **无损压缩方法（Lossless compression techniques）**如 ZipNN、Entropy-Coded FP8 (ECF8)、DFloat11 等，能保持模型保真度，但通常压缩比不高，且需要复杂的核（kernel）支持才能在推理时快速解码，主要侧重于存储而非推理加速。
+
+因此，业界缺乏一种能够在高压缩比下同时保持模型输出特性的方法，尤其是在模型本身具有随机性输出（如通过采样参数生成）的背景下。
+<img width="1186" height="321" alt="image" src="https://github.com/user-attachments/assets/c9da1dee-16fa-41da-8c36-fb3a0cf18ca3" />
+<img width="1180" height="344" alt="image" src="https://github.com/user-attachments/assets/a4d9269c-641c-4dc5-a6bd-44dd3dccf946" />
+
+### 业界存在哪些不足
+
+1.  **精度与加速的权衡：** 现有方法要么牺牲精度换取压缩和加速，要么保持精度但压缩比有限且推理加速不足。
+2.  **量化目标武断：** 许多方法固定在低比特操作点（如 4-bit），但这对于不同模型和层级的敏感度而言是武断的，可能过于激进或造成资源浪费。
+3.  **缺乏对“无损”的精确定义：** 对于 LLM 这种本身带有随机性的模型，简单的“bit-exact”无损定义过于严格，未能充分利用其输出的统计特性。
+4.  **对称量化的局限性：** 多数量化方案使用对称量化（Symmetric Quantization），当权重分布不对称时，会导致量化噪声方差显著膨胀，降低量化效果。
+5.  **混合精度分配粗糙：** 先前混合精度工作通常采用二元分配（如 4-bit 或 8-bit），这对于追求近似无损（near-lossless）的精细化需求而言过于粗糙。
+
+### 关键观察与假设
+
+1.  **LLM 输出的统计特性：** 大多数开源 LLM 在部署时都会使用随机解码（stochastic decoding）。即使是未量化的模型，在零样本评估中也表现出可测量的运行间方差（run-to-run variance）。因此，如果量化模型的输出能保持在原始模型的自然方差范围内，则在实际应用中可被视为无损。
+2.  **KL 散度与准确率的线性关系：** 在近似无损（near-lossless）区间，模型的零样本准确率与原始模型和量化模型之间 KL 散度近似呈线性负相关（`recovery ≈ 1 - α · DKL`）。这一关键观察使得通过单个校准点即可推断目标恢复率所需的 KL 散度阈值，极大地简化了搜索过程。
+3.  **非对称量化的重要性：** 论文证明了非对称量化（Asymmetric Quantization）对于实现分布无损（Distribution-Lossless）保真度至关重要。非对称量化能够通过引入零点（zeropoint）来更好地匹配权重分布的范围，从而更有效地利用量化级别，降低量化噪声。
+4.  **层级敏感度差异：** 不同模型层对量化的敏感度不同，这为非均匀比特位宽分配提供了依据。
+5.  **高比特率近似：** 论文在推导量化噪声方差时，基于 Bennett (1948) 的高比特率近似，假设量化级别足够多，且权重概率密度在每个 bin 内近似恒定。
+
+### 方法核心思路和主要步骤
+
+SLQ 的核心思想是实现统计无损压缩，其定义为：允许输出在确定性解码下与完美匹配有所偏差，但能在标准采样参数下保持模型输出特性。这通过区分两个无损概念来实现：
+1.  **任务无损（Task-lossless, TL）量化：** 零样本基准测试准确率在自然采样方差内得以保留。
+2.  **分布无损（Distribution-lossless, DL）量化：** 量化模型的下一个 token 分布与原始模型几乎无法区分。
+
+**主要步骤：**
+
+1.  **核心量化方法：** 论文主要基于 GPTQ 实现层级非均匀标量量化（layer-wise non-uniform scalar quantization），支持比特位宽范围 {2, 3, 4, 5, 6, 7, 8}。
+2.  **非对称量化：**
+    *   **零点参数：** 引入非零的零点参数来偏移量化网格，使其精确覆盖权重数据的 `[L, U]` 范围。
+    *   **$\gamma^2$ 方差定律：** 论文证明了对称量化相对于非对称量化，会将噪声方差放大 $\gamma^2$ 倍，其中 $\gamma = 2M/R$ 是中心不效率（centering inefficiency），$M = \max(|L|, |U|)$，$R = U-L$。
+        *   对称量化的步长 $\Delta_{sym} = \frac{2M}{n-1}$。
+        *   非对称量化的步长 $\Delta_{asym} = \frac{R}{n-1}$。
+        *   两者关系：$\Delta_{sym} = \gamma \Delta_{asym}$。
+        *   根据 Bennett (1948) 的高比特率近似，量化噪声方差 $\sigma^2 = \frac{\Delta^2}{12}$。
+        *   因此，对称量化噪声方差 $\sigma^2_{sym} = \frac{\Delta^2_{sym}}{12} = \frac{(\gamma \Delta_{asym})^2}{12} = \gamma^2 \frac{\Delta^2_{asym}}{12} = \gamma^2 \sigma^2_{asym}$。
+        *   这意味着非对称量化是实现分布无损保真度的先决条件。
+3.  **输出度量（Output Metrics）：**
+    *   **KL 散度：** `DKL = (1/N) Σi Σk∈Ti pi(k) log(pi(k)/qi(k))`，衡量原始分布 $p_i$ 和量化分布 $q_i$ 之间的差异，但难以直观解释。
+    *   **预期接受率（Expected Acceptance Rate, EAR）：** 论文引入的 DL 主要度量。`EAR = (1/N) Σi Σk=1 to K min(pi(k), qi(k))`，在原始和量化分布的最佳耦合下，衡量最大 token 一致性概率。EAR 范围 `[0, 1]`，直接可解释为共享概率质量的百分比（如 EAR=0.99 意味着 99% 的一致性），比 KL 散度更直观。
+4.  **敏感度估计与比特位宽分配：**
+    *   **多比特位宽 Shapley 估计：** 为每个层组（group）在不同比特位宽下的敏感度进行估计。通过运行多个二元游戏（binary game），计算每个层组在从最大比特位宽 `bmax` 切换到目标比特位宽 `b*` 时的边际度量变化（如 KL 或 EAR）。这能够捕捉跨层交互效应。
+        *   总成本：`O(P · M · |B|)` 次前向传播，其中 P 为排列次数，M 为组数，|B| 为比特位宽范围。
+    *   **比特位宽分配（ILP-based Allocation）：** 将敏感度估计结果输入到整数线性规划（Integer Linear Programming, ILP）求解器中，以在满足质量约束的前提下，最小化平均比特位宽。
+        *   **DL 目标：** 直接将 EAR（或 KL）作为约束，如 `EAR ≥ 0.99`，通过二分搜索平均比特位宽直到满足约束。
+        *   **TL 目标（单点校准）：** 利用 KL-准确率的线性关系 `recovery ≈ 1 - α · DKL`。通过测量统一 4-bit 量化配置的实际 KL 散度和基准准确率，得到斜率 `α`，从而推导出目标恢复率所需的 `D_KL^thresh`。分配过程中的预测 KL 散度会乘以校准比率 `ρ = D_actual^KL / D_predicted^KL`。
+
+### 实验设置
+
+*   **模型：** Qwen3-8B、Qwen3-32B、Qwen3.5-27B、Llama-3.3-70B-Instruct。
+*   **量化方法：** 层级非均匀非对称整数分组量化（group size 128），比特位宽范围 {2, 3, 4, 5, 6, 7, 8}。
+*   **基础量化技术：** 使用 GPTQ 进行层级量化。
+*   **校准数据：** 512 个校准样本。
+*   **DL 目标：** EAR 阈值设为 0.985–0.99。
+*   **推理加速实现：** 使用 Humming kernel library (InclusionAI, 2025)（vLLM 集成，基于 MARLIN），支持 4-8 bit 整数位宽。
+*   **硬件：** NVIDIA L40s GPU。
+*   **负载：**
+    *   **准确率评估：** 在 ARC-Challenge, GSM8K, GSM8K-CoT, IFEval, MMLU-CoT, MMLU-Pro 七个基准测试上进行零样本评估，使用非贪婪解码（non-greedy decoding），模型推荐的采样参数，并平均 3 个随机种子。
+    *   **吞吐量评估：** 在 ShareGPT 和 Reasoning 工作负载上测量 TPS/GPU (output tokens per second per GPU)。
+*   **对比基线：**
+    *   均匀 4-bit 量化 (Uniform W4A16)，使用 GPTQ 优化超参数。
+    *   GPTQ-Int4 (官方 Qwen3.5-27B 量化)。
+    *   FP8（针对吞吐量）。
+    *   BF16（原始模型基线）。
+
+### 关键对比结果
+
+1.  **任务无损（TL）压缩：**
+    *   SLQ 实现了在 3.3-4.7 比特位宽下达到或超过 99% 的 BF16 基线准确率恢复。
+    *   Qwen3.5-27B 仅需 3.30 比特，Llama-3.3-70B 仅需 3.59 比特。
+    *   SLQ-TL 在可比或更低比特位宽下始终优于统一 W4A16。
+
+2.  **分布无损（DL）压缩：**
+    *   SLQ 在 4.98-6.55 比特位宽下实现了 ≥ 99.3% 的平均准确率恢复，EAR 达到 ≥ 0.99，意味着与原始模型输出在统计上几乎无法区分。
+    *   Qwen3-32B 压缩最激进（4.98 比特），而 Llama-3.3-70B 需要 6.55 比特。
+    *   教师强制（teacher-forced）Token 级分析显示，SLQ-DL 量化模型（Qwen3-8B 5.70 比特）与基线模型 98.1% 的 token 一致，仅有的 1.9% 差异是微小的风格变体，不影响事实内容。
+
+3.  **非对称量化效果：**
+    *   非对称量化在分布层面上优势显著，实现 EAR $\ge 0.99$ 通常比对称量化节省约 1 比特/参数。
+    *   在 MMLU-Pro 单 token 决策任务上，非对称 4-bit 恢复了 88.4% 的 FP16 准确率，而对称仅恢复 82.5%。
+
+4.  **推理加速：**
+    *   SLQ 配置（5.70 比特 Qwen3-8B DL 到 3.59 比特 Llama-3.3-70B TL）相比 BF16 实现了 1.7-3.6 倍的吞吐量提升。
+    *   在所有模型上一致优于 FP8（如 Qwen3-8B 上 1.74x vs 1.42x，Qwen3-32B 上 2.94x vs 1.91x），同时保持了无损精度。
+    *   显著的加速来自于更快的核执行以及减少 GPU 数量（如 Qwen3-32B 从 2 个 GPU 变为 1 个，Llama-3.3-70B 从 4 个变为 2 个）。
+
+5.  **比特位宽范围的重要性：**
+    *   完整的比特位宽范围 {4, 5, 6, 7, 8} 对于实现最优压缩至关重要。例如，在 Qwen3-32B 上，为达到 EAR $\ge 0.99$，限制在 {4, 8} 需要 5.74 比特，而使用完整范围仅需 4.98 比特。
+
+6.  **思维 Token（Thinking Token）通胀：**
+    *   SLQ-DL 配置对 Qwen3-8B GSM8K 任务没有引入额外的思维 token 开销，而 SLQ-TL 和统一 4-bit 配置则分别增加了 2.2% 和 2.9%。
+
+### 潜在局限或不足
+
+1.  **聚焦 weight-only 量化：** 论文主要关注权重（weight-only）量化。虽然附录提到了权重+激活（W+A）量化的初步结果，显示**W+A 量化需要更高的比特位宽来维持相同质量**，但其细节和优化尚未深入探讨。
+2.  **Shapley 估计的成本：** Shapley 敏感度估计需要 `O(P · M · |B|)` 次**前向传播**，对于非常大的模型和比特位宽范围，这可能计算成本较高，尽管可以并行化。
+3.  **校准数据依赖：** 单点校准方法依赖于校准数据集上的 KL 散度和准确率测量，校准数据的代表性可能影响最终结果。
+4.  **通用性：** 虽然方法设计上对底层量化器（如 GPTQ）是正交的，但实际效果可能仍受具体量化器选择的影响。
+5.  **Kernel 支持：** 依赖于 Humming kernel library 等优化的底层库支持，这可能限制其在不同硬件平台或缺乏此类优化的推理引擎上的直接应用。
+6.  **未来工作：** 论文提及了进一步探讨**权重和激活量化**以及推测解码（speculative decoding）作为未来的工作，暗示当前方案并非最终。
+7. 
+
 ## NemoRL投机
 Accelerating RL Post-Training Rollouts via System-Integrated Speculative Decoding 
 
