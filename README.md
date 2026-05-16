@@ -1,5 +1,75 @@
 # Awesome or inspiring paper for AI
 
+## ReVal replay
+Off-Policy Value-Based Reinforcement Learning for Large Language Models
+
+https://arxiv.org/pdf/2603.23355 南京大学 港中文等 2026.3.24
+
+💡 针对LLM在昂贵的长时序任务中基于策略的RL方法样本效率低的问题，本研究发现价值学习型RL框架ReVal能有效复用历史数据，并通过将**LLM logits解释为Q值**来解决传统价值模型兼容性问题。
+🚀 ReVal核心方法是基于贝尔曼更新，结合内部一致性的阶梯式信号与来自验证结果的轨迹级信号，并利用replay buffer进行off-policy训练，同时解决了TBRM目标函数中存在的“校准初始化”问题。
+📈 最大Qwen-7b模型,相比GRPO AIME24/25等模型能力持平-略提高。下游任务(没说是啥具体任务？)收敛速度上比GRPO快4.3x，DeepSeek-R1-Distill-1.5B上AIME24性能提升2.7%，GPQA提升4.5%，在有限采样下（N=1）更显著的性能优势和18%的总训练时间减少。
+
+<img width="842" height="385" alt="image" src="https://github.com/user-attachments/assets/4d441a21-6792-46dd-94ed-90a6864fe856" />
+<img width="815" height="258" alt="image" src="https://github.com/user-attachments/assets/9ed565ac-d46e-45df-9a48-037feac17f95" />
+<img width="770" height="305" alt="image" src="https://github.com/user-attachments/assets/c2a6f0e8-3ef9-4081-bb6e-4d3345091e15" />
+<img width="396" height="314" alt="image" src="https://github.com/user-attachments/assets/8197c567-942b-44bb-bcd4-f5bc281f8ce7" />
+
+**场景与具体问题**
+LLM 的 RL 训练（如 RLHF 和 RLVR）已成为提高其推理能力的核心组成部分。然而，目前主流的 RL 方法，如 ReMax、GRPO 和 DAPO，本质上都是 on-policy（在线策略）的。这意味着每次策略更新都必须使用从当前策略中采样的新数据，导致收集到的轨迹很快变得“过时”而无法充分重用。在长时程（long-horizon）和代理（agentic）设置中，轨迹收集成本高昂且往往占据总训练成本的主导部分，使得 on-policy 方法的样本效率极低，成为实际应用中的关键瓶颈。
+
+**业界存在哪些不足**
+1.  **样本效率低下：** on-policy 方法通常每个批次的数据只使用一次，然后丢弃并重新收集新样本，导致大量计算资源浪费。
+2.  **昂贵的轨迹生成：** 在 LLM 中，自回归序列生成成本远高于参数更新，使得 on-policy 方法中 $K_{generation} = K_{update}$ 的紧耦合关系成为总训练时间的主要贡献者。
+3.  **价值基方法的不兼容性：** 经典的价值基 RL 方法通常依赖于单独的价值模型来预测 Q 值，这与 LLM 的内在结构不符，且会增加内存和计算开销，破坏 actor-only 方法的低成本优势。
+4.  **TBRM 的 Calibrated Initialization 问题：** 现有价值基 LLM 方法（如 TBRM）在奖励信号为零时，其目标函数不能自然地使策略回归到参考策略，导致策略漂移。
+
+**关键观察与假设**
+1.  **Logits 即 Q 值：** 论文基于 Li et al. (2025a) 的工作，即预训练 LLM 的 logits 可以被解释为内生奖励的动作价值（Q 值），从而实现策略和价值的单模型统一表示。这一观察使得在不增加额外模型开销的情况下，开发价值基 RL 成为可能。
+2.  **时序信号结合：** 有效的价值学习应结合不同时序尺度的信号：
+    *   **逐步信号（Stepwise signals）：** 捕捉内部一致性，提供密集的反馈。
+    *   **轨迹级信号（Trajectory-level signals）：** 源自结果验证，提供最终正确性信息。
+    3.  **off-policy 的必要性：** 为了提高数据重用效率和加速收敛，LLM 的 RL 必须转向 off-policy，通过经验回放（replay buffer）机制来重用历史数据。
+    4.  **Calibrated Initialization：** 一个好的训练目标在无奖励信号时应保持策略不变（即回归到参考策略）。
+
+**方法核心思路和主要步骤**
+ReVal 是一个基于 Bellman 更新的 off-policy 价值基 RL 框架。
+1.  **Q-函数参数化：** ReVal 延续了 "logit-as-Q" 的思想，直接使用 LLM 自身的 logits 作为 Q 函数，即 $Q_\theta(s_h, a_h) := \text{logit}_\theta(s_h, a_h)$，避免了额外的价值网络。
+2.  **奖励塑形（Reward Shaping）：** 为解决 TBRM 的 Calibrated Initialization 问题，ReVal 引入了奖励塑形项，重新定义了修正奖励 $R_\beta(s_h, a_h) := \frac{\text{rrule}(s_h, a_h)}{\beta} + \log \pi_{ref}(a_h | s_h) + V_\theta(s_h) - V_{ref}(s_h)$。其中 $V_\theta(s_h) = \log \sum_{a \in A} \exp Q_\theta(s_h, a)$，该塑形项不影响最优策略。
+3.  **Bellman 残差最小化：** ReVal 通过最小化轨迹级的 Bellman 残差来更新模型参数 $\theta$，其损失函数定义为：
+    $$L_{\text{ReVal}}(\theta) = \frac{1}{|D|} \sum_{\tau \in D} \left( V_\theta(s_1) - V_{ref}(s_1) + \log \pi_\theta(\tau) - \frac{\text{rrule}(\tau)}{\beta} - \log \pi_{ref}(\tau) \right)^2$$
+    此公式确保了 Calibrated Initialization 属性。
+4.  **经验回放（Replay Buffer）：** ReVal 引入了一个 FIFO（先进先出）的经验回放缓冲区 $D_{replay}$，用于存储历史轨迹。在每个迭代中，新收集的轨迹被添加到缓冲区，然后从完整的缓冲区中采样一个 off-policy 批次 $D_{treplay}$ 进行梯度更新。这使得每个轨迹可以被重用 K 次（在实践中，通常 K=2 次更新）。
+5.  **单模型统一：** 通过将 LLM 的 logits 解释为 Q 值，ReVal 在单个 LLM 模型中统一了策略和价值表示，继承了 actor-only 方法的效率优势。
+
+**实验设置**
+*   **实现框架：** 使用大型 RL 训练框架 Verl (v0.5.0)。
+*   **优化器与学习率：** 学习率 1e-6。
+*   **模型：** DeepSeek-R1-Distill-1.5B (DPSK-R1-Distill-1.5B) 和 Qwen2.5-Math-7B。
+*   **训练迭代：** 所有方法训练 650 迭代。
+*   **批次大小与 Rollouts：** 每个迭代 M=128 个 prompt，生成 N=8 个 rollout。温度设置为 1.0。
+*   **Buffer 大小：** ReVal 的回放缓冲区大小为 5120。
+*   **更新频率：** ReVal 每个迭代执行 K=2 次更新（一次 on-policy，一次 off-policy）。
+*   **$\beta$ 参数：** DPSK-R1-Distill-1.5B 为 0.002，Qwen2.5-Math-7B 为 0.02。
+*   **序列长度：** DPSK-R1-Distill-1.5B 8K tokens，Qwen2.5-Math-7B 8K tokens。
+*   **评估：** 每 10 迭代进行评估，每个 prompt 生成 16 个响应，评估集限制在 100 个样本。
+*   **基线：** GRPO (on-policy) 和 TBRM (value-based, on-policy)。
+
+**关键对比结果**
+1.  **收敛速度与训练效率：** 在不同难度任务的 one-shot 学习设置中，ReVal 通过频繁数据重用，实现了相对于 GRPO 平均 4.3 倍的收敛加速。在硬任务上达到相同性能，ReVal 比 GRPO 少了 3.6 倍的优化步数。
+2.  **最终性能：**
+    *   **DPSK-R1-Distill-1.5B：** ReVal 在几乎所有基准测试中都优于 GRPO 和 TBRM。在 AIME24 上，ReVal 相对 GRPO 提升 2.7%，在 OOD (Out-of-Domain) 基准 GPQA 上提升 4.5%。
+    *   **Qwen2.5-Math-7B：** ReVal 整体性能与 GRPO 持平或略优（平均提升 1.2%），在 OOD 基准 GPQA 上提升 4.2%。
+3.  **有限 Rollout 设置 (N=1)：** 在极端有限的 rollout (N=1) 设置下，ReVal 的优势更为明显。在 AIME 上超过 GRPO 4.8%，在 GPQA 上超过 4.6%。
+4.  **实际训练成本：** 在 N=1 设置下，ReVal (step=8) 将生成轮数从 GRPO 的 580 轮减少到 470 轮 (19% 降低)，总训练时间从 7.5 小时减少到 6.3 小时 (18% 降低)，证明了 off-policy 方法在生成成本远高于更新成本时，可以显著降低实际墙钟时间。
+5.  **关键因素分析：**
+    *   **参考策略更新：** 周期性重置参考模型（如每 200 步）可以有效缓解 KL 正则化带来的梯度信号衰减，维持模型性能持续提升。
+    *   **超参数 $\beta$：** $\beta$ 值影响奖励信号的强度和 KL 散度的大小。较小的 $\beta$ 允许策略更大程度偏离参考模型，但过小可能导致训练不稳定甚至崩溃。$\beta$ 的选择与响应长度相关。
+    *   **负样本利用：** 使用归一化优势（normalized advantage）作为奖励效果最好，而 $\pm 1$ 奖励方案可能导致性能下降。
+
+**潜在局限或不足**
+1.  **回放缓冲区策略：** 目前 ReVal 采用标准的 FIFO 回放缓冲区。论文指出，这不是样本效率最高的策略，未来工作可以探索更先进的采样策略，如优先级经验回放（prioritized experience replay）。
+2.  **数据样本更新需求：** 论文提及未来将研究价值基 RL 中不同数据样本的更新需求差异的底层机制。
+
 ## SLQ
 Statistically-Lossless Quantization of Large Language Models
 
