@@ -1,5 +1,60 @@
 # Awesome or inspiring paper for AI
 
+## SRPO
+Unifying Group-Relative and Self-Distillation Policy Optimization via Sample Routing
+
+https://arxiv.org/pdf/2604.02288 中科院自动化所 新加坡国立等 2026.4.2
+
+1. 论文研究了LLM 后训练中GRPO和Self-Distillation Policy Optimization (SDPO) 的局限性，发现GRPO在故障轨迹上信用分配粗糙，而SDPO虽早期收敛快但后期不稳定: 源于对已正确样本的优化模糊性以及自教师信号可靠性随训练退化。
+2. 论文提出了 Sample-Routed Policy Optimization (SRPO) 框架，该框架将正确样本路由到 GRPO 进行奖励对齐强化，将失败样本路由到 SDPO 进行密集的 logit 级别校正，并引入熵感知动态加权机制来抑制不可靠的蒸馏目标。
+3. Qwen3-4b/8b 五项基准和两种模型规模上进行了评估，结果表明它结合了 SDPO 的早期效率和 GRPO 的长期稳定性，持续超越了两种基线的峰值性能，同时保持了适中的响应长度并降低了长期训练的每步计算成本。
+   SDPO 的评估设置，使用 Chemistry, Physics, Biology, Materials（来自 SciKnowEval 的推理子集）以及 Tool Use（来自 ToolAlpaca）
+
+观察表明 GRPO 和 SDPO 具有互补的优化特性：**对于正确样本，GRPO的序列级信用分配足够有效**；对于**带有局部推理错误的失败样本，SDPO的密集logit 级修正更为有效**。
+基于此，本文提出了**样本路由策略优化**（SRPO），一个**统一的 on-policy 框架**。SRPO 的核心思路是**根据样本的学习状态将其路由到最适合的优化信号**
+
+<img width="1062" height="409" alt="image" src="https://github.com/user-attachments/assets/33476c32-c6d6-46f5-a2a0-22cd7a8ed14a" />
+<img width="1794" height="524" alt="image" src="https://github.com/user-attachments/assets/503bf86a-6e49-4478-9280-42dbc50dedee" />
+<img width="1076" height="770" alt="image" src="https://github.com/user-attachments/assets/31c8bf4a-8596-474a-89c3-0ec01c75cce4" />
+<img width="1028" height="387" alt="image" src="https://github.com/user-attachments/assets/904238d3-2215-408e-8667-405c84baf31c" />
+大语言模型（LLMs）的后训练（post-training）中，基于可验证奖励的强化学习（RLVR）已成为一种标准范式，用于提升模型的推理和问题解决能力。在此领域，GRPO因其简洁性和稳定性而得到广泛采用。然而，GRPO 的粗粒度信用分配（coarse credit assignment）机制将单个标量优势（scalar advantage）均匀地应用于一次rollout中的所有 token，导致对失败rollout的统一惩罚，缺乏 token 级别的关注，从而降低了样本效率并减缓了收敛速度。为了解决信用分配稀疏性的问题，自蒸馏策略优化**SDPO通过提供更密集的、目标明确的 logit 级别监督**，实现了早期的快速改进。然而，SDPO 在长时间训练中常出现性能崩溃。
+
+本文作者将 SDPO 晚期不稳定性归因于两个内在缺陷：
+1.  **优化模糊性（Optimization ambiguity）**：对已正确样本进行自蒸馏是反作用的。当成功的 rollouts 被强制匹配另一个成功的同组 rollouts 时，这在奖励等效的推理路径之间施加了任意的 logit 级别偏好，从而引入了优化模糊性。
+2.  **信号可靠性退化（Signal degradation）**：自教师（self-teacher）的蒸馏信号质量随着训练的进行而逐渐降低。随着自教师与学生之间差距的缩小，蒸馏信号的信息量变得更少，同时自教师的 token 级别熵（token-level entropy）升高，表明其预测越来越不确定。
+
+这些观察表明 GRPO 和 SDPO 具有互补的优化特性：对于正确样本，GRPO 的序列级信用分配足够有效；对于带有局部推理错误的失败样本，SDPO 的密集 logit 级修正更为有效。
+
+基于此，本文提出了**样本路由策略优化（Sample-Routed Policy Optimization, SRPO）**，一个统一的 on-policy 框架。SRPO 的核心思路是根据样本的学习状态将其路由到最适合的优化信号：
+*   **正确样本**：路由到 GRPO 分支，进行奖励对齐的强化学习（reward-aligned reinforcement）。
+*   **失败样本（且有可用教师信息）**：路由到 SDPO 分支，进行有针对性的 logit 级别修正。
+
+**实验设置：**
+*   **实现基础**：基于 verl 库实现，使用 PyTorch FSDP2 进行分布式训练。
+*   **硬件条件**：在单个节点上进行，配备 8 块通过 NVLink 互联的 NVIDIA H20 GPU，总计 768 GB 显存。
+*   **软件版本**：GPU 驱动版本 550.144.03，CUDA 12.4，PyTorch 2.8.0。
+*   **模型**：采用 Qwen3 系列的 instruct-tuned 基模型，包括 Qwen3-4B 和 Qwen3-8B 两个规模。
+*   **数据集**：沿用 SDPO 的评估设置，使用 Chemistry, Physics, Biology, Materials（来自 SciKnowEval 的推理子集）以及 Tool Use（来自 ToolAlpaca）这五个基准测试集。每个基准都进行训练-测试划分。
+*   **负载情况/超参数**：
+    *   训练批次大小：32，每个 prompt 采样 8 个回滚。
+    *   Mini-batch size：GRPO 8，SDPO 和 SRPO 32。
+    *   学习率：GRPO $1 \times 10^{-6}$，SDPO $1 \times 10^{-5}$，SRPO $5 \times 10^{-6}$。
+    *   SRPO 的动态加权温度 $\beta$ 默认设置为 1。
+    *   提示模板与 SDPO 相同，确保公平比较。
+    *   教师信息构建：SDPO 分支使用同组中成功的同伴回滚（sibling rollouts）作为教师信息。
+*   **对比基线**：
+    *   **GRPO**：强化版 GRPO，遵循最新最佳实践（包括非对称裁剪、无偏优势归一化、分布式推理的离策略修正）。
+    *   **SDPO**：使用成功同伴回滚作为教师信息。
+
+**关键对比结果：**
+*   **性能提升**：在 Qwen3-8B 上，SRPO 将五个基准的 10 小时平均准确率从 SDPO 的 71.1% 和 GRPO 的 74.0% 提高到 77.4%。在 Qwen3-4B 上，相应地从 66.7% 和 69.7% 提高到 74.2%。SRPO 能够匹配 SDPO 早期训练效率，同时在更长时间内保持稳定的性能提升，并最终超越了两个基线的峰值表现。
+*   **动态适应性**：训练初期，失败样本较多，约 40% 的样本路由到 SDPO 分支；随着训练进行，模型改进，正确样本增加，SDPO 分支的比例逐渐减少，GRPO 分支的比例相应增加。这验证了 SRPO 自动调节自蒸馏影响的能力。
+*   **响应长度**：SRPO 产生的响应长度适中，介于 GRPO（最长）和 SDPO（最短）之间。这有助于平衡推理成本和避免因过度简洁而导致的认知推理能力下降。
+*   **计算成本**：在早期训练阶段（1 小时），SRPO 的每步计算成本相对 GRPO 略高（17.4% 开销）。但随着训练的推进，SRPO 的成本优势逐渐显现：在 5 小时和 10 小时时，SRPO 的每步计算时间均低于 GRPO 和 SDPO，特别是在 10 小时时比 GRPO 低 17.2%，比 SDPO 低 9.4%。这是因为后期失败样本减少，SDPO 分支的额外计算量减少，且 SRPO 响应长度短于 GRPO。
+
+**潜在局限或不足：**
+目前 SRPO 的自蒸馏分支主要依赖同组内的成功同伴回滚作为教师信息。未来工作的一个重要方向是将其框架扩展到具有更丰富反馈的环境中，例如代码生成中的运行时错误信息，以便自蒸馏分支可以更好地利用环境信息。
+
 ## ReVal replay
 Off-Policy Value-Based Reinforcement Learning for Large Language Models
 
