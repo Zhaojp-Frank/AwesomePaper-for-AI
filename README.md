@@ -1,5 +1,80 @@
 # Awesome or inspiring paper for AI
 
+## D2Skill
+Dynamic Dual-Granularity Skill Bank for Agentic RL
+
+https://arxiv.org/pdf/2603.28716 中科院自动化所 鹏城实验室 2026.3.30
+
+https://github.com/TU2021/D2Skill-AgenticRL
+
+1. 针对 Agentic RL 中现有基于技能的方法主要提取轨迹级指导、缺乏动态演进的技能记忆机制，导致在细粒度错误修正和大规模技能库管理方面效率低下的问题。
+2. D2Skill 提出了一种动态双粒度技能库，将可重用经验组织为用于高层规划的“task skills”和用于细粒度决策支持的“step skills”，通过配对的基线和技能注入式 Rollout 之间的性能差距来生成事后效用信号，以共同训练策略和动态维护技能库。
+3. 最大Qwen7b D2Skill 在 ALFWORLD 和 WEBSHOP 基准测试上将成功率比无技能基线 GRPO 提高了 10-20 个百分点，并且通过其双粒度技能建模和动态技能管理机制，实现了更高的技能效用和跨评估设置的迁移能力，同时训练开销仅略高于 GRPO。
+
+ <img width="902" height="549" alt="image" src="https://github.com/user-attachments/assets/115d30b4-85c7-455d-af0b-296510ab7b23" />
+
+本论文提出了D2Skill，一种用于Agentic强化学习（RL）的动态双粒度技能库，旨在解决现有方法在可复用经验方面的不足。Agentic RL在解决长周期决策任务（如交互式环境、网页搜索、研究场景）中表现出巨大潜力，但面临着部分可观测性、信用分配困难以及大型动作空间和稀疏奖励下的学习效率低下等挑战。现有基于技能的方法主要从轨迹层面提取指导，缺乏对演化技能记忆的系统维护机制，且难以有效纠正细粒度错误。
+
+**业界现有不足：**
+1.  **粒度不足：** 大多数方法从完整轨迹中提取技能，强调任务级（trajectory-level）反思，提供高层次指导，但对于纠正个体交互步骤中的细粒度错误效果不佳。
+2.  **记忆管理挑战：** 随着训练的进行，技能库持续膨胀，检索和管理变得越来越困难。缺乏对技能评估和剪枝的原则性机制，可能导致冗余或无效技能降低检索质量，阻碍策略优化。
+
+**关键观察与假设：**
+D2Skill的核心观察是，有效的可复用经验应在不同粒度上提供支持：高层次的规划指导和细粒度的局部决策辅助。同时，技能库应是动态演化的，能根据训练过程中的效用反馈进行更新和维护。性能差距（performance gap）可以作为评估技能效用的追溯信号（hindsight utility signal），指导技能更新和策略优化。
+
+**方法核心思路和主要步骤：**
+D2Skill框架包含三个主要组成部分：
+
+1.  **技能注入的RL训练 (RL Training with Skill Injection)：**
+    *   **轨迹采样：** 对于每个任务 $g$，采样 $N$ 条轨迹，分为“技能组”（$G_{skill}^g$，注入检索到的技能）和“基线组”（$G_{base}^g$，不注入技能），每组 $N/2$ 条轨迹。两组轨迹均在同一策略 $ \pi_\theta $ 下生成。
+    *   **追溯信号与效用更新：**
+        *   通过比较技能组和基线组的成功率 $ \bar{Y}_{skill}^g $ 和 $ \bar{Y}_{base}^g $，计算任务级追溯信号 $ \Delta_{task}^g = \bar{Y}_{skill}^g - \bar{Y}_{base}^g $。
+        *   对于步技能，计算轨迹级信用 $ c_i = Y_i - \bar{Y}_{base}^g $（$Y_i$ 为轨迹 $i$ 的成功指示器）。
+        *   技能效用 $u_m$ 使用指数移动平均（EMA）进行更新：任务技能效用通过 $ \Delta_{task}^g $ 更新，步技能效用通过其所在轨迹的 $ c_i $ 更新。
+        *   $ u_m \leftarrow (1 - \beta_{task})u_m + \beta_{task}\Delta_{task}^g $ (任务技能)
+        *   $ u_m \leftarrow (1 - \beta_{step})u_m + \beta_{step}c_i $ (步技能)
+    *   **追溯内在奖励塑形 (Hindsight Intrinsic Reward Shaping)：** 为技能组的轨迹 $i$ 引入内在奖励 $ R_{int}^i = \lambda(Y_i - \bar{Y}_{base}^g) $，鼓励有效利用技能。
+    *   **策略优化：** 策略在所有样本上优化。技能组轨迹的回报 $R_i$ 增加 $R_{int}^i$。优势函数 $A_i$ 通过对整个轨迹组的归一化回报 $ \tilde{R}_i $ 计算，并使用GRPO (Group Relative Policy Optimization) 目标函数 $L = E_{i \in G^g} [\min(r_i A_i, \text{clip}(r_i, 1 - \epsilon, 1 + \epsilon)A_i) - \beta D_{KL}]$ 进行策略更新。
+
+2.  **反思驱动的技能生成 (Reflection-driven Skill Generation)：**
+    *   当技能组表现低于阈值 $ \tau_{ref} $ 时，触发反思模块。
+    *   反思模块分析失败轨迹 $ \tau_{-g} $ 和可选的成功轨迹 $ \tau_{+g} $。
+    *   生成任务技能 $ m_{task}^g $（高层次规划与探索指导）和步技能 $ m_{step}^g $（细粒度决策支持与错误纠正）。
+    *   技能存储时附带检索键 $ k_m $：任务技能的键为任务 $g$，步技能的键为 $ (g, o_j) $（任务和最早失败步骤的观察）。
+    *   新技能经过去重和标准化后插入技能库。
+
+3.  **技能检索与银行管理 (Skill Retrieval and Bank Management)：**
+    *   **双阶段检索：**
+        *   **第一阶段：** 根据查询 $q$（任务 $g$ 或 $ (g, o_t) $）与技能键 $ k_m $ 嵌入的余弦相似度，检索前 $m$ 个候选技能。应用最小相似度阈值 $ \tau_{sim} $。
+        *   **第二阶段：** 候选技能通过选择分数 $ \text{score}(m) = \alpha d_{sim}(m, q) + (1 - \alpha)\left(u_m + \eta_s\log(1 + N_r)/(1 + n_m)\right) $ 进行排序。该分数结合了语义相似度 $ d_{sim} $ 和基于效用UCB（Upper Confidence Bound）的探索项（包含技能效用 $ u_m $、检索次数 $ n_m $ 和总检索次数 $ N_r $）。选择排名前 $k$ 的技能注入策略上下文。
+    *   **基于效用的技能剪枝 (Skill Pruning by Utility)：**
+        *   定期对技能库进行剪枝，防止无限增长，保持在容量上限 $N_{max}$ 内。
+        *   技能根据驱逐分数 $ \text{evict}(m) = u_m + \eta_s\log(1 + N_r)/(1 + n_m) $ 升序排序。分数最低的技能被移除，直到数量低于 $N_{max}$。
+        *   在最近 $ T_{prot} $ 训练步骤内创建的技能不受剪枝影响，以确保充分评估。
+
+**实验设置：**
+*   **基准环境：** ALFWORLD (基于文本的交互式环境) 和 WEBSHOP (模拟网页购物)。
+*   **大型语言模型 (LLMs)：** 使用Qwen2.5-7B-Instruct和Qwen3-4B-Instruct-2507作为代理的基础模型。
+*   **反射器LLMs：** 使用Gemini-3-Flash (G3F) 和 O3 (可能指Gemini-3-Pro或其他高级闭源模型) 进行技能生成。
+*   **基线方法：** GRPO（无技能基线）、Mem0+GRPO、SimpleMem+GRPO、SkillRL。
+*   **训练时长：** 默认在每个环境中训练160步，每5步评估一次。
+*   **验证任务：** 默认使用128个验证任务。
+*   **初始策略：** Qwen2.5-7B-Instruct使用SFT初始化模型，Qwen3-4B-Instruct-2507直接使用原始Instruct模型。部分实验还包括教师模型（O3/Gemini-3-Pro）初始化的策略。
+*   **硬件条件：** 训练成本在8xH100 GPU上测量。
+
+**关键对比结果：**
+*   **主性能：** D2Skill在ALFWORLD和WEBSHOP上，使用Qwen2.5-7B-Instruct和Qwen3-4B-Instruct-2507作为基础模型，成功率比无技能基线（GRPO）稳定提升10-20个百分点。例如，在ALFWORLD上，D2Skill (G3F) 达到90.6%的整体成功率，比GRPO高15.6个百分点；在WEBSHOP上，D2Skill达到84.4%的成功率，比GRPO高11.8个百分点。它还显著优于SkillRL等现有技能增强方法。
+*   **训练效率：** D2Skill的训练成本为25.6小时，接近GRPO（20.8小时），但远低于SkillRL（49.2小时）。在相同训练步数下，D2Skill能更快达到更高性能，实际效率比SkillRL快约1.7倍。
+*   **消融研究：**
+    *   移除任务技能或步技能都会导致性能下降，表明双粒度技能建模的重要性。
+    *   移除技能管理（包括剪枝）导致更大的性能下降，强调了动态技能维护在保留高效用知识方面的重要性。
+    *   移除基线组或效用估计也导致性能下降，说明它们在提升信用分配和技能评估质量方面的作用。
+*   **技能效用与可迁移性：** 技能管理能够提高技能库和检索到技能的平均效用。即使在评估时不使用技能库，D2Skill训练出的策略仍与GRPO具有竞争力或更优，表明技能增强的一部分收益已内化到策略中。使用不同反射器生成的技能库在评估时也能带来收益，说明学习到的技能具有可复用性和可迁移性。
+
+**潜在局限或不足：**
+*   目前D2Skill的评估仅限于ALFWORLD和WEBSHOP两个基准。
+*   D2Skill仍然依赖于外部反射器模型（如Gemini-3-Flash, O3）进行技能生成，这可能增加了系统复杂性和对特定LLM的依赖。未来的工作方向是扩展到更广泛的环境并减少这种外部依赖。
+
 ## SRPO
 Unifying Group-Relative and Self-Distillation Policy Optimization via Sample Routing
 
