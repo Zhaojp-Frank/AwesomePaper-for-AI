@@ -1,5 +1,94 @@
 # Awesome or inspiring paper for AI
 
+## PARD-2 连续投机
+PARD-2: Target-Aligned Parallel Draft Model for Dual-Mode Speculative Decoding
+
+https://arxiv.org/pdf/2605.08632 AMD等 2026.5.10
+
+https://github.com/AMD-AGI/PARD
+
+1. 旨在解决LLMs推断加速中的一个关键问题：现有Speculative Decoding**草稿模型训练目标与最大化连续令牌接受长度不一致**，且大多数方法依赖于特定目标模型。
+2. 发现并行Speculative Decoding中**存在位置偏差，后续令牌接受率显著降低**，并提出**Confidence-Adaptive Token** (CAT) 优化，通过**目标模型置信度自适应地重新加权令牌损失**，以更好地匹配推断时的接受率；同时，引入**随机门控**实现一个草稿模型支持**target依赖和target无关**两种模式。
+3. Llama3.1-8B和Qwen3系列模型上实现了高达6.94倍的无损加速，在Llama3.1-8B上比EAGLE-3快1.9倍，比PARD快1.3倍，同时显著提高了平均接受长度和吞吐量，证明了其在实际部署中的卓越价值。
+HumanEval 评测集+lama3-8b上接受长度～9，接受率90%
+
+draft model训练目标通常侧重于**提高单个token的预测准确性**，但这与推测解码中“**最大化连续token接受长度**”的推理目标存在偏差；提出通过以一个token被验证到的概率（即**其前缀被接受的累积置信度）来重新加权per-token训练目标**
+在target-dependent模式下，PARD-2利用target模型的hidden state来最大化对齐以**实现峰值加速**。
+在target-independent模式下，它不使用target模型的hidden state，从而保持对整个模型系列的**广泛兼容性**，无需重新训练。
+
+<img width="894" height="312" alt="image" src="https://github.com/user-attachments/assets/b34fa653-34d6-4a5b-b2d4-bbbca9ad7412" />
+<img width="887" height="494" alt="image" src="https://github.com/user-attachments/assets/31e88525-c943-4e80-ae46-f567559ef0b0" />
+<img width="886" height="470" alt="image" src="https://github.com/user-attachments/assets/ad6304b0-60ec-46fa-b27b-22488fb25d1c" />
+<img width="807" height="755" alt="image" src="https://github.com/user-attachments/assets/a19ab0c4-40d1-48be-8c87-8f22c217af70" />
+<img width="807" height="276" alt="image" src="https://github.com/user-attachments/assets/4baba82d-5b9a-48bf-a4a5-b8fcabaef92d" />
+
+**场景与具体问题：**
+随着大型语言模型（LLMs）规模的迅速增长，其自回归解码在推理时变得成本高昂。推测解码通过使用轻量级draft model（草稿模型）提前生成候选token，然后由target model（目标模型）并行验证这些token，从而有效降低推理延迟。然而，现有的draft model训练目标与推测解码的核心目标（最大化连续token的接受长度）并不完全对齐。具体来说，并行推测解码中存在位置偏差，即越靠后的草稿token接受率越低（如图2a所示），这限制了并行草稿的实际加速效果。此外，大多数现有的推测解码方法都是“目标模型依赖”（target-dependent）的，这意味着每当目标模型变化时，都需要从头训练一个新的draft model，这大大增加了部署的复杂性和成本。
+
+**业界存在哪些不足：**
+1.  **训练目标与推理目标不一致：** 传统的draft model训练目标通常侧重于提高每个token的预测准确性，但这与推测解码中“最大化连续token接受长度”的推理目标存在偏差。推测解码的接受机制是，一旦前一个token被拒绝，后续的token即便预测准确也无法被接受。
+2.  **“位置偏差”问题：** 对于并行draft model，随着草稿长度的增加，靠后的token接受率显著下降，使得增加草稿长度带来的实际收益递减甚至可能导致性能下降。尽管一些方法（如DFlash、DART）引入了位置敏感的衰减权重，但这些权重是固定的且主要依赖于位置，未能充分考虑token及其前缀上下文的联合影响。
+3.  **目标模型依赖性强：** 多数推测解码方法（如EAGLE-3、DFlash）需要根据特定的target model进行训练，导致draft model通用性差，无法跨模型系列复用。
+
+**关键观察与假设：**
+1.  **连续接受的重要性：** 任意后续token的接受都严重依赖于其所有前驱token的成功验证。这表明每个token对最终接受长度的贡献与其被验证到的概率（即其前缀被接受的概率）成正比。
+2.  **目标模型置信度与接受率的高度相关性：** 论文通过实验发现（如图2b所示），target model对其预测的token的置信度与该token的实际接受率之间存在强烈的正相关关系。这一观察使得可以使用target model的置信度作为token接受率的可靠代理。
+3.  **“重要性”加权：** 基于上述观察，论文假设通过以一个token被验证到的概率（即其前缀被接受的累积置信度）来重新加权per-token训练目标，可以更好地对齐训练与推理目标，从而提高连续token的接受长度。
+
+**方法核心思路和主要步骤：**
+PARD-2是一个双模态推测解码框架，在PARD的基础上进行了两项关键创新：信心自适应token (Confidence-Adaptive Token, CAT) 优化和双模态（target-dependent和target-independent）支持。
+
+1.  **信心自适应token (CAT) 优化：**
+    *   **核心思想：** 重新定义draft model的优化目标，从单纯的token预测准确性转向最大化总体接受长度。通过动态调整每个token在训练损失中的权重，使其与该token在推测解码过程中被接受的可能性更好地对齐。
+    *   **权重计算：** 对于第$k$个草稿token $y_{n+k}$，其权重 $\hat{s}_k$ 被定义为其前缀在target model中被接受的累积置信度。具体而言，首先估计每个token $y_{n+k}$ 在给定前缀条件下的target model置信度 $\hat{c}_k = P(y_{n+k} | x_0, \ldots, x_{n-1}, y_n, \ldots, y_{n+k-1}; \theta_{target})$。然后，累积权重 $\hat{s}_k$ 定义为：
+        $$ \hat{s}_k := \prod_{j=0}^{k-1} \hat{c}_j, \quad \hat{s}_0 := 1 $$
+        这个 $\hat{s}_k$ 近似了在验证过程中到达位置$k$的概率。
+    *   **训练目标：** PARD-2的最终训练目标是在PARD的交叉熵损失基础上，对每个token的损失进行 $\hat{s}_k$ 加权，并且将知识蒸馏损失（LKD）与标准交叉熵损失（LCE）加权求和：
+        $$ L_{PARD-2} = - \frac{1}{K} \sum_{k=0}^{K-1} \hat{s}_k \log P(y_{n+k} | x_0, \ldots, x_{n-1}, m_n, \ldots, m_{n+k-1}; \theta_{PARD-2}) $$
+        在更通用的表示中，对于token $x_{n+k}$ 及其前缀 $x_{\le n}$，损失函数表示为：
+        $$ L_k = \sum_{n=1}^{N-k} \left( \hat{s}_{n,k} \beta LCE_{n,k} + LKD_{n,k} \right) $$
+        其中 $\hat{s}_{n,k}$ 是针对token $x_{n+k}$ 在前缀 $x_{\le n}$ 条件下的估计接受权重，$\beta$ 用于平衡LCE和LKD。$\hat{s}_k$ 作为stop-gradient权重，确保了它只用于引导训练，而不参与梯度计算。
+2.  **双模态（Target-Dependent & Target-Independent）支持：**
+    *   **核心思想：** 允许单个draft model在推理时动态切换目标模型依赖和目标模型无关模式，以兼顾最大加速和通用性。
+    *   **实现机制：** 在训练阶段引入随机门控（Stochastic Gating）机制来注入target model的隐藏状态。从target model的不同层（低层l、中层m、高层h）提取隐藏表示，融合为紧凑的target-context特征 $t = \text{Proj}([l; m; h])$。这个特征 $t$ 被加到draft model的输入embedding $e_d$ 中，即 $e_d' = e_d + \xi \cdot t$，其中 $\xi \sim \text{Bernoulli}(1-\rho)$。这意味着以概率 $\rho$ 不注入target特征，以概率 $1-\rho$ 注入。
+    *   **推理时：** 在target-dependent模式下，PARD-2利用目标模型的隐藏特征来最大化对齐以实现峰值加速。在target-independent模式下，它不使用目标模型的隐藏特征，从而保持对整个模型系列的广泛兼容性，无需重新训练。
+
+**实验设置：**
+*   **基于什么实现：** PARD-2在PARD的基础上开发，并结合了CAT优化和随机门控。推理基于vLLM框架实现。
+*   **硬件条件：** 训练在AMD MI300X GPU上进行，推理评估在NVIDIA A100-40GB GPU上进行。
+*   **软件版本：** 未明确提及具体软件版本，但说明是在vLLM框架上进行吞吐量评估，并禁用了基于树的解码（tree-based decoding）。
+*   **负载情况：** 评估了从batch size 1到64的不同并发设置下的性能，包括每用户吞吐量（TPS/User）和GPU吞吐量（TPS/GPU）。
+*   **对比基线：**
+    *   自回归（AR）基线。
+    *   EAGLE-3：一种流行的target-dependent的基于条件drafting的方法。
+    *   DFlash：一种基于block diffusion的并行draft model。
+    *   PARD：论文作者之前提出的并行草稿模型。
+*   **模型与数据集：**
+    *   **目标模型：** Llama3.1-8B, Qwen3-8B, Qwen3-14B, Qwen3-32B。
+    *   **训练数据集：** PARD使用的Magpie、Evol-CodeAlpaca，并额外增加了Nemotron-v2和Nemotron-v3的样本。
+    *   **评估基准：** HumanEval（代码生成）、MATH-500和GSM8K（数学推理）、MT-Bench（多轮对话）。
+*   **超参数：** batch size 64，训练草稿长度 $K=16$。随机门控比率 $\rho=0.1$（对Qwen3-14B是0.0），CE损失系数 $\beta=0.1$。对于EAGLE-3，推理草稿长度为$K=8$（其最优开源配置），其他方法为$K=16$。
+*   **指标：** 加速比（Speedup）、平均接受长度 $\tau$（Average Acceptance Length）、每秒token数（Tokens Per Second）。
+
+**关键对比结果：**
+*   **Target-Dependent模式：** PARD-2在所有评估的target model和基准测试中，其加速比和平均接受长度都显著优于自回归解码和现有SD基线。
+    *   在Qwen3-8B上，PARD-2平均加速比达到5.81倍，PARD为4.39倍，DFlash为4.61倍。平均接受长度增加到6.98。
+    *   在Llama3.1-8B上，PARD-2实现高达6.94倍的无损加速，超越EAGLE-3约1.9倍，PARD约1.3倍。
+*   **Target-Independent模式：** 在target-independent模式下（单个draft model加速不同的Qwen模型），PARD-2也优于PARD。
+    *   在Qwen3-8B上，PARD-2的平均加速比从PARD的4.38倍提升到4.82倍。
+    *   在Qwen3-32B上，从4.37倍提升到4.68倍。平均接受长度 $\tau$ 从5.41提升到5.97。这验证了随机门控的有效性。
+*   **大批次吞吐量：** 在vLLM框架下，PARD-2在不同批次大小（1到64）下均实现了优越的Pareto边界，提高了整体服务效率和每用户生成速度，即使在大批次（GPU利用率高）下也表现优异。
+*   **消融实验：**
+    *   **CAT优化：** CAT显著提高了平均接受长度，当kinfer=16时，平均 $\tau$ 从4.83提高到5.79。与固定的位置衰减策略相比（表3），CAT表现出更高的鲁棒性和更优的性能。
+    *   **随机门控：** 随机门控（$\rho=0.1$时）能够保持与完全注入target features相似的性能，同时降低了对特定target hidden distribution的过拟合，提高了模型通用性。
+
+**潜在局限或不足：**
+1.  **超参数敏感性：** 论文提到了CAT优化中固定的位置衰减策略对衰减率高度敏感，尽管CAT本身克服了这个问题，但整体框架可能仍对某些超参数（如 $\rho$ 和 $\beta$）的选择敏感。
+2.  **训练成本：** 虽然提高了推理效率，但PARD-2在训练阶段需要访问target model以计算置信度并进行知识蒸馏，这可能增加了训练的复杂度和资源消耗。
+3.  **对vLLM的依赖：** 实验评估主要基于vLLM框架，其性能可能受限于该框架的实现和优化。
+4.  **模型规模限制：** 尽管在Llama3和Qwen3的8B/14B/32B版本上表现良好，但更大规模模型的性能（如70B以上）未被充分验证，可能存在新的挑战。
+5.  **MT-Bench的相对提升：** 尽管在MT-Bench（多轮对话）上表现出通用性，但相对于代码生成和数学推理任务，MT-Bench上的加速比提升相对较小。
+   
 ## TIDE rare token
 TIDE: Every Layer Knows the Token Beneath the Contex
 
