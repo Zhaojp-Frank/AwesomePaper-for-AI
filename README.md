@@ -1,5 +1,30 @@
 # Awesome or inspiring paper for AI
 
+## MTL
+Memory Transfer Learning: How Memories are Transferred Across Domains in Coding Agents
+
+https://arxiv.org/pdf/2604.14004 KAIST等
+
+https://memorytransfer.github.io/
+1. 旨在解决现有编程agent记忆利用局限于同质任务领域的问题，提出**记忆迁移学习**（MTL），通过整合来自**异构领域的统一记忆池**来提升agent性能。
+2. 跨领域记忆可将平均性能提高3.7%，主要通过元知识（如验证流程）而非任务特定代码的转移实现；记忆的抽象度决定其可迁移性，高层洞察泛化性强，而低层轨迹常因过度特异性导致负迁移。
+3. 方法基于LLM生成和嵌入相似度检索四种抽象度记忆，在6个编程基准测试中，表现优于零样本和现有自进化方法，且性能随记忆池规模和领域多样性增加而提升，证明了跨领域记忆在编码agent中的有效性和泛化能力。
+对比了ReasoingBank等方法，DeepSeekV3.2 Qwen3-Coder-480B-A35B-Instruct;
+Aider Polyglot (函数级)
+LiveCodeBenchv6 (函数级)
+SWE-Bench Verified (仓库级)
+Terminal Bench2 (仓库级)
+ReplicationBench (科学知识接地)
+MLGym-Bench (机器学习研究任务)
+
+**Insight 格式的记忆表现最佳**，其次是 Summary、Workflow 和 Trajectory
+
+四种记忆格式： 根据现有自进化智能体中常见的记忆方案，将记忆分为四种代表性格式，每种格式代表不同的抽象层次：
+**Trajectory** (轨迹): M_T = (t, [(a_1, o_1), \dots, (a_n, o_n)])MT=(t,[(a1,o1),…,(an,on)])M_T = (t, [(a_1, o_1), \dots, (a_n, o_n)])MT​=(t,[(a1​,o1​),…,(an​,on​)])。拼接所有命令和执行结果，不含推理过程。细节丰富，包含失败步骤，可隐式估计动作结果。
+**Workflow** (工作流): M_W = (g, [a_i, a_j, \dots, a_k])MW=(g,[ai,aj,…,ak])M_W = (g, [a_i, a_j, \dots, a_k])MW​=(g,[ai​,aj​,…,ak​])。通过 LLM 从轨迹中提取可重用的工作流，关注有意义的代码片段和实现目标的动作序列。比轨迹更短，减少无关信息干扰。
+**Summary** (摘要): M_S = (s_t, s_e)MS=(st,se)M_S = (s_t, s_e)MS​=(st​,se​)。通过 LLM 总结任务（s_tsts_tst​）和经验（s_eses_ese​），分析成功或失败的原因及发现。提供显式分析信息。
+**Insight** (洞察): M_I = (i_t, i_d, i_c)MI=(it,id,ic)M_I = (i_t, i_d, i_c)MI​=(it​,id​,ic​)。最具通用性的记忆表示，包含标题（i_titi_tit​）、描述（i_didi_did​）和内容（i_cici_cic​）。LLM 被提示生成与特定文件或细节无关的、可泛化到未来类似任务的洞察。
+
 ## LongCoT
 LongCoT: Benchmarking Long-Horizon Chain-of-Thought Reasoning
 
