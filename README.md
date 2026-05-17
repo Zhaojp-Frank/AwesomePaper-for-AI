@@ -1,5 +1,78 @@
 # Awesome or inspiring paper for AI
 
+## ZeRO-Prefill
+ZeRO-Prefill: Zero Redundancy Overheads in MoE Prefill Serving
+
+https://arxiv.org/pdf/2605.02960 2026.5.3 弗吉尼亚 snowflake等
+
+1. 提出 ZeRO-Prefill，MoE模型prefill-only场景：其观察到此类任务（如分类、推荐）占总输入 token 的绝大多数，其特点是吞吐量导向、大批量计算密集型转发以及前缀共享。
+2. 针对现有分布式并行策略在 MoE 预填充中导致冗余计算、内存和通信（特别是同步 AllToAll），ZeRO-Prefill 的核心贡献是 AsyncEP，通过在计算密集型前向传递中**异步后台gather W**完全隐藏跨 GPU 通信，从而**消除了每层同步通信和路由不平衡导致的瓶颈。**
+3. vLLM上实现，并通过其前端的饱和度阈值、**前缀感知路由和真实的 FLOPs 负**载跟踪来协同设计。
+Qwen3-235B-A22B 模型上，A100/H100/H200单机8卡，相较于最强分布式基线，吞吐量提升了 1.35-1.37 倍，并将部署范围从“≥4 GPU”拓宽至“1-8 GPU”，同时维持了 29.8-36.2% 的单 GPU MFU。
+   
+<img width="941" height="301" alt="image" src="https://github.com/user-attachments/assets/3e737066-3cd9-4115-a5e8-17cb037ac8f8" />
+<img width="942" height="524" alt="image" src="https://github.com/user-attachments/assets/cc32d662-277b-460a-802e-32c9f1f4d99b" />
+<img width="948" height="724" alt="image" src="https://github.com/user-attachments/assets/e64350cb-7a68-479d-afe0-f567fc05fab3" />
+
+**混合卸载**（Hybrid Offloading）： w可以部分保留在GPU上（仅保留未来几层的分片），其余部分卸载到CPU DRAM。D2D AllGather汇聚下一层所需权重，同时H2D PCIe预取更远层的数据，两者并行进行，确保GPU在需要时权重已就绪。
+**无KV缓存模式**（KV-cache-free execution）： 对于前缀共享不显著的工作负载，可以**禁用KV缓存**，动态计算注意力，进一步节省HBM。
+
+**场景与具体问题：**
+生产环境中的LLM工作负载越来越多地用于判别性任务，如分类、推荐和验证。这些任务的答案可以通过单次预填充（prefill）传递的logits直接获取，无需自回归解码。在MoE模型上服务此类仅预填充的工作负载时，瓶颈并非计算本身，而是为了容纳模型而必须进行的分布式执行。现有并行策略（如张量并行TP、专家并行EP、流水线并行PP）通过牺牲内存来引入冗余计算、通信和同步，严重降低了MoE预填充服务的服务效率。具体而言，MoE预填充服务面临着严重的HBM内存压力（来自模型权重、KV缓存和激活），导致其必须进行分布式执行。而分布式执行又会降低计算效率（由于设备粒度批次小和MoE路由不平衡导致GEMM碎片化），并引入高昂的路径上（on-path）通信开销（尤其是EP模式下每层MoE的两次All-to-All操作）。
+
+**业界存在哪些不足：**
+现有并行策略（DP+EP、DP+TP、TP+EP等）将专家放置与同步激活路由耦合，导致：
+1.  **冗余计算：** 由于每设备GEMM未饱和以及路由不平衡导致的"掉队者"（stragglers），降低了模型FLOPs利用率（MFU），在8x A100上MFU低于16%。
+2.  **冗余内存：** 专家权重常驻内存（full-resident expert weights），k路激活扩展，以及重复的前缀KV缓存。
+3.  **冗余通信：** 在专家并行下，每层MoE都需要两次同步的All-to-All通信。
+这些不足使得现有系统在超过4个GPU时性能趋于平稳甚至下降。
+
+**关键观察与假设：**
+作者的核心观察是，这些开销源于“将专家放置与同步激活路由耦合”的设计，这种设计继承自生成式解码时代。对于大规模预填充（large-batch prefill），其计算密集型前向传递会产生一个足够长的“每层计算窗口”（per-layer compute window）。如果能在这个窗口期内在后台流式传输专家权重，就可以将路径上的激活All-to-All操作替换为与计算完全重叠的异步权重AllGather。具体假设包括：
+1.  预填充是吞吐导向的，批处理量大，计算时间长。
+2.  预填充工作负载存在大量前缀共享，这可以在调度和缓存层面被利用。
+3.  MoE模型的注意力权重和专家权重是独立的参数组，这使得它们可以采用不同的并行策略。
+4.  通**过将专家权重按需汇聚到每个GPU上，可以实现本地专家分派，从而消除路由不平衡和路径上的All-to-All。**
+
+**方法核心思路和主要步骤：**
+ZeRO-Prefill 采用双层架构：后端 AsyncEP 和前端共同设计。
+1.  **AsyncEP (Asynchronous Expert Parallelism) 后端：**
+    *   **核心思想：** 将专家（expert）的汇聚方式从“基于激活路由”改为“基于权重汇聚”。每个GPU不再只持有部分专家，而是在当前层计算时，通过后台异步的D2D AllGather（在NVLink上）或H2D PCIe传输（从CPU DRAM卸载）来汇聚下一层的完整专家权重。
+    *   **消除冗余通信：** 由于权重汇聚在后台进行并与当前层计算完全重叠，因此消除了每层MoE路径上的All-to-All操作。
+    *   **消除路由不平衡影响：** 每个GPU都拥有当前层的完整专家集，专家分派变成局部操作，因此路由不平衡不再导致跨GPU的“掉队者”。
+    *   **混合卸载（Hybrid Offloading）：** 为进一步缓解内存压力，专家权重可以部分保留在GPU上（仅保留未来几层的分片），其余部分卸载到CPU DRAM。D2D AllGather汇聚下一层所需权重，同时H2D PCIe预取更远层的数据，两者并行进行，确保GPU在需要时权重已就绪。
+    *   **无KV缓存模式（KV-cache-free execution）：** 对于前缀共享不显著的工作负载，可以禁用KV缓存，动态计算注意力，进一步节省HBM。
+
+2.  **前端调度器：**
+    *   **物理推导的饱和阈值 \(T\)**：后端根据硬件、工作负载和模型配置，分析推导出单个GPU达到计算饱和、足以隐藏数据传输的最小FLOPs量 \(T\)。公式为 \(T = t_{EP} \times F_{GPU} \times \gamma\)，其中 \(t_{EP}\) 是最慢的EP数据传输时间（D2D AllGather或H2D PCIe），\(F_{GPU}\) 是GPU峰值FLOPs速率，\(\gamma\) 是安全裕度（通常1.2）。
+    *   **前缀感知路由（Prefix-aware routing）：** 将同一前缀的请求调度到拥有最长前缀KV缓存匹配的GPU上，以最大化KV复用（包括批内和批间）。
+    *   **真FLOPs负载跟踪（True-FLOPs compute tracking）：** 调度器根据请求实际产生的FLOPs（考虑前缀共享后的抵扣）来衡量GPU负载，而非简单按token数或请求数，确保负载度量与后端计算的实际工作量匹配。
+    *   **重叠感知平衡（Overlap-aware balancing）：** 调度器将请求分配给未饱和的GPU，并在GPU累积的FLOPs达到 \(T\) 时停止分配新的请求，从而确保每个GPU的计算量足以覆盖AsyncEP的后台传输。
+
+**实验设置：**
+*   **实现基础：** ZeRO-Prefill 在 vLLM (v0.11.0) 基础上实现。
+*   **硬件条件：** 8x A100 (80GB, BF16)、8x H100 (80GB, BF16/FP8)、8x H200 (141GB, FP8)。
+*   **模型：** Qwen3-235B-A22B（128个专家，top-8路由，约22B激活参数）。
+*   **负载情况：**
+    *   **真实世界聚合工作负载：** 混合来自6个公共基准测试（MoralStories, MMLU, BoolQ, IMDB, QuALITY, ArXiv Classification）的请求，总计73.8K请求，约37.9M tokens，涵盖50-128K tokens的输入长度和不同的前缀共享程度（高、中、低）。输出长度固定为1。
+    *   **合成工作负载：** 统一随机提示（无前缀共享），测试四种上下文长度（短、中、长、超长），每种都固定总tokens量为10M。
+*   **对比基线：**
+    *   **Group (i) vLLM原生支持的分布式策略：** DP+EP, DP+TP, TP+EP, TP+TP, PP+PP。
+    *   **Group (ii) PrefillOnly-augmented 配置：** 将PrefillOnly的调度器（最短预填充优先，连续预填充时间估计）移植到vLLM，并结合DP+EP和PP+PP后端，分别测试其默认批次大小（max-num-seqs=1）和与ZeRO-Prefill匹配的批次大小。
+
+**关键对比结果：**
+*   **端到端吞吐量：** 在所有硬件、精度和并行度配置下，ZeRO-Prefill 的吞吐量均最高，相较于最强基线，在真实世界聚合工作负载上实现了 **1.35–1.37倍** 的提升。在长上下文合成工作负载上，提升高达 **1.59倍**。
+*   **扩展性：** 现有基线呈现次线性扩展，且在超过4个GPU时性能可能趋于平稳或下降。ZeRO-Prefill 接近线性扩展，因为其唯一的跨GPU通信（AsyncEP的D2D AllGather）与计算完全重叠，消除了集体通信带来的瓶颈。
+*   **前端-后端协同设计的贡献：** 前端调度器（前缀感知路由、真FLOPs跟踪、饱和阈值）在后端AsyncEP的基础上，为吞吐量额外带来了 **16-18%** 的提升，尤其是在高并行度下。
+*   **内存可扩展性与计算效率（MFU）：** Qwen3-235B-A22B 在FP8下需要235GB内存。所有基线至少需要4个GPU才能容纳模型权重（N/A），而ZeRO-Prefill 通过混合卸载和无KV缓存模式，将可部署范围从“≥4个GPU”扩展到“**1-8个GPU**”（4倍更宽的硬件范围），因为其每GPU HBM占用可降至80GB以内。更重要的是，在1-2个GPU上，ZeRO-Prefill 仍能保持 **32.0–36.2%** 的MFU，而在8个GPU上则为 **29.8–34.7%**，这表明其在更广的硬件范围内保持了高MFU。即使在多GPU模式下，ZeRO-Prefill 的MFU（29.8–36.2%）也显著高于最强基线（最低20.09%）。
+*   **预填充重构的准确性：** 实验验证了预填充logit评分在9个分类任务中，与自回归解码相比，有7个任务的准确率在±3.6个百分点以内。在同模型IMDB任务上，仅预填充模式相较于完全自回归模式，虽然准确率下降约1个百分点，但吞吐量提升了5.5倍。
+
+**潜在局限或不足：**
+1.  **适用场景：** ZeRO-Prefill 主要针对吞吐导向、批处理驱动、MoE模型超出单GPU HBM的预填充服务，不适用于延迟敏感的交互式服务、过于突发而无法维持饱和阈值的工作负载，或没有专家堆栈的稠密模型。
+2.  **网络带宽：** 在低带宽互联环境下，\(t_{EP}\) 和 \(T\) 会增加，可能导致部分传输无法完全隐藏在关键路径之外。
+3.  **饱和阈值校准：** \(T\) 在启动时校准一次，严重的工作负载漂移可能导致层级在短时间内恢复同步行为，尽管预填充批次通常能快速回填。
+4.  **工作负载依赖：** 无KV缓存模式和前缀感知路由是工作负载相关的优化，对纯随机流量没有贡献，但也不会导致性能下降。
+   
 ## Spin
 Unifying Sparse Attention with Hierarchical Memory for Scalable Long-Context LLM Serving
 
