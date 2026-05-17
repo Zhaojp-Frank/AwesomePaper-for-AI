@@ -1,5 +1,98 @@
 # Awesome or inspiring paper for AI
 
+## 混合精度推理
+Efficient Mixed-Precision Large Language Model Inference with TurboMind
+
+https://arxiv.org/pdf/2508.15601 2025.8 上海AI lab
+
+https://github.com/InternLM/lmdeploy
+
+1. 旨在解决大语言模型混合精度推理中，现有框架在硬件利用率低下和缺乏对多样化精度格式的全面优化两大痛点，通过系统性地分析内存访问低效和计算瓶颈（如解量化开销和Attention计算气泡），指出了现有技术的不足。
+2. 提出了创新的**GEMM和Attention流水线**，包含硬件感知权重打包、自适应头对齐、指令级并行以及KV内存加载流水线，以克服上述挑战，实现跨层级内存和计算的协调优化，确保高效的混合精度推理。
+3. LMDeploy，8B～235b，4090/L40s/A100/H00 其在混合精度工作负载下平均降低30%的服务延迟，并提升58%的吞吐量，在所有测试配置和硬件类型上均展现出显著且持续的性能改进。
+对比了vLLM/TensorRT-LLM marlin，QServe；总体**模型越大 收益越低；算力约强如H100 收益越低**；batch越大 收益相对大些。
+
+<img width="639" height="291" alt="image" src="https://github.com/user-attachments/assets/090724ef-d605-48b0-a45a-4632eb3571bd" />
+<img width="646" height="278" alt="image" src="https://github.com/user-attachments/assets/f80fed44-e355-40fe-a898-edf76d552c86" />
+<img width="1327" height="651" alt="image" src="https://github.com/user-attachments/assets/bcaf9253-4320-451f-9c9f-e2c082c752ac" />
+
+
+**场景与具体问题：**
+LLM 在广泛应用中展现出卓越性能，但其推理和部署成本高昂，主要原因在于模型参数众多以及生成式推理对内存和计算资源的大量需求。混合精度推理技术通过对模型权重、激活和 KV cache 应用混合精度格式来降低内存和计算需求，是解决此问题的关键。然而，现有框架在实现高效混合精度推理时面临两大挑战：(i) **硬件利用率不足**：未能充分利用现代 GPU 内存层次结构和 Tensor Core 计算能力，例如内存合并失败、共享内存 bank 冲突和寄存器内存不对齐等问题；(ii) **缺乏整体混合精度优化**：现有框架通常提供专门优化，限制了其通用性和灵活性，例如仅优化 GEMM 操作或仅支持特定精度组合。
+
+**业界存在哪些不足：**
+1.  **内存访问效率低下**：低精度格式的权重打包导致全局内存访问不合并（uncoalesced），显著降低有效内存带宽。共享内存中，低位值打包成大位宽字（如 INT4 打包成 32-bit word）导致 bank 冲突，严重降低内存吞吐量。
+2.  **寄存器内存不对齐**：混合 FP16 Query (Q) 与低位 KV cache（如 INT4/INT8），会导致 ldmatrix 等 warp 级矩阵加载指令提取的 K 值瓦片宽度与 Q 值不匹配，从而生成不正确的注意力分数。
+3.  **计算开销过大**：
+    *   **Dequantization overhead**：现代 GPU 缺乏低位与 FP16 操作的硬件原生支持，导致去量化成为计算瓶颈，尤其是在缺乏高效实现时。
+    *   **MMA 数据不对齐**：Tensor Core 的 INT8/INT4 MMA 指令要求输入预打包成固定瓦片，而标准量化布局常不满足此要求，导致需要填充、 costly 的寄存器内 shuffle 操作或退回到低效标量操作，从而削弱 Tensor Core 吞吐量。
+    *   **Attention computation bubbles**：解码阶段，每次注意力头加载新的 key/value 行之前，Tensor Core 必须等待，导致停顿。量化 KV cache 更是加剧此问题，因为低位 key 必须先去量化，进一步延长停顿时间。
+
+**关键观察与假设：**
+作者观察到，为了实现最佳混合精度推理性能，必须：
+1.  **系统性优化内存和计算**：跨分层存储（全局、共享、寄存器内存）和 Tensor Core 架构进行优化。
+2.  **全面的端到端混合精度优化**：支持各种精度格式（权重、激活、KV cache）和硬件配置。
+3.  **硬件感知设计**：利用现有更高精度的数据管道来指导低精度格式的布局转换，避免为每种硬件配置手动调优。
+4.  **计算与内存访问的重叠**：通过指令级并行和流水线技术隐藏去量化延迟和内存加载延迟，最大化 GPU 利用率。
+
+**方法核心思路和主要步骤：**
+本方法提出了两种创新的混合精度流水线：GEMM 流水线和 Attention 流水线，以优化内存加载和计算协调。
+
+**1. GEMM 流水线（针对 General Matrix Multiply）：**
+*   **核心思路**：将标准 GEMM 流水线分为离线权重打包和在线混合精度 GEMM 两个阶段，以消除复杂的运行时转换。
+*   **主要步骤（硬件感知权重打包，Offline Weight Packing）**：
+    *   **(i) Bit extension**：将低位权重临时扩展为 16-bit 格式，以兼容标准 GEMM 管道。
+    *   **(ii) Fragment loading**：每个 warp 发出异步复制（e.g., `cp.async`）将权重矩阵的 cache-line 大小切片从全局内存移至共享内存，然后调用矩阵加载指令（e.g., Ampere 上的 `LDSM`）加载到寄存器。此步骤中，指令的内部 crossbar 自动在 lanes 间重新分配字，解决了全局内存 coalescing 问题和共享内存 bank 冲突。
+    *   **(iii) Bit compression**：在寄存器内部，填充的 16-bit 字被重新打包回原始低位格式，同时保持上一步建立的 lane-level MMA 布局，并按照 MMA 指令期望的精确顺序排列子字值，解决了 MMA 数据不对齐问题。
+    *   **(iv) Fragment storing**：每个 warp 将打包后的片段写回全局内存，形成连续布局，消除运行时额外的 swizzling 操作。
+*   **在线阶段（Online Mixed-Precision GEMM）**：预处理的低位片段通过标准内存层次结构加载，并通过 Integer-to-Float (I2F) 过程去量化为 FP16 格式进行 MMA 操作。
+
+**2. Attention 流水线：**
+*   **核心思路**：在 GEMM 优化的基础上，引入针对低位 KV cache 的额外机制。
+*   **主要步骤**：
+    *   **Q 分支（Adaptive Head Alignment）**：通过共享内存 Q 重排操作解决低位 KV cache 推理中的寄存器内存不对齐问题。该过程包括：(i) 基于 K 矩阵精度计算 Q 矩阵的 K-slices 数量；(ii) 协调线程映射到 Q 元素，确保共享内存访问无冲突；(iii) 使用 `LDS` 指令将 Q 矩阵元素重排到与 Tensor Core 兼容的寄存器布局。这一轻量级重排仅在每个注意力头解码步骤中进行一次。
+    *   **KV 分支（KV Memory Loading Pipeline）**：从全局内存加载低位 KV cache，通过标准内存层次结构传输，并去量化为 FP16。KV 内存加载流水线实现了 KV 内存加载与去量化和注意力计算的重叠，最大限度地减少了注意力计算 bubbles。它在注意力计算期间并行执行：(i) 当前数据上的 Tensor Core 操作；(ii) 即将到来的瓦片的共享内存到寄存器传输（并即时去量化）；(iii) 预取未来的 KV 瓦片从全局到共享内存。
+*   **Instruction-level Parallelism**：通过软件流水线的主循环，将 Tensor Core 执行 MMA、INT/FP ALU 执行 I2F 转换和 FMA、以及 LD/ST 单元异步预取后续瓦片这三个阶段并行化，有效隐藏了去量化开销，使得低位矩阵乘法接近纯 FP16×FP16 核的吞吐量。
+
+**实验设置：**
+*   **实现基础**：LMDeploy（高性能推理引擎）集成了 TurboMind。
+*   **硬件条件**：在四种不同 GPU 类型上进行实验：RTX 4090, L40S, A100, 和 H100。对于超大型 LLM（如 Mixtral 8×22B, Qwen 235B），使用 Tensor Parallelism 以适应模型大小。
+*   **软件版本**：
+    *   vLLM+MARLIN: vLLM (v0.9.1)，集成 MARLIN 核 (v19)。
+    *   TensorRT-LLM: 最新稳定版 (v0.20.0)。
+    *   OmniServe+QServe: 最新版本。
+*   **负载情况**：
+    *   **模型**：覆盖 Qwen, Llama, DeepSeek, Mixtral 系列，包括密集模型和 Mixture-of-Experts (MoE) 架构，参数规模从 8B 到 235B。
+    *   **量化方法**：AWQ 和 GPTQ。
+    *   **工作负载**：通用对话任务使用 ShareGPT 数据集派生的真实世界聊天机器人负载；推理任务使用 QwQ 模型在 NuminaMath 和 AIMO validation 数据集上的数学推理负载。推理负载根据请求速率使用泊松过程生成。
+*   **对比基线**：vLLM+MARLIN, TensorRT-LLM, OmniServe+QServe。
+*   **评估指标**：系统吞吐量（Throughput）、系统响应延迟（P50, P90, P95, P99 延迟）和首令牌时间（Time-to-First-Token, TTFT）。
+
+**关键对比结果：**
+*   **总体性能提升**：LMDeploy 在混合精度工作负载中，相比现有混合精度框架，平均降低 30% 服务延迟（最高 61%），平均提高 58% 吞吐量（最高 156%）。
+*   **核性能对比 (vLLM+MARLIN)**：
+    *   Attention 核：预填充操作平均降低 22.1% 延迟（最高 48.7%），解码操作平均降低 7.6% 延迟（最高 29.9%）。累计 Attention 核执行延迟平均降低 88.5%。内存带宽利用率高达 86% (8-bit KV) 和 95% (16-bit KV)。
+    *   GEMM 核：平均性能提升 19.2%（最高 25.5%）。
+*   **INT4×FP16 GEMM 核与 FP16×FP16 GEMM 核对比**：对于小批量（1-16），INT4×FP16 核平均延迟改善 134%（最高 220.3%）。对于大批量（64），INT4×FP16 性能与 FP16×FP16 持平，而 MARLIN 混合精度核性能下降达 20.3%。指令级并行有效地隐藏了去量化延迟，虽然指令数增加 64.66%，但周期数仅增加 2.89%。
+*   **端到端性能 (vLLM+MARLIN)**：
+    *   吞吐量：平均加速 13%（最高 31%）。
+    *   TTFT：平均降低 12.0%（最高 33.3%）。
+    *   在线服务延迟：平均改善 15.0%（最高 24.6%），高请求率下平均降低 24.1%（最高 37.3%）。
+    *   跨 12 个多样化模型：平均服务延迟改善 21.1%（最高 47.9%），P99 延迟平均改善 20.0%（最高 39.2%）。
+    *   推理工作负载 (QwQ)：吞吐量平均加速 15%（最高 27%），延迟平均降低 21.9%（最高 24.5%）。
+*   **端到端性能 (TensorRT-LLM)**：平均吞吐量加速 118.90%（最高 171.11%），TTFT 平均降低 52.2%（最高 65.0%），端到端延迟平均降低 50.3%（最高 59.2%）。
+*   **端到端性能 (8-bit KV cache)**：LMDeploy (INT8 KV) 与 vLLM+MARLIN (FP8 KV) 相比，平均吞吐量加速 50.6%（最高 156.3%），延迟平均降低 24.6%（最高 40.5%）。准确性评估显示两种系统性能相当。
+*   **FP8 模型支持**：LMDeploy 在 FP8 量化模型上平均性能提升 10.4%（最高 13.1%）。
+*   **端到端性能 (OmniServe+QServe)**：LMDeploy 持续优于所有基线，平均吞吐量提升 14.1%（最高 23.0%），即使 OmniServe 采用了更激进的 8-bit 激活量化。
+*   **不同 KV cache 精度下的性能**：从 16-bit 降低到 8-bit KV cache，平均吞吐量提升 11.9%（最高 37.5%）；降低到 4-bit KV cache，平均吞吐量提升 18.3%（最高 57.9%）。
+*   **多 GPU 扩展性**：在 A100 上，Qwen 32B 和 72B AWQ 模型从单 GPU 到 8 GPU 分别实现了 4.45× 和 5.18× 的吞吐量提升，并行效率分别为 55.6% 和 64.8%。
+
+**潜在局限或不足：**
+1.  虽然在多 GPU 环境下展示了良好的扩展性，但并行效率并非 100%，仍有进一步优化空间。
+2.  论文主要关注性能，对混合精度量化后的模型精度保持情况有提及（与 vLLM 精度相当），但未深入探讨其在不同量化配置下对模型准确性的具体影响曲线。
+3.  未提及对不同后端（如 CPU、FPGA 等）的兼容性或潜在扩展。
+4.  Offline Weight Packing 需要额外的预处理步骤，这可能增加首次部署的复杂性，尽管对在线推理性能有显著提升。
+
 ## BubbleSpec
 BubbleSpec: Turning Long-Tail Bubbles into Speculative Rollout Drafts for Synchronous Reinforcement Learning
 
@@ -8,7 +101,7 @@ https://arxiv.org/pdf/2605.08862v1 2026.5.9 上海交大 字节
 1. 🤖 BubbleSpec旨在解决强化学习（RL）训练中大语言模型（LLM）rollout阶段由于响应长度差异导致的“**长尾气泡**”问题，即GPU空闲等待慢节点，这严重影响了长上下文场景下的效率且现有方案常牺牲同步性。
 2. 与其消除这些气泡，不如利用它们在**空闲GPU时间预生成下一批promot的rollout草稿**，通过构建后缀树供推测解码使用，同时设计统一注意力机制以优化验证开销。
 3. 基于Verl，最大7b，SAPO。BubbleSpec能将decode step减少约50%，将**rollout吞吐量提高高达1.8x**，且在保持RL算法严格同步性的同时，提供了从训练开始的即时加速，优于依赖历史或批次重排序的方法。
-模型越大 加速比收益越低。
+但是模型越大 加速比收益越低。1.7b rollout收益45% 7b模型已经下降到30%。
 
 <img width="792" height="181" alt="image" src="https://github.com/user-attachments/assets/3c8f8197-3652-4439-90d1-3c0d5062c329" />
 <img width="810" height="371" alt="image" src="https://github.com/user-attachments/assets/40b5a9c6-635a-47d0-8405-41cb044c2ad1" />
