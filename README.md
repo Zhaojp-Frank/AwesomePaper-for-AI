@@ -1,5 +1,76 @@
 # Awesome or inspiring paper for AI
 
+## BubbleSpec
+BubbleSpec: Turning Long-Tail Bubbles into Speculative Rollout Drafts for Synchronous Reinforcement Learning
+
+https://arxiv.org/pdf/2605.08862v1 2026.5.9 上海交大 字节
+
+1. 🤖 BubbleSpec旨在解决强化学习（RL）训练中大语言模型（LLM）rollout阶段由于响应长度差异导致的“**长尾气泡**”问题，即GPU空闲等待慢节点，这严重影响了长上下文场景下的效率且现有方案常牺牲同步性。
+2. 与其消除这些气泡，不如利用它们在**空闲GPU时间预生成下一批promot的rollout草稿**，通过构建后缀树供推测解码使用，同时设计统一注意力机制以优化验证开销。
+3. 基于Verl，最大7b，SAPO。BubbleSpec能将decode step减少约50%，将**rollout吞吐量提高高达1.8x**，且在保持RL算法严格同步性的同时，提供了从训练开始的即时加速，优于依赖历史或批次重排序的方法。
+模型越大 加速比收益越低。
+
+<img width="792" height="181" alt="image" src="https://github.com/user-attachments/assets/3c8f8197-3652-4439-90d1-3c0d5062c329" />
+<img width="810" height="371" alt="image" src="https://github.com/user-attachments/assets/40b5a9c6-635a-47d0-8405-41cb044c2ad1" />
+<img width="399" height="399" alt="image" src="https://github.com/user-attachments/assets/f5793120-bd57-41c0-a773-fd8aa0a6f070" />
+
+<img width="824" height="402" alt="image" src="https://github.com/user-attachments/assets/75d03871-bff6-47fd-83e2-8e821b875407" />
+
+
+**场景与具体问题**
+LLMs性能的提升日益依赖于RL，特别是在通过生成长“思维链”（CoT）来增强推理能力的“测试时扩展”范式中。然而，RL训练的rollout阶段是一个显著的效率瓶颈。该阶段policy模型需要为批量prompt采样响应，但LLM生成固有的随机性导致响应长度不可预测。这引发了严重的“长尾气泡”问题：快速完成任务的GPU必须等待最慢的straggler完成，导致资源闲置。这些气泡可分为两种：GPU间气泡（Inter-GPU Bubbles），即所有assigned prompts完成后等待其他GPU完成；GPU内气泡（Intra-GPU Bubbles），即大部分responses短导致GPU利用率低。这些气泡可能占据超过70%的rollout时间，严重影响训练效率和可扩展性。
+
+**业界存在哪些不足**
+现有解决方案主要通过放宽RL算法的严格同步性来缓解气泡问题，例如部分rollout（partial rollout）或异步RL（asynchronous RL）。然而，这些方法不可避免地引入响应陈旧性（response staleness）和off-policy行为，可能导致RL训练的不稳定性或性能下降。
+另一方面，投机解码（speculative decoding）作为一种无损LLM推理加速方案备受关注。其中，model-free投机解码因其轻量级的draft开销和对rollout模型权重演化的不敏感性而成为主要选择。这些方法通常利用相邻RL训练epoch间的响应相似性来构建草稿，但存在局限性：
+1.  **冷启动问题（Cold-Start Problem）**：它们通常需要一个初始epoch来构建rollout缓存进行预热，这对于现代大型数据集（如DeepMath-103k和Polaris-53k）可能需要数天到数周，导致在长时间的初始阶段无法提供加速。
+2.  **相关性降低**：随着优化步数增加，policy模型可能发生剧烈变化，降低了历史rollout的重用性，从而影响draft质量和投机加速效果。
+
+**关键观察与假设**
+BubbleSpec的核心洞察是：与其试图消除气泡，不如利用它们。BubbleSpec认为，GPU在rollout阶段的空闲时间窗是一种宝贵的计算资源，可以用于预生成后续步骤的rollout结果，作为投机解码的draft。这种方法可以在不牺牲RL算法严格同步特性的前提下，实现rollout加速，并克服了传统投机解码方法的冷启动问题。
+
+**方法核心思路和主要步骤**
+BubbleSpec通过跨步流水线（cross-step pipelining）策略性地利用GPU气泡。
+1.  **利用GPU气泡进行rollout预生成**：
+    *   **气泡利用策略**：BubbleSpec主要利用GPU间气泡（Inter-GPU Bubbles）进行预生成。尽管GPU内气泡（Intra-GPU Bubbles）可能提供更多预生成时间，但它们会直接与当前解码工作负载竞争，导致不稳定干扰（如“快”的GPU可能因为额外请求而比原先的stragglers更晚完成）。实验表明，仅利用GPU间气泡就足以生成足够的draft tokens，且无额外开销和不稳定性。
+    *   **DP Rank同步**：为确保预生成在最慢的rank完成当前批次时停止，BubbleSpec采用周期性polling方案。每个rank每$T$个解码步查询一个中央同步器，若所有rank已完成当前批次，则预生成停止并进入barrier。这平衡了同步的新鲜度和进程间通信成本。
+    *   **预生成批次大小**：每个prompt的预生成样本数与GRPO中每个prompt组的样本数匹配，以平衡多样性和覆盖范围。
+2.  **基于后缀树的投机解码**：
+    *   **索引策略**：为了高效地利用预生成的partial rollouts作为投机草稿，系统需要快速匹配当前rollout前缀并检索可能继续的序列。BubbleSpec采用后缀树（suffix tree）而非n-gram样式方案进行索引。n-gram直接在原始token序列上匹配，查询成本与历史长度成比例；而后缀树通过构建紧凑的后缀索引，查询成本主要取决于前缀长度和匹配数量，与总历史大小解耦。
+    *   **分布式构建**：后缀索引在rollout worker之间分片，每个DP rank仅为其负责的prompt构建和维护索引，避免了中心化瓶颈，提高了可扩展性。
+    *   **投机解码过程**：在每个解码步骤，系统从后缀树中检索一个候选token块$\tilde{d} = (\tilde{x}_1, \dots, \tilde{x}_K)$。基于当前policy $ \pi $，通过拒绝采样（rejection sampling）方法进行验证。
+        *   对于每个draft token $\tilde{x}_t$，以概率$P_{accept} = p_t(\tilde{x}_t)$接受，其中$p_t(\cdot)$是目标policy在该步的解码分布。
+        *   如果接受，则扩展前缀。
+        *   如果拒绝，则从残余分布$r_t(x) = p_t(x)\frac{1[x \neq \tilde{x}_t]}{1 - p_t(\tilde{x}_t)}$中采样一个恢复的token，并从更新后的前缀重新开始drafting。
+        *   这种方法严格保持了与标准自回归采样相同的输出分布。
+3.  **统一注意力（Unified Attention）优化**：
+    *   **问题**：投机解码虽然减少了解码步数，但可能因验证开销（特别是attention操作）增加每步延迟。传统inference engines对prefill和decode attention使用不同kernel，当draft tokens出现时，会触发低效的prefill-style attention，导致batch分裂和延迟增加。例如，在batch size 128、4 draft tokens的场景下，batch-split attention的延迟几乎是正常attention的3倍。
+    *   **解决方案**：BubbleSpec采用统一注意力操作符，能够处理短范围内的可变查询长度。这个统一操作符在单个CUDA kernel launch中处理普通查询和解码查询，消除了batch分裂开销，并针对投机解码中常见的短查询长度进行了优化。这确保了解码步数减少能直接转化为端到端生成速度提升。
+
+**实验设置**
+*   **实现基础**：BubbleSpec基于Verl框架（Verl-0.5.0.dev0）实现，并使用vLLM-v0.10.1作为rollout后端。统一注意力实现采用了FlashInfer中的TensorRT操作符，后缀树解码基于Arctic-Inference。
+*   **硬件条件**：所有实验均在单个节点上进行，配备8个NVIDIA GPU。
+*   **模型与数据集**：评估Qwen模型系列（Qwen3-1.7B, Qwen3-4B, Qwen2.5-VL-7B）。数据集包括Polaris-53k、DeepMath-103K和SimpeRL-Zoo-Data。
+*   **配置与超参数**：RL算法采用SAPO。batch size设置为64，每个prompt采样16个响应，总rollout批次大小1024。预生成也采样16个响应。rollout温度设置为1.0。最大响应长度Qwen3为48K，Qwen2.5-VL-7B为64K。后缀投机解码固定draft长度为4个tokens。DP rank间同步每50个解码步进行。GPU内存利用率设为0.7，启用vLLM的chunked prefill和CUDA graph模式。
+*   **对比基线**：Vanilla Verl、RollPacker、以及针对统一注意力、n-gram解码和预生成样本数的消融研究。
+*   **评估指标**：rollout时间（最慢DP rank的完成时间）、平均/最大解码步数、响应长度、投机解码指标（平均接受长度、draft长度、接受率）。准确性方面，对比了BubbleSpec和Verl在SFT后RL训练的Qwen2.5-VL-7B在多个benchmark上的性能。
+
+**关键对比结果**
+*   **Rollout效率**：BubbleSpec将解码步数平均减少约50%（48.9%至56.8%），最大解码步数减少43.8%至59.6%。rollout时间减少30.0%至45.2%，吞吐量提高1.4倍至1.8倍。
+*   **投机解码指标**：平均接受长度约为2个tokens，接受率在21.7%至29.94%之间。
+*   **预生成气泡利用**：平均气泡时间占总rollout时间的1/3以上，最大气泡时间可超过2/3，为预生成提供了充足空间，使部分rollout达到完整响应长度的2/3，确保了高匹配率。
+*   **后缀树构建开销**：后缀树构建开销可忽略不计，不到rollout时间的1%。
+*   **准确性**：BubbleSpec与Verl在训练后的准确性方面表现相当，验证了投机解码的无损性及同步训练的保持。
+*   **统一注意力的贡献**：统一注意力是实现端到端加速的关键。在没有统一注意力的情况下，平均每步解码延迟几乎翻倍，严重抵消了减少解码步数带来的收益。
+*   **后缀解码 vs. N-gram解码**：后缀解码比N-gram解码具有更高的接受长度，且N-gram解码的计算开销抵消了其在解码步数上的优势，导致总体rollout时间更长。
+*   **与RollPacker对比**：RollPacker通过批次重排序缓解气泡，但其效率高度依赖于长响应的稀疏性，且在tail round的rollout时间远超BubbleSpec。BubbleSpec在大多数步骤中仍能实现更低的rollout时间。
+
+**潜在局限或不足**
+*   **模型大小与加速比**：随着模型尺寸的增大，**加速效果略有减弱**。这可能是因为大型模型计算强度更高，在大批次下更容易进入计算密集型状态，抵消了投机解码的优势。
+*   **GPU内气泡利用**：虽然BubbleSpec主要利用GPU间气泡避免干扰，但GPU内气泡的利用仍具潜力。目前利用GPU内气泡会导致当前批次解码速度变慢，若要高效利用，需更复杂的资源共享和隔离技术，如针对GPU主内存带宽的优化。
+*   **特定场景依赖**：尽管BubbleSpec通用性强，其效果**仍依赖于长尾效应**的存在，即存在足够的GPU空闲时间来执行预生成任务。
+*   **资源消耗**：虽然降低了单次运行成本，但RL训练效率提升可能鼓励更大规模的训练，并不能必然减少总体资源消耗，反而可能加剧对计算资源的需求。
+  
 ## Attention Drift
 Attention Drift: What Autoregressive Speculative Decoding Models Learn
 
