@@ -1,5 +1,86 @@
 # Awesome or inspiring paper for AI
 
+## DGPO 细粒度token奖励
+DGPO: Distribution-Guided Policy Optimization for Fine-Grained Credit Assignment
+
+https://arxiv.org/pdf/2605.03327 北京大学 上海交大 2026.5.8
+
+1. 针对LLM RLHF中，现有算法如**GRPO的粗粒度序列级credit分配**和**无界KL散度惩罚**导致的**梯度不稳定性**问题，提出了Distribution-Guided Policy Optimization (DGPO) 框架。
+2. DGPO将**分布偏差重新解释为引导信号**，用**有界的Hellinger Distance替代不稳定的KL散度**来安全量化token级探索，并引入**熵门控机制**，根据策略的**不确定性来区分真正的推理突破和幻觉噪声**。
+3. Qwen-32b模型 DAPO-17K  AIME2024和2025等数学推理基准测试中显著超越了DAPO，千问FIPO等现有SOTA基线，同时保持了与GRPO相当的计算效率（+3.6%）。
+
+<img width="673" height="412" alt="image" src="https://github.com/user-attachments/assets/636b06a3-948f-4af5-9733-2d93729c7aab" />
+<img width="665" height="398" alt="image" src="https://github.com/user-attachments/assets/a08ca82e-83a3-46ac-91e9-15465d4fb36c" />
+<img width="653" height="422" alt="image" src="https://github.com/user-attachments/assets/276d1e41-bfce-44d2-99b8-89bcb7d43d5b" />
+<img width="632" height="136" alt="image" src="https://github.com/user-attachments/assets/72aacfce-1ca3-45bd-81e3-784e9fb5886d" />
+<img width="487" height="168" alt="image" src="https://github.com/user-attachments/assets/7cfa2bf4-3260-4d3b-a9b3-0b9b3a00292f" />
+<img width="647" height="145" alt="image" src="https://github.com/user-attachments/assets/3aab1c7b-4285-428b-a37c-8781e333ac47" />
+<img width="662" height="386" alt="image" src="https://github.com/user-attachments/assets/8bce0b61-2619-420b-9f0e-4c679e3a078e" />
+
+DGPO (Distribution-Guided Policy Optimization) 是一项针对LLM对齐的critic-free强化学习框架，旨在解决现有方法中粗粒度信用分配和梯度不稳定性问题。
+
+**场景与具体问题**
+在LLM的对齐中，尤其是在需要复杂推理（如Chain-of-Thought (CoT) 生成）的任务中，强化学习扮演了关键角色。当前的方法，例如Group Relative Policy Optimization (GRPO)，在没有辅助价值网络的情况下，通过对一组采样响应进行优化，成功促进了LLM的推理能力。然而，这些方法面临两大挑战：
+1.  **粗粒度信用分配问题**：GRPO等方法将单一的序列级奖励（或优势）均匀地广播到整个生成序列，无论序列可能长达数千个token。这意味着关键的推理突破和冗余的过渡性语法被同等对待，严重稀释了学习信号，导致模型难以识别并强化真正重要的推理步骤。
+2.  **梯度不稳定性与探索受限**：标准的Kullback-Leibler (KL) 散度惩罚，尤其是无界的逆向KL散度，在策略探索新颖、低概率的推理轨迹时会导致严重的梯度爆炸和模式寻求保守性。这阻碍了模型发现创新解决方案，使其推理能力受限于预训练分布的安全边界内。
+
+**业界存在哪些不足**
+GRPO虽然实现了内存效率和推理性能的平衡，但其序列级优势分配机制在长序列任务中显得力不从心。Process Reward Models (PRMs) 尝试提供更细粒度的奖励信号，但需要昂贵的人工标注数据。其他重分配序列级奖励的方法（如基于注意力权重或启发式衰减）缺乏严格的理论依据，难以有效隔离真正的关键步骤。此外，PPO等基于价值网络的方法虽然能够进行细粒度优化，但其辅助价值网络带来了巨大的内存和计算开销，难以在大规模LLM上部署。
+
+**关键观察与假设**
+DGPO的关键观察在于：
+1.  **分布偏差作为指导信号**：模型偏离参考策略的分布不应被简单视为需要惩罚的“错误”，而应被重新诠释为有益的“探索指导信号”。当一个序列获得正向奖励时，那些与参考模型偏差最大的token往往是促成成功的关键认知飞跃。
+2.  **有界距离的稳定性**：无界的KL散度会导致梯度问题，而使用有界距离（如Hellinger距离）来量化偏差可以避免梯度爆炸，确保更安全的探索。
+3.  **区分有效探索与幻觉**：仅仅依赖分布偏差可能奖励“虚假创新”（例如模型自信地幻觉出罕见的、域外词汇）。为了过滤掉这种噪音，需要一种机制来区分有意义的探索（通常伴随较高的不确定性）和自信的幻觉（通常伴随较低的不确定性）。
+
+**方法核心思路和主要步骤**
+DGPO通过以下机制重新分配粗粒度的序列级优势，实现细粒度的token级信用分配：
+
+1.  **有界分布偏差量化**：
+    *   为了解决KL散度的不稳定性，DGPO用**Hellinger距离**代替了它。Hellinger距离 $H^2(\pi_\theta(\cdot|x, y_{<t}), \pi_{ref}(\cdot|x, y_{<t}))$ 用于量化当前策略 $\pi_\theta$ 在时间步 $t$ 相对于参考策略 $\pi_{ref}$ 的分布偏差 $d_{i,t}$。
+    *   Hellinger距离 $d_{i,t} = 1 - \sum_{a \in V} \sqrt{\pi_\theta(a|x, y_{<t})\pi_{ref}(a|x, y_{<t})}$ 具有内在的有界性，其取值范围始终在 $[0, 1]$ 之间，从而避免了在 $\pi_{ref}(a|s) \to 0$ 时传统KL散度项导致的梯度爆炸。
+
+2.  **策略熵门控机制**：
+    *   为了区分真正的推理突破和幻觉噪音，DGPO引入了一个策略熵门控机制。它将Hellinger距离 $d_{i,t}$ 乘以策略的**归一化认知不确定性（熵）** $H(\pi_\theta(\cdot|x, y_{<t}))$。
+    *   最终的得分 $s_{i,t}$ 定义为 $s_{i,t} = d_{i,t} \cdot \tilde{H}_{i,t}^\kappa$，其中 $\tilde{H}_{i,t}$ 是归一化熵，$\kappa$ 是熵门控缩放因子。当模型不确定性高时（高熵），分布偏差被充分考虑；当模型不确定性低但偏差大时（低熵，可能意味着自信幻觉），偏差的权重被降低。
+
+3.  **细粒度优势重分配**：
+    *   DGPO将序列级优势 $A_i$ 重新分配给单个token。通过温度参数 $\tau$ 缩放的softmax函数，将得分 $s_{i,t}$ 转换为token级重要性权重 $w_{i,t}$。
+    *   权重 $w_{i,t} = T_i \cdot \frac{\exp(s_{i,t}/\tau)}{\sum_{j=1}^{T_i} \exp(s_{i,j}/\tau)}$，其中 $T_i$ 是序列长度。这种设计保证了序列内权重的均值为1，即 $\frac{1}{T_i}\sum_{t=1}^{T_i} w_{i,t} = 1$，从而保持了总体的梯度幅度，防止梯度消失。
+    *   细粒度局部优势定义为 $A_{i,t} = A_i \cdot w_{i,t}$。这样，关键的探索性token会获得放大的更新信号，而标准语法token的梯度则被减弱。
+
+4.  **最终优化目标**：
+    *   由于参考分布被内化到局部优势中，DGPO完全消除了损失函数中的标准token级KL惩罚。
+    *   最终的DGPO目标函数为：
+        $L_{DGPO}(\theta) = \frac{1}{G}\sum_{i=1}^G \frac{1}{T_i} \sum_{t=1}^{T_i} \min(\rho_{i,t}A_{i,t}, \text{clip}(\rho_{i,t}, 1 - \epsilon_c, 1 + \epsilon_c)A_{i,t})$
+        其中 $\rho_{i,t} = \frac{\pi_\theta(y_{i,t}|x,y_{i,<t})}{\pi_{\theta_{old}}(y_{i,t}|x,y_{i,<t})}$ 是标准的重要性采样比率，$\epsilon_c$ 是PPO中的裁剪参数。
+
+**实验设置**
+*   **模型骨干**：主要使用Qwen2.5-32B-Base模型，该模型未经过CoT合成数据预训练，确保推理能力来自对齐算法。同时在Qwen2.5-7B-Math上进行初步扩展和消融研究。
+*   **数据集**：在公开的DAPO-17K数据集上进行训练。
+*   **硬件条件**：计算配置文件在2个节点上进行，每个节点有8个H20 (96GB) GPU，使用DeepSpeed ZeRO-3进行优化。
+*   **训练参数**：32B模型训练时，全局batch size为512个prompt，每个prompt采样组大小 $G=16$ 个响应。学习率为 $1 \times 10^{-6}$，权重衰减为0.1。为了稳定梯度估计，每个更新使用64个prompt（1024个样本）的mini-batch。
+*   **评估基准**：主要使用AIME 2024基准，并辅以AIME 2025来测试极限问题解决能力。
+*   **评估指标**：每个问题重复推理32次，报告Avg@32（Pass@1的平均值）作为推理可靠性的最稳健指标，同时报告Cons@32（多数投票）和Pass@32（至少一个正确答案的概率）。推理温度为1.0，top-p阈值为0.7。
+*   **对比基线**：与GRPO标准实现、DAPO以及FIPO等领先的无批评者RL算法进行对比。
+
+**关键对比结果**
+1.  **AIME基准性能**：
+    *   在Qwen2.5-32B上，DGPO在AIME 2024上实现了60.0%的Avg@32准确率，显著优于DAPO的50.0%。Cons@32从DAPO的60.0%提升到73.0%。
+    *   在更具挑战性的AIME 2025上，DGPO将Avg@32从DAPO的38.0%提升到46.0%。
+2.  **小模型验证**：
+    *   在Qwen2.5-7B-Math上，DGPO在AIME 2024上达到了43.0%的Pass@1准确率，远超Vanilla GRPO的22.0%和DAPO的36.0%，以及FIPO的40.0%。这表明DGPO在不同模型规模下都能有效提取更丰富的监督信号。
+3.  **消融研究**：
+    *   **熵门控机制的重要性**：移除熵门控（κ=0）导致AIME 2024性能下降5%，证明其能有效过滤掉自信的幻觉。
+    *   **Hellinger距离的优越性**：用逆向KL代替Hellinger距离导致性能显著下降到34.0%，证实了Hellinger距离的有界性对安全探索的重要性。
+4.  **计算效率**：
+    *   DGPO保持了无批评者RL框架的内存和计算效率优势。与需要辅助价值网络的PPO相比，DGPO的峰值内存占用（46.5 GB/GPU）远低于PPO（72.4 GB/GPU）。
+    *   DGPO的训练吞吐量为188 tokens/s/GPU，相比标准GRPO（195 tokens/s/GPU）仅增加了3.6%的边际时间开销。这表明DGPO在不引入额外神经网络前向传播的情况下，实现了细粒度监督信号。
+
+**潜在局限或不足**
+1.  **领域特异性**：当前评估主要集中在高度复杂的数学推理任务上。DGPO在开放式创意生成、代码生成或一般指令遵循等其他关键对齐领域中的有效性仍需广泛验证。
+2.  **超参数敏感性**：引入了重分配温度 $\tau$ 和熵门控缩放因子 $\kappa$ 两个新超参数。尽管研究表明DGPO在中等范围内的超参数下表现稳定，但对于完全不同的任务或模型架构，可能仍需要经验性调整，以防止更新过于稀疏或意外强化自信的幻觉。
+
 ## D2Skill
 Dynamic Dual-Granularity Skill Bank for Agentic RL
 
