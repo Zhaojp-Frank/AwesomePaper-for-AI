@@ -1,5 +1,88 @@
 # Awesome or inspiring paper for AI
 
+## LongCoT
+LongCoT: Benchmarking Long-Horizon Chain-of-Thought Reasoning
+
+https://arxiv.org/pdf/2604.14140 2026.4.15 剑桥等
+https://longcot.ai/
+1. LongCoT benchmark旨在直接衡量前沿模型在跨越10K ~ 100K tokens 的长序列思维链 (CoT) 任务中的长期推理能力，解决了现有基准测试未充分隔离此核心能力的问题。
+2. 即使是最佳模型（如GPT 5.2）在LongCoT上的准确率也低于10%，表明当前模型在长期CoT推理方面存在显著差距，并且随着问题复杂性的增加，性能会急剧下降。
+3. LongCoT通过专家设计的参数化模板构建问题，这些问题具有明确或隐含的计算依赖图，涵盖化学、数学、计算机科学、国际象棋和逻辑等领域，揭示了模型在规划、状态管理、错误检测和回溯方面的不足。
+
+LongCoT包含2500个问题，化学、数学、计算机科学、国际象棋和逻辑; 每个问题由一个简短的输入（中位数2K tokens）和可验证的最终答案组成。
+<img width="400" height="292" alt="image" src="https://github.com/user-attachments/assets/4b64d26b-482b-4810-ad83-0ad605a73ab5" />
+<img width="1007" height="778" alt="image" src="https://github.com/user-attachments/assets/e3f87dfb-ee23-47e6-a8fe-799cc221454a" />
+<img width="727" height="383" alt="image" src="https://github.com/user-attachments/assets/f7be76fe-d359-4547-a624-b347a0c0d974" />
+<img width="808" height="425" alt="image" src="https://github.com/user-attachments/assets/de71eec9-d9a8-414b-8738-ddb7e9e54fb2" />
+<img width="795" height="352" alt="image" src="https://github.com/user-attachments/assets/0edd1289-543d-42a7-806f-e291d1adac04" />
+<img width="788" height="366" alt="image" src="https://github.com/user-attachments/assets/429d3ba6-7120-47c4-9d63-2ddda0c722b1" />
+<img width="390" height="271" alt="image" src="https://github.com/user-attachments/assets/15066486-4f61-4132-9a80-bd1a61b7595d" />
+
+**场景与具体问题：**
+现有的基准测试通常通过以下方式间接衡量CoT能力：(1) 使用困难但短期的推理问题，或 (2) 通过使用工具和支架（scaffolds）的agentic工作流。这导致一个悬而未决的问题：模型固有地保持CoT连贯性以进行长周期推理的能力如何？LongCoT旨在直接测量和研究这种能力。长周期推理被定义为在扩展的思维链中，通过许多相互依赖的步骤进行可靠推理的能力。
+
+**业界存在哪些不足：**
+1.  **推理长度限制：** 现有顶级推理基准（如FrontierMath、HLE）通常将生成长度限制在10K或5K tokens以内，无法测试模型在100K+推理tokens下的长周期推理行为。
+2.  **能力混淆：** Agentic基准测试（如SWEBench-Verified、WebArena）将模型的推理能力与工具使用、领域特定支架等agentic能力混淆在一起，难以分离出纯粹的推理能力。
+3.  **输入/输出不对称：** 现有长上下文基准（如LongBench v2、MRCR v2）主要测试对长输入（retrieval）的理解，但要求输出很短，并未评估长输出的生成和推理能力。
+4.  **失败模式：** 现有模型在长周期推理中存在普遍问题，包括上下文降级、计划漂移、部分结果丢失、过早放弃以及错误未被检测。
+
+**关键观察与假设：**
+1.  **单步可解性：** LongCoT中的每个局部步骤或子问题对于前沿模型来说都是可解的。因此，失败直接反映了长周期推理能力的局限性，而非单步难度或领域知识的缺乏。
+2.  **内在负担：** LongCoT假设模型需要内在承担依赖结构（planning, maintaining state, propagating constraints, backtracking）的负担，而非通过外部工具来卸载。这能够隔离模型作为“推理引擎”的核心能力。
+3.  **多领域普适性：** 跨越化学、数学、计算机科学、国际象棋和逻辑等多个领域，确保其通用性和对不同推理结构（DAGs, search trees, cyclic graphs, constraint graphs, execution traces）的覆盖。
+
+**方法核心思路和主要步骤：**
+LongCoT包含2500个问题，每个问题由一个简短的输入（中位数2K tokens）和可验证的最终答案组成。解决问题需要导航一个由相互依赖的子问题组成的图结构，涉及数万到数十万推理tokens。
+1.  **问题构造：** 领域专家设计参数化的模板，实现可扩展的问题生成。
+    *   **显式（组合型）模板：** 明确指定依赖DAG（有向无环图）。节点 $V = \{1, \ldots, n\}$ 表示子问题，边 $(i, j) \in E$ 表示子问题 $j$ 依赖于子问题 $i$ 的答案。实例化函数 $g_j(\lambda_j, \{a_i : (i, j) \in E\}) \to (q_j, a_j)$ 根据模板参数和父节点答案生成具体子问题。错误会在下游传播。包含四种组合模式：线性链、多父节点DAGs、条件分支、强制回溯（ $\nexists f^{-1}$ 函数）。
+    *   **隐式（过程型）模板：** 通过规则或约束隐式定义依赖结构，如配置空间 $S$ 、初始配置 $s_0$ 和规则 $R$ （例如，状态转换图、约束图或带对抗性分支的游戏树）。模型需要发现并导航这些潜在结构。
+2.  **核心能力测试：** LongCoT特意测试以下长周期推理所需的核心能力：
+    *   **上下文管理与回忆 (Context management and recall)：** 追踪并检索推理链早期关键信息。
+    *   **自我评估与回溯 (Self-evaluation and backtracking)：** 检测错误并返回到最近的正确状态。
+    *   **规划 (Planning)：** 有效组织子任务。
+    *   **探索与执行 (Exploration and execution)：** 评估候选路径并在扩展的CoT中保持正确推理。
+3.  **领域划分：**
+    *   **数学：** 基于奥林匹克竞赛题目，使用组合型模板，测试线性、DAG、条件和回溯依赖。
+    *   **化学：** 使用组合型模板，涉及分子结构和图推理（如分子性质、反应预测、拓扑分析），模仿真实化学工作流。
+    *   **国际象棋：** 使用过程型模板，包括最佳着法选择、Minimax游戏等，要求模型进行多步对抗性推理和状态追踪。
+    *   **逻辑：** 使用过程型模板，包括约束满足问题（数独）、规划任务（推箱子）、路径查找等，诱导模型导航大型搜索空间。
+    *   **计算机科学：** 结合组合型和过程型模板，测试确定性过程模拟（如程序执行追踪、调度模拟、图算法、类型推断）。
+4.  **难度分级：** 每个领域有10个模板，每个模板有50个实例，共2500个问题。分为简单（LongCoT-mini，500个）、中等（750个）和困难（1250个）等级。简单问题用于区分开源模型性能。
+
+**实验设置：**
+*   **实现基础：** LongCoT是一个基准测试，不涉及模型实现。
+*   **硬件/软件/负载：** 未具体说明硬件或软件版本，但测试了当前最先进的闭源和开源模型。评估在单次（single-shot）设置下进行，启用CoT推理，允许模型使用其最大输出token限制（例如，GPT 5.2为128K）。API错误会独立重试两次。
+*   **对比基线：** 与其他前沿推理基准（FrontierMath、HLE）、长上下文基准（LongBench v2、MRCR v2）和Agentic基准（SWEBench-Verified、WebArena）进行比较，凸显LongCoT在长周期CoT推理上的独特性。
+
+**关键对比结果：**
+1.  **LongCoT的挑战性：** 在LongCoT（2000个中高难度问题）上，即使是最佳模型（GPT 5.2）也仅达到9.83%的准确率，Gemini 3 Pro为6.08%，Grok 4.1 Fast Reasoning为2.04%，其他开源模型接近零。这表明长周期可靠推理是当前前沿模型的一大挑战。
+2.  **LongCoT-mini的区分度：** 在较简单的LongCoT-mini（500个问题）上，GPT 5.2的准确率上升到38.7%，Kimi K2和DeepSeek V3.2分别达到7.5%和8.3%，成功区分了更广泛的模型性能。
+3.  **准确率随Token使用量变化：** 模型的性能与推理token使用量正相关。GPT 5.2平均每个问题使用62,046 tokens，远高于其他模型。
+4.  **DAG规模对准确率的影响：** 随着问题DAG规模的增大（节点数增加），所有模型的准确率都急剧下降，尤其在超过15个节点后。观察到的准确率远低于独立错误（independent error）基线，表明组合型问题引入了额外的失败模式，并且长周期问题能更有效地区分模型能力。
+5.  **对RLM框架的测试：** 在长周期CoT推理中，即使是递归语言模型（RLM）框架（Zhang et al., 2025）也未能显著提高性能。在纯推理设置下，RLM表现不佳，因为LongCoT的图结构依赖阻止了清晰的问题分解。即使启用代码模拟，性能也主要在隐式领域（如逻辑、国际象棋）有所提升，因为这些领域可以将大部分依赖结构外部化到程序搜索中，而显式组合型领域仍然接近于零。这证实了LongCoT对基线支架方法的抵抗力。
+
+**潜在局限或不足：**
+1.  **评估成本高昂：** 长周期推理需要模型生成大量tokens，导致评估成本较高，限制了更多次的试验（如pass@k或self-consistency）。
+2.  **闭源模型的可解释性：** 闭源模型无法提供其CoT轨迹的访问权限，限制了对失败模式的定性分析深度。
+3.  **无法完全排除“工具”：** 尽管LongCoT旨在隔离纯粹的推理能力，但模型在训练中可能已经接触过与问题领域相关的代码或数据，从而可能在内部“模拟”某些工具或算法。
+
+## LoSA
+LoSA: Locality Aware Sparse Attention for Block-Wise Diffusion Language Models
+
+https://arxiv.org/pdf/2604.12056 2026.4.13 伯克利等
+
+1. 针对Block-wise扩散语言模型在长上下文推理中面临的内存密集型注意力瓶颈和KV Inflation问题，该研究发现**连续去噪步骤中token表示存在“局部性变化**”——即仅**少量活跃token发生显著变化**。
+2. 提出了LOSA (Locality-aware Sparse Attention) 方法，它对**稳定tokens复用缓存的注意力结果**，而**仅对活跃tokens计算稀疏注意力**，从而大幅缩小了需要加载的KV索引联合集并有效缓解KV Inflation。
+3. LOSA在多个DLM和LongBench基准测试中，相比现有稀疏方法实现了高达+9点的平均准确度提升和1.54倍的注意力密度降低，并在RTX A6000 GPU上取得了高达4.14倍的注意力加速。
+
+模型： Trado-8B-Instruct, Trado-4B-Instruct, SDAR-8B-Instruct（均为块级扩散语言模型）。块大小默认为16。
+实现： 基于定制的CUDA和Triton kernel，并结合FlashInfer的Attention kernel。
+硬件： NVIDIA RTX A6000 GPU，以及RTX 5090进行可扩展性测试。
+负载： 主要在LongBench数据集上评估长上下文能力（HotPotQA, TriviaQA, NarrativeQA, Qasper, MultiFieldQA），也评估了常识推理基准（HellaSwag, WinoGrande, BoolQ）。
+对比基线： QUEST（适应DLM）、SparseD（Wang et al., 2025b）
+
+
 ## 混合精度推理
 Efficient Mixed-Precision Large Language Model Inference with TurboMind
 
