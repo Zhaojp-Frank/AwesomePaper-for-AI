@@ -1,5 +1,28 @@
 # Awesome or inspiring paper for AI
 
+
+## CUco
+CUCo: An Agentic Framework for Compute and Communication Co-design
+
+https://arxiv.org/pdf/2603.02376 2026.3.2 UT Austin 未开源
+
+1. CUCo是一个无需训练的agent-driver框架，旨在解决大型分布式LLM训练和推理中手动编写**计算与通信融合kernel**的复杂性和低效问题。
+2. 该框架通过定义结构化的设计空间、利用快速路径代理确保正确性，并采用慢速路径代理进行LLM驱动的进化搜索和经验反馈，以发现高性能实现。
+3. A100多机，多数号称10%左右提升（基线比的NCCL？）。代表性工作负载：
+
+**Flash Attention with Context Parallelism**： 通过在序列维度上分区Q, K, V张量来扩展注意力机制。GPU计算局部KV时，并发从邻居接收下一KV块（Ring Attention）。
+**DeepSeek-V3 MoE Dispatch and Combine**： 每个GPU通过AlltoAll dispatch将tokens路由到远程专家，执行专家计算，然后通过反向AlltoAll combine收集结果。CUCo版本使用GIN单边RDMA puts和分离的put/wait内核。
+**KV-Cache Transfer**： Prefill GPU计算并发送K和V投影，然后Decode阶段运行注意力。CUCo通过链式操作（K GEMM, GPU触发发送, 重叠V GEMM, 带信号增量的最终发送）消除了NCCL CPU启动传输引入的计算-发送间隙。
+**GEMM + AllGather**： 每个rank执行局部FP32 GEMM，然后参与AllGather。内部节点使用LSA，跨节点使用GIN。
+
+性能提升主要源于消除了宿主机侧的编排开销：内核启动间隔、CUDA事件同步延迟和CPU发起的NCCL API调用开销。当计算与通信比率降低时，这些开销变得显著。
+
+案例研究：Flash Attention with Context Parallelism。在Flash Attention工作负载上，CUCo展示了最大的加速（11.3%）。
+
+**GIN融合内核架构**（CUCo进化结果）： 启动单个协同网格（cooperative grid），其中一个通信块负责执行整个ring协议（GIN put/wait/flush），使用设备侧原子计数器进行同步。其余计算块处理计算任务。关键能力在于逐tile流水线（per-tile pipelining）：通信块完成一个tile传输后，计算块立即开始处理，即使其他tile仍在传输中。这消除了通信与计算之间的流水线气泡。
+宿主机基线架构： 每个回合启动独立的注意力内核，并在回合之间从CPU发出逐tile的ncclGroup调用。由于注意力内核饱和了所有SMs，通信流上的小信号内核无法调度，导致无法实现逐tile流水线，强制采用纯串行执行模式。
+优化分解（表4）： 逐tile流水线（63.7ms）是最大的贡献者，这只有融合内核的协同网格才能实现。此外，消除了计算流在三个交换回合中的空闲时间（37.7ms），并移除了768个NCCL API调用组累计产生的宿主机代理开销（37.6ms）。这些优化共同将端到端延迟从1230.7ms降低到1091.7ms。
+
 ## MTL
 Memory Transfer Learning: How Memories are Transferred Across Domains in Coding Agents
 
