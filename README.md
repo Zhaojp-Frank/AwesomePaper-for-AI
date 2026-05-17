@@ -1,16 +1,79 @@
 # Awesome or inspiring paper for AI
 
+## Attention Drift
+Attention Drift: What Autoregressive Speculative Decoding Models Learn
+
+https://arxiv.org/pdf/2605.09992 2026.5.11 西北大学等
+https://github.com/Dogacel/Attention-Drift
+
+1. 研究揭示了推测解码中的“注意力漂移”现象：起草器在生成过程中，其注意力会逐渐从提示词的锚点令牌**漂移到自身最近生成的令牌**，这**与未经归一化的残差路径导致的隐状态幅值单调增长**有关。
+2. 论文提出在**draft model hidden state应用post-norm**，并在**捕获目标模型隐状态后进行RMS归一化**，使**draft行为更像稳定的自回归预测器**而非额外堆叠的变压器层。
+3. 改进显著减少了注意力漂移和幅值积累，使得接受长度在模板扰动下提升高达2x，长上下文任务中提升1.18x，并在七个标准基准上提升1.10x，同时能以更短的训练深度泛化到更长的推测序列。
+基于SpecForge仓库 + EAGLE-3方式；Qwen 3 8B（密集型思维）、Qwen 3.5 9B（GDN-混合型思维）和GPT-OSS 20B
+<img width="1052" height="487" alt="image" src="https://github.com/user-attachments/assets/9498beb4-9e09-48d2-ad27-32579a9c5c12" />
+
+<img width="716" height="269" alt="image" src="https://github.com/user-attachments/assets/ee7b55d4-d3e0-4716-8884-85efd6667c4f" />
+<img width="601" height="230" alt="image" src="https://github.com/user-attachments/assets/78e336ac-5579-41f9-8ad1-4836ba22eef9" />
+
+<img width="307" height="177" alt="image" src="https://github.com/user-attachments/assets/ec7498e8-6573-4fe0-8463-22f689fdde3c" />
+<img width="671" height="203" alt="image" src="https://github.com/user-attachments/assets/686f77eb-fd05-4363-ba06-e32393bffb5b" />
+<img width="726" height="263" alt="image" src="https://github.com/user-attachments/assets/d9121935-0429-432c-94ac-fcaf718127b5" />
+<img width="1580" height="269" alt="image" src="https://github.com/user-attachments/assets/24b621a8-b318-4a43-8e13-9de4d7da4f94" />
+<img width="392" height="373" alt="image" src="https://github.com/user-attachments/assets/cd1597c8-a6d5-47d5-8b87-a52b06ce2d47" />
+<img width="721" height="288" alt="image" src="https://github.com/user-attachments/assets/43bcdbde-46fd-43ad-b589-a533d2eb198c" />
+<img width="733" height="459" alt="image" src="https://github.com/user-attachments/assets/5f16e5e2-09be-4751-997c-ff7904ec5a0a" />
+
+**场景与具体问题**
+推测解码是一种通过让小型草稿模型预测未来令牌序列，然后由大型目标模型（verifier model）并行验证这些序列来加速LLM推理的技术。然而，在实际部署中，草稿模型在模板扰动和长上下文输入等挑战性场景下性能会急剧下降，导致推理速度一致性不佳。现有解决方案通常需要为特定推理引擎、提示或模板重新训练草稿模型，这表明草稿模型本身存在深层问题。
+
+**业界存在哪些不足**
+当前草稿模型（尤其是主流的EAGLE-3架构）对部署条件（如不同的推理引擎、上下文长度、系统提示和聊天模板）高度敏感。这种敏感性导致其在实际应用中接受率（acceptance length）不稳定，限制了推测解码在复杂场景下的广泛应用。尽管训练成本相对较低，但这种模型脆弱性亟待解决。
+
+**关键观察与假设**
+本文发现了一种之前未曾报道的现象，称之为“注意力漂移”（attention drift）。在推测解码过程中，随着草稿模型生成连续令牌，其注意力会逐渐从提示中的“注意力汇聚”（attention sink）令牌转移到自身最近生成的令牌上（见图1）。这种现象在EAGLE-3草稿模型和多令牌预测（Multi-Token Prediction, MTP）头部均有观察到，暗示其是自回归草稿模型设计中普遍存在的特性。
+研究团队假设，注意力漂移源于推测链中步骤之间未标准化的残差路径：草稿模型的隐藏状态幅值（magnitude）随链深度单调增长。这使得草稿模型更像是在目标模型之上堆叠的额外Transformer层，而不是一个独立的自回归预测器。它隐式地学习了一种深度依赖的细化过程，而非稳定的令牌预测器，从而对模板变化和长上下文表现出敏感性。
+
+**方法核心思路和主要步骤**
+为了解决注意力漂移和隐藏状态幅值增长问题，论文提出了两种架构修改：
+1.  **后归一化（Post-norm）应用于草稿模型隐藏状态：** 与EAGLE-3通常采用的预归一化（pre-norm）相反，将归一化层置于残差连接之后。这阻止了隐藏状态幅值的单调增长，使草稿模型更接近深度不变的自回归模型，从而稳定了草稿过程。公式上，标准Pre-norm Transformer层通常为 $h_{out} = h_{in} + \text{MLP}(\text{Attention}(\text{RMSNorm}(h_{in})))$，而论文提出的Post-norm则为 $h_{out} = \text{RMSNorm}(h_{in} + \text{MLP}(\text{Attention}(h_{in})))$ 或类似结构，重要的是在残差连接后对整体进行归一化，以控制输出幅值。
+2.  **针对目标模型隐藏状态的每隐藏状态RMSNorm：** 在捕获目标模型内部隐藏状态 $h_{low}, h_{mid}, h_{high}$ 后，在它们融合（FC投影）之前，分别对每个隐藏状态流应用RMSNorm。这解决了由于目标模型内部预归一化架构导致的隐藏状态幅值在不同深度层间不平衡的问题，确保融合后的 $h_{FC}$ 信号更加稳定和平衡（见图13）。
+
+这些改变旨在解耦草稿模型的深度与隐藏状态幅值，使其学习一个更稳定的、深度无关的自回归预测函数，从而降低对外部输入的敏感性。
+
+**实验设置**
+*   **实现基础：** 训练基于SpecForge仓库的修改版本，该仓库实现了EAGLE-3的训练时测试（Train-Time-Test, TTT）方法。
+*   **硬件条件：** 训练平均使用了48 H200 GPU小时（针对8-9B模型）或36-48 H200 GPU小时（针对20B和120B模型）。
+*   **软件版本/负载情况：** 未明确提及具体软件版本，但推测为PyTorch等主流框架。负载情况涉及多种基准测试和条件，如MT-Bench、GSM8K、Alpaca、HumanEval、MATH-500、GPQA、LiveCodeBench以及LongBench。
+*   **对比基线：** 主要与当前最先进的预归一化EAGLE-3架构进行对比。同时还测试了门控注意力（Gated Attention）变体作为注意力汇聚消除的对照组。
+*   **目标模型：** 选择了四种不同架构的LLM：Llama 3.1 8B（密集型）、Qwen 3 8B（密集型思维）、Qwen 3.5 9B（GDN-混合型思维）和GPT-OSS 20B（稀疏MoE思维）。
+*   **数据集：** Llama和Qwen3变体在Open-PerfectBlend数据集上训练，该数据集包含超过1.4M个样本，并使用目标模型重新生成答案。Qwen3.5和GPT-OSS变体在Nemotron后训练数据集上训练，同样包含超过1.4M个样本，最大序列长度为8K令牌。
+*   **训练超参数：** Llama和Qwen3变体训练2个epoch，学习率为 $1.5 \times 10^{-4}$，有效批处理大小为4。Qwen3.5和GPT-OSS变体训练1个epoch，学习率为 $1.5 \times 10^{-4}$。
+*   **推测深度：** 通过后归一化，训练时测试深度（TTT）可以从8减少到4，从而将训练时间缩短约三分之一。
+
+**关键对比结果**
+实验结果表明，所提出的后归一化草稿模型在多个方面均优于当前领先的预归一化EAGLE3模型：
+*   **接受长度提升：** 在七个标准基准测试（涵盖多轮聊天、数学和编程）上，平均接受长度提高了1.10倍。在模板扰动下，接受长度提升高达2倍；在长上下文任务上提升1.18倍。
+*   **泛化能力增强：** 后归一化草稿模型能够更好地泛化到训练时未见过的更深推测步骤，使得训练时可以使用更短的深度（TTT），从而降低训练成本。
+*   **模板敏感性降低：** 后归一化模型对聊天模板的改变表现出显著更强的鲁棒性。在极端扰动下，预归一化模型性能下降52%，而后归一化模型仅下降5%。
+*   **长上下文性能改善：** 在多轮对话基准测试中，预归一化模型在长上下文下灾难性失败（平均接受长度降至0.05），而后归一化模型降至0.83（虽仍不可用但已是15倍提升）。结合滑动窗口注意力（SWA），后归一化模型性能与单轮基线持平甚至略超，而预归一化模型表现较差。在LongBench上，后归一化模型在所有任务类别和上下文长度下都比预归一化模型高出20-25%。
+*   **独立故障模式：** 实验证明，消除注意力汇聚（通过门控注意力）并不能单独解决隐藏状态幅值积累问题，且门控模型仍然对模板表现出高敏感性，表明注意力漂移和幅值积累是独立的故障模式。
+
+**潜在局限或不足**
+1.  **模型范围限制：** 本研究主要关注EAGLE-3架构，尽管在MTP头部也观察到注意力漂移，但并未深入探究其背后的替代机制或在其他草稿模型设计（如Hydra）上验证所提方法的有效性。
+2.  **规模限制：** 由于计算资源的限制，实验仅限于120B参数以下的模型。更大规模模型上的行为尚未得到验证。
+   
 ## PARD-2 连续投机
 PARD-2: Target-Aligned Parallel Draft Model for Dual-Mode Speculative Decoding
 
-https://arxiv.org/pdf/2605.08632 AMD等 2026.5.10
+https://arxiv.org/pdf/2605.08632 AMD等 2026.5.10 ICLR26
 
 https://github.com/AMD-AGI/PARD
+https://docs.vllm.ai/en/latest/features/speculative_decoding/parallel_draft_model/?h=pard vLLM已经支持PARD(V1?)
 
 1. 旨在解决LLMs推断加速中的一个关键问题：现有Speculative Decoding**草稿模型训练目标与最大化连续令牌接受长度不一致**，且大多数方法依赖于特定目标模型。
 2. 发现并行Speculative Decoding中**存在位置偏差，后续令牌接受率显著降低**，并提出**Confidence-Adaptive Token** (CAT) 优化，通过**目标模型置信度自适应地重新加权令牌损失**，以更好地匹配推断时的接受率；同时，引入**随机门控**实现一个草稿模型支持**target依赖和target无关**两种模式。
 3. Llama3.1-8B和Qwen3系列模型上实现了高达6.94倍的无损加速，在Llama3.1-8B上比EAGLE-3快1.9倍，比PARD快1.3倍，同时显著提高了平均接受长度和吞吐量，证明了其在实际部署中的卓越价值。
-HumanEval 评测集+lama3-8b上接受长度～9，接受率90%
+HumanEval 评测集+lama3-8b上接受长度～9，接受率90%; ~DDTree?
 
 draft model训练目标通常侧重于**提高单个token的预测准确性**，但这与推测解码中“**最大化连续token接受长度**”的推理目标存在偏差；提出通过以一个token被验证到的概率（即**其前缀被接受的累积置信度）来重新加权per-token训练目标**
 在target-dependent模式下，PARD-2利用target模型的hidden state来最大化对齐以**实现峰值加速**。
