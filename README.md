@@ -1,5 +1,19 @@
 # Awesome or inspiring paper for AI
 
+## Spin
+Unifying Sparse Attention with Hierarchical Memory for Scalable Long-Context LLM Serving
+
+https://arxiv.org/pdf/2604.26837 2026.4.30 微软亚洲研究院
+
+1. 针对长上下文LLM推理中KV缓存迅速增长导致的GPU内存瓶颈，动态稀疏注意力虽在算法层面有优势，但由于其细粒度、非统一的特性以及跨GPU-CPU的零散数据传输，实际系统性能提升有限，甚至可能不如高度优化的稠密注意力系统。
+2. Spin框架通过统一的**分区抽象、局部性感知的KV缓存管理器**和**分层元数据布局**，协同设计执行管线与分层KV存储，从而解耦算法逻辑与系统级数据管理，显著提高GPU KV缓存的驻留率并优化数据传输效率。
+3. 在**vLLM基础上实现，并集成了ShadowKV、RetroInfer和SeerAttention等稀疏注意力算法**，Qwen3最大32b；llama3-70b。A100/B200相较于vLLM实现了1.66–5.66x的端到端吞吐量提升和7–9倍的TTFT降低，同时比原始稀疏注意力实现减少高达58%的TPOT。
+
+<img width="854" height="337" alt="image" src="https://github.com/user-attachments/assets/066e69e5-d80a-4f0b-a1cb-70757d71e860" />
+
+<img width="870" height="192" alt="image" src="https://github.com/user-attachments/assets/dc59cb8a-8df0-44ca-81bf-4cabf74b7ffa" />
+
+
 ## ZipCCL
 ZipCCL: Efficient Lossless Data Compression of Communication Collectives for Accelerating LLM Training
 
