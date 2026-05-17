@@ -1,5 +1,16 @@
 # Awesome or inspiring paper for AI
 
+## SOAR FP4 scale
+SOAR: Scale Optimization for Accurate Reconstruction in NVFP4 Quantization
+
+https://arxiv.org/pdf/2605.12245 2026.5.12 上海交大
+
+https://github.com/steven-bao1/SOAR
+1. 本文针对LLMs的NVFP4量化中次优的性能问题，核心观察到现有方法存在**量化尺度选择不灵活以及量化与反量化scale耦合**的问题，导致重建精度受限。
+2. 提出SOAR框架，其核心包括：CJSO通过解析解联合**优化全局和块级scale**以最小化重建误差；DSS则**解耦了高精度量化scale与其受限的反量化scale**，并通过离散搜索减轻尺度量化带来的**精度**损失。
+3. pytorch/HF，GPTQ，最大Qwen3-8b 持续优于现有的NVFP4基线，在相同内存占用下实现了更高的精度（例如Qwen3-8B零样本准确率从SOTA的70.12提升至70.68），且不引入额外硬件开销，并可与GPTQ等校准方法兼容。
+   
+
 ## ZeRO-Prefill
 ZeRO-Prefill: Zero Redundancy Overheads in MoE Prefill Serving
 
