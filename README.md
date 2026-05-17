@@ -1,5 +1,20 @@
 # Awesome or inspiring paper for AI
 
+## DITRON
+DITRON: Distributed Multi-level Tiling Compiler for Parallel Tensor Programs
+https://arxiv.org/pdf/2605.02953 2026.5.2 seed,北大梁云 清华翟继冬等
+
+https://github.com/ByteDance-Seed/Triton-distributed
+
+1. DITRON是一种可扩展的分布式多级平铺编译器，旨在通过引**入Core、Device和Task三层**分层编程抽象，有效应对LLM分布式编程中刚性和复杂内存层次结构的瓶颈，从而支持多样化的并行策略并抽象化通信复杂性。
+2. 针对分布式系统中的**非均匀硬件层次结构**，DITRON提出了**计算-通信交织（Swizzling）优化**，通过动态调整磁贴**执行顺序来隐藏远程数据访问延迟**，并结合了**低延迟协议集成、设备到设备拷贝融合及PCIe感知**同步等底层优化技术。
+3. 对于隔离内核实现了6%~30%的加速，在vLLM中推理提速5%~30%，并在**训练+10%的MFU**提升，为NVIDIA和AMD平台提供了强大的可移植性。
+   对比的基本都是弱鸡些。
+<img width="674" height="231" alt="image" src="https://github.com/user-attachments/assets/8740f752-5ebd-4b50-9ced-75432ba1735f" />
+<img width="663" height="387" alt="image" src="https://github.com/user-attachments/assets/8afa0a8e-1346-48da-ba5a-b8f17ae54ca5" />
+<img width="810" height="247" alt="image" src="https://github.com/user-attachments/assets/b6d6f4e4-0881-4a18-ac38-9d68d7810ebf" />
+<img width="828" height="550" alt="image" src="https://github.com/user-attachments/assets/e69cacae-6fe7-4423-ada6-3213860b62df" />
+
 ## Nautilus
 Nautilus: An Auto-Scheduling Tensor Compiler for Efficient Tiled GPU Kernels
 
