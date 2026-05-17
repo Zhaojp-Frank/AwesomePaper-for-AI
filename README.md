@@ -1,5 +1,20 @@
 # Awesome or inspiring paper for AI
 
+## CuTeGen
+CuTeGen: An LLM-Based Agentic Framework for Generation and Optimization of High-Performance GPU Kernels using CuTe
+https://arxiv.org/pdf/2604.01489 2026.4.1 多伦多大学 未见开源
+
+1. CuTeGen提出一个基于LLM的Agentic框架，通过生成-测试-优化迭代工作流来自动化GPU核函数的生成与优化。
+2. 利用**CuTe抽象层作为中间表示**，并采用执行反馈指导的逐步优化，包括结构化调试与分阶段优化，尤其对复杂核函数采用延迟集成性能剖析反馈的策略。
+3. CuTeGen在矩阵乘法和激活函数工作负载上能生成功能正确且性能具有竞争力的GPU核函数，对于激活函数平均提速1.70倍，在部分矩阵乘法案例中甚至超越了cuBLAS参考实现。
+
+实现基础： CuTeGen在**CUTLASS v4.3.0**（提供CuTe抽象层）之上实现，通过PyTorch 2.8.0的CUDA扩展接口进行编译。
+硬件环境： 单块NVIDIA GeForce RTX **4090 GPU**（24 GB内存），支持CUDA 13.0。
+软件版本： PyTorch 2.8.0，CUTLASS v4.3.0。
+负载情况： 评估采用**KernelBench基准测试**套件中的Level-1工作负载子集，主要包括**12个矩阵乘法内核和14个激活函数内核**。这些工作负载代表了结构复杂和轻量级操作。
+对比基线： 性能报告相对于KernelBench提供的对应PyTorch参考实现（通常调用cuBLAS或PyTorch原生操作）的速度提升（Speedup）。
+LLM模型： 内核生成和改进过程中使用**GPT-5**。
+评估协议： 候选内核需首先成功编译并通过对照参考输出的数值正确性检查，方可进行性能评估。运行时测量通过多次运行取平均值。严格控制基准测试条件，避免测量误差，并确保隔离生成内核的执行，防止外部优化影响测量结果。
 
 ## CUco
 CUCo: An Agentic Framework for Compute and Communication Co-design
