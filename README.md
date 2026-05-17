@@ -1,5 +1,15 @@
 # Awesome or inspiring paper for AI
 
+## Nautilus
+Nautilus: An Auto-Scheduling Tensor Compiler for Efficient Tiled GPU Kernels
+
+https://arxiv.org/pdf/2604.14825 2026.4.16 伊利诺伊 未开源
+
+1. Nautilus 是一款新颖的tensor compiler，旨在将高级数学规范自动优化为高效的 GPU 核函数，特别针对**attention机制**，能够从数学描述中发现 FlashAttention-3 级别的核函数。
+3. 核心方法包括一个 novel 的自动调度器，能够处理高级优化（如**先进的归约融合**），**三层 IR 的渐进式**降级管道（scalar IR、novel 的 VR-tile IR 用于表达式重写、以及 MA-tile IR 用于 SIMD 优化），确保程序结构“tile-ready”。
+4. NVIDIA GH200 和 RTX 5090 GPU 上，Nautilus 生成的核函数相比现有编译器吞吐量最高提升 23% 和 42%，在许多长序列配置下能与手动编写的 cuDNN 核函数媲美或超越。
+   比的是FA2？
+
 ## CuTeGen
 CuTeGen: An LLM-Based Agentic Framework for Generation and Optimization of High-Performance GPU Kernels using CuTe
 https://arxiv.org/pdf/2604.01489 2026.4.1 多伦多大学 未见开源
