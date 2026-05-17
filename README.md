@@ -1,5 +1,85 @@
 # Awesome or inspiring paper for AI
 
+## TIDE rare token
+TIDE: Every Layer Knows the Token Beneath the Contex
+
+https://arxiv.org/pdf/2605.06216 Apple 2026.5.7
+
+1. TIDE (Token Identity Delivered Everywhere) 针对现代LLM中token索引“单次注入”的设计缺陷，解决了**罕见 token 训练不足**和**语义相似 token 隐状态混淆**（Contextual Collapse Problem）两大结构性问题。
+2. 核心方法是引入**EmbeddingMemory**，一个包含 K 个独立 MemoryBlocks 的组件，它**将token索引映射为与上下文无关的语义向量**，并通过一个带**学习型 NULL bank 的深度条件 softmax 路由器**，在 Transformer 的每一层以加性方式注入这些 token 身份信号。
+3. 理论上和经验上证明了其优势，能**将每个token的累积梯度信号放大 K 倍**，并绕过 FFN 的 Lipschitz 连续性限制，从而显著提升了从 350M到**3B参数模型的语言建模质量**（例如，在 WikiText、PubMed、DCLM 上降低 Perplexity）和下游任务表现（例如，HellaSwag、ARC、PIQA）。
+
+<img width="791" height="344" alt="image" src="https://github.com/user-attachments/assets/a9f68146-1f9d-4f4d-89d8-a13725d0186f" />
+<img width="659" height="614" alt="image" src="https://github.com/user-attachments/assets/d54f393e-7540-427d-9a47-8e91548cae19" />
+
+<img width="784" height="505" alt="image" src="https://github.com/user-attachments/assets/fcb417a5-297c-4fd5-bd31-c601f965ce47" />
+
+TIDE (Token Identity Delivered Everywhere) 是一项针对现代大型语言模型（LLMs）核心设计中“词元身份信息单次注入”假设的研究。该假设导致了两个结构性缺陷：(i) **稀有词元问题**：由于词汇服从Zipf定律，稀有词元（如罕见命名实体、专业术语）因梯度信号累积不足而长期训练不足；(ii) **上下文坍塌问题**：有限参数模型将分布相似但语义上不同的词元映射到难以区分的隐藏状态，尤其是在上下文区分度有限的情况下。
+
+为了解决这些问题，TIDE提出了一种创新的Transformer架构修改方案，核心思想是为每个Transformer层提供**持久的、基于词元身份的知识**，使其独立于上下文残差流。
+
+**业界不足与关键观察：**
+现有LLMs在输入嵌入层查找词元索引后便将其永久丢弃。后续所有层仅处理上下文化隐藏状态，不再直接查询词元身份。这导致：
+1.  **梯度饥饿**：根据Zipf定律，词元频率与梯度信号成正比。稀有词元的单次注入导致其嵌入表示训练不足，L2范数较低且充满噪声（图1a, 1b）。经验证据（图1c）表明，稀有词元范数随训练持续下降，而常见词元持续增长。数学上，词元$v$的累积平方梯度范数期望上限为$E[\sum_{s=1}^{\tau}\| \nabla e_v L_s \|^2] \le \tau \cdot f_v \cdot B \cdot T \cdot G^2$，其中$f_v$是词元概率，$B$是批次大小，$T$是序列长度，$G^2$是梯度上限。稀有词元（$f_v=\epsilon$）和常见词元（$f_u \ge c$）的梯度信号比率为$O(\epsilon/c)$，可达数百万倍差异（表1）。
+2.  **上下文坍塌**：当两个语义上不同的词元（如“their”和“there”，数值“1847”和“1851”，或罕见同义词）出现在几乎相同的句法环境中时，上下文提供的区分信号有限，导致它们在网络中大部分层的隐藏状态变得几乎无法区分（图2），即$C_{\delta}^{(\ell)} := \{(u,v) \in V^2 : u \ne v, \|h_u^{(\ell)} - h_v^{(\ell)}\| \le \delta\}$。命题2.2指出，由于FFN的Lipschitz连续性，当$\|h_u^{(\ell)} - h_v^{(\ell)}\| \le \delta$时，FFN的输出也必须接近。因此，FFN无法以任意精度近似区分这些坍塌的词元，即便参数量巨大，结构上受到限制。
+
+**方法核心思路和主要步骤：**
+TIDE通过引入**EmbeddingMemory**模块来解决上述问题，该模块是一个由$K$个独立的**MemoryBlock**组成的集合。每个MemoryBlock $M_k$将词元索引映射到上下文无关的语义向量，并在Transformer的每个层中通过深度条件化的softmax路由器注入到残差流中。
+
+1.  **MemoryBlocks**：每个MemoryBlock $M_k$维护一个独立的嵌入表$E_k \in \mathbb{R}^{|\mathcal{V}| \times d_b}$。对于词元索引$v$，其输出为$M_k(v) = \text{RMSNorm}(E_k[v]) \in \mathbb{R}^{d_b}$。各MemoryBlock之间没有参数共享，鼓励它们学习词元身份空间的不同投影。
+2.  **EmbeddingMemory集成**：$K$个MemoryBlock的输出在每个前向传播中被堆叠成一个内存张量$M = \text{Stack}_k(M_k(x)) \in \mathbb{R}^{B \times T \times K \times d_b}$，并被所有$L$个Transformer层共享。
+3.  **深度条件化路由器与加性融合**：在每个Transformer层$\ell$，后注意力归一化的隐藏状态$\tilde{n}^{(\ell)} = \text{RMSNorm}(\tilde{h}^{(\ell)})$被输入到一个轻量级的线性路由器，生成组合权重$\alpha_k^{(\ell)}$。TIDE额外引入一个**NULL bank**槽位$K+1$，其输出$M_{K+1}(v) = 0$。这为路由器提供了一个可学习的“关闭”开关，以控制内存注入量。完整的TIDE层更新为：
+    *   路由权重：$\alpha^{(\ell)} = \text{softmax}(W_r^{(\ell)} \tilde{n}^{(\ell)}) \in \mathbb{R}^{K+1}$
+    *   内存向量：$m^{(\ell)}(v) = \sum_{k=1}^{K+1} \alpha_k^{(\ell)} M_k(v)$
+    *   层更新：$h^{(\ell)} = \tilde{h}^{(\ell)} + \text{FFN}(\tilde{n}^{(\ell)}) + m^{(\ell)}(v)$
+    内存向量$m^{(\ell)}(v)$以加性方式与FFN输出融合，保持残差流作为共享通信通道的角色。由于$M$由离散词元身份$v$索引，而非上下文隐藏状态$h^{(\ell)}$，每个词元的内存贡献独立于上下文混合，从而确保词元身份信息在每个层都可被辨别。
+
+**理论洞察：**
+1.  **渐近推广到标准Transformer**：命题3.1证明，TIDE可以通过调整路由器参数，使$m^{(\ell)}(v)$的范数任意接近零，从而渐近近似标准Transformer。这是通过将所有路由权重导向NULL bank来实现的。
+2.  **K倍梯度放大**：命题3.2证明，每个MemoryBlock都提供一个独立的、并行的梯度路径。当词元$v$出现在批次中时，所有$K$个嵌入表$E_k$同时接收到梯度。这使得词元$v$的累积平方梯度范数期望下限为$K \cdot \tau \cdot \kappa_v \cdot G_{\min}^2$，相对于标准单嵌入基线提供了**K倍的梯度信号放大**，尤其有利于稀有词元。
+3.  **解决上下文坍塌**：命题3.3指出，由于MemoryBlock的输出$M_k(v)$直接索引词元身份$v$，且独立于上下文隐藏状态$h^{(\ell)}$，其输出不继承Lipschitz连续性限制。因此，即使$h_u^{(\ell)}$和$h_v^{(\ell)}$坍塌，也可以通过调整$E_k[u]$和$E_k[v]$的参数来在$M_k(u)$和$M_k(v)$之间实现任意大的分离$C$，从而绕过FFN的盲点。
+
+**实验设置：**
+*   **实现基础**：基于Llama-Base-1B模型家族，模型规模从350M到3B参数。
+*   **训练数据**：DCLM (mlfoundations/dclm-baseline-1.0)，训练200B-500B词元。
+*   **词汇与分词器**：Llama-3.1分词器，$|\mathcal{V}| = 128,256$。
+*   **超参数**：序列长度2048，Adam优化器，学习率调度器（warmup, cosine），详见表7。
+*   **硬件条件**：解码速度评估在1x B200 GPU上进行。
+*   **对比基线**：LLaMA-Base模型。
+
+**关键对比结果：**
+1.  **语言建模性能**：
+    *   TIDE变体在WikiText、PubMed、DCLM数据集上的验证困惑度（PPL）始终优于LLaMA-Base-1B（图8）。
+    *   K值越大，PPL改善越显著，且不会饱和。
+    *   在训练初期，TIDE（2-4个MemoryBlocks）仅用100B词元即可达到LLaMA-Base在200B词元下的PPL，表明额外梯度路径加速了收敛。
+2.  **对稀有词元的益处**：
+    *   TIDE-8E-1B在所有词元频率分位数上都优于LLaMA-Base-1B。
+    *   性能提升主要集中在稀有词元上：最稀有词元分位数（Decile 0-2）的交叉熵损失绝对降低量（0.704 nats）远大于最常见词元分位数（Decile 7-9）的降低量（0.068 nats），两者相差约4.8倍（图5）。
+    *   随着K的增加，稀有词元损失下降的斜率是常见词元的3.7倍（图7），验证了K倍梯度放大的效果。
+3.  **解决上下文坍塌**：
+    *   TIDE显著增加了上下文坍塌词元对（如语法同音异义词、数值身份词元、稀有领域词元）的隐藏状态$\ell_2$距离（图6）。
+    *   对于受坍塌问题最严重的数值词元，TIDE在所有层中都带来了显著提升。
+4.  **下游任务性能**：
+    *   在750M、1B、3B参数规模下，TIDE变体在八个零样本基准测试（ARC-C, ARC-E, BoolQ, HellaSwag, LAMBADA, OBQA, PIQA, SciQ）中持续超越标准Transformer基线（表2）。
+    *   在1B规模下，TIDE将平均得分从61.4%（Base）提升到63.7%（K=24），绝对提升2.3%。
+5.  **MemoryBlocks行为与NULL bank**：
+    *   EmbeddingMemory中的每个$M_k$与基础嵌入$E$的余弦距离较大（0.65-0.99），表明MemoryBlocks编码了互补的词元身份信号，而非简单复制基础嵌入空间（图9）。
+    *   NULL bank的路由权重随词元频率单调递增（图10）。对于最稀有词元，NULL bank权重为0.530，意味着约47%的内存权重分配给MemoryBlocks；而对于最常见词元，NULL bank权重高达0.889，表明大部分内存注入被抑制。
+    *   MemoryBlocks表现出专业化分工，例如M5在稀有词元上权重最高，而M4在中频词元上贡献较大，这说明不同MemoryBlocks倾向于服务不同的频率区域，而非冗余地共同作用。
+6.  **解码成本与压缩**：
+    *   MemoryBlocks增加了少量的解码延迟（表4），例如TIDE-24E-1B的解码速度为13.422 ms/token，而LLaMA-Base-1B为11.085 ms/token。
+    *   MemoryBlocks可进行量化（例如4-bit量化可将存储从4.2GB降至1.05GB，性能影响轻微，表5），或进行低秩压缩（高达50%的秩减少对性能影响微乎其微，图12），以降低SSD占用。
+7.  **层级贡献**：
+    *   第0层（初始注入）的内存注入至关重要，其缺失导致模型性能急剧下降1000%以上。第1层也贡献显著。
+    *   随后的中间层（4-12层）的单层贡献相对较小（PPL成本低于2%），表明早期注入的词元身份信息在残差流中持续存在。
+    *   在第13层出现第二个性能下降峰值，暗示词元身份信息在被上下文计算消耗后，需要间歇性地进行刷新（图11）。
+8.  **语义分析**：稀有词元在MemoryBlocks中的最近邻集与基础嵌入E的最近邻集有明显差异（Jaccard重叠度低），表明MemoryBlocks为稀有词元学习了互补的、非重叠的语义信息，丰富了其表示（图13，表6）。
+
+**潜在局限或不足：**
+1.  **存储开销**：尽管EmbeddingMemory支持量化和压缩，但SSD存储占用仍随K线性增长。严格存储预算的部署仍需依赖更先进的压缩技术。
+2.  **训练范围**：本研究主要关注200B-500B词元的训练预算，TIDE在更长训练周期、指令微调或RLHF后的表现有待探索。
+3.  **可解释性**：虽然经验观察表明MemoryBlocks存在专业化分工，但本研究尚未提供每个MemoryBlock学习内容的原则性解释，这留待未来工作进行更细致的可解释性研究。
+
 ## DGPO 细粒度token奖励
 DGPO: Distribution-Guided Policy Optimization for Fine-Grained Credit Assignment
 
