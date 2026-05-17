@@ -1,5 +1,93 @@
 # Awesome or inspiring paper for AI
 
+## FlashMoE Megakernel Perseus
+Eliminating Hidden Serialization in Multi-Node Megakernel Communication
+
+https://arxiv.org/pdf/2605.00686 2026.5.1 康奈尔
+
+基于 https://github.com/osayamenja/FlashMoE 
+
+1. 针对Mixture-of-Experts (MoE) **megakernel**在多节点推理中因 proxy RDMA传输中的隐藏序列化（特别是`PUT-WITH-SIGNAL`操作中的围栏（fence）开销）导致的性能显著下降问题，本文发现其回归与通信/计算比高度相关。
+2. 提出了Perseus系统，通过解耦信号（decoupled signaling）**减少了barrier频率**，并引入**NIC-side ordering机制将ordering执行委托给网卡硬件**，从而消除了代理线程的阻塞。
+3. Perseus在基于proxy的Libfabric和IBRC传输上实现了10x加速，且在**IBRC上～匹配GPU-direct IBGDA的性能**，证明序列化而非传输类型是多节点megakernel性能的真正瓶颈。
+
+<img width="844" height="306" alt="image" src="https://github.com/user-attachments/assets/09a1e987-bc5a-4393-b9da-6d5cd7f9457e" />
+<img width="424" height="279" alt="image" src="https://github.com/user-attachments/assets/4913054c-e84d-4b24-aba7-ed864624e0b9" />
+
+本文介绍了 Perseus，一个旨在消除多节点 megakernel 通信中隐藏序列化瓶颈的系统。
+
+**场景与具体问题：**
+近期的 Mixture-of-Experts (MoE) 推理 megakernel 设计将专家计算与细粒度的 GPU 发起的通信融合到一个持久的 GPU kernel 中，并通过以 tile 粒度重叠数据传输和计算，在单节点上超越了基于 collective 的 MoE 方法。然而，这种优势无法干净地扩展到多节点推理，因为专家跨越通过 RDMA 互联的多个节点。MoE 模型在 8 个节点上性能会下降高达 10 倍，且随着节点数量增加而恶化。作者将此退化归因于基于 proxy 的 RDMA 传输中存在的隐藏序列化。每个 tile 传输及其完成信号之间的排序要求强制引入一个 fence，该 fence 会排空 NIC 管道，并且其成本随并发传输的数量增长。因此，对于专家计算量过小而无法吸收这种膨胀网络延迟的模型，通信成为关键路径上的瓶颈。
+
+**业界存在哪些不足：**
+1.  **传统 CPU 驱动模型：** 依赖 CPU 启动 GPU kernel 和 host 发起的 collective 通信，导致大量 kernel 启动开销和粗粒度同步，使 GPU streaming multiprocessor (SM) 闲置。MoE 推理中，一个层可能启动数百个短生命周期的 kernel，每个都有固定的提交成本。
+2.  **Collective 通信的局限：** `ALLTOALL` 等 collective 原语作为单一单元完成，强制全局同步，使得整个分发必须完成后才能进行专家计算，无法实现细粒度重叠。
+3.  **Megakernel 的多节点扩展挑战：** 尽管 megakernel 在单节点上表现优异，通过 GPU 发起的通信和 tile 粒度调度克服了上述问题，但其优势未能很好地扩展到多节点环境。这是因为跨节点传输必须经过 RDMA 传输，而该传输的行为与 NVLink 不同。
+4.  **Proxy-based RDMA 传输的缺陷：** 当前用于 device-initiated RDMA 的基于 proxy 的传输（如 Libfabric 和 IBRC）在处理 `put-with-signal` 原语时存在严重序列化。为保证信号在数据传输完成后才可见，proxy 会在每次 `SIGNAL` 之前插入一个 `FENCE`，该 `FENCE` 会阻塞 proxy 直到所有先前的 `PUT` 完成，导致 NIC 管道被排空。在 MoE 中，这种行为会导致每 dispatch 多达 96 次的 proxy 阻塞。
+
+**关键观察与假设：**
+1.  **Fence 引起的序列化：** Megakernel 中 `putmem_signal_nbi()` 的核心问题在于 `FENCE` 操作。在 proxy-based 传输中，proxy 为了保证数据在信号之前到达，会在每个 `PUT` 后面紧跟 `FENCE` 和 `SIGNAL`。这个 `FENCE` 强制 proxy 停止处理新的请求，直到所有之前提交的 `PUT` 都从 NIC 收到完成信号。
+2.  **并发与节点数的影响：** 随着并发传输数量的增加，每个 `FENCE` 需要等待更多排队的 `PUT`，导致聚合排空成本上升。随着节点数量的增加，这些 `PUT` 目标更多的远端目的地，`FENCE` 需要等待所有目的地中最慢的完成，导致延迟增加。
+3.  **Tile 粒度与序列化冲突：** Megakernel 旨在以 tile 粒度实现通信与计算的重叠，这要求大量的并发、细粒度传输和信号。然而，这种模式恰恰放大了 proxy-based 传输中 `FENCE` 引起的序列化问题，导致效率在 96 个并发传输和 8 个节点时降至 2%。
+4.  **可分离性与硬件支持：** `FENCE` 仅在 `SIGNAL` 之前要求，而非每个 `PUT` 之后。现代 RDMA NIC 提供硬件 `FENCE` 标志（如 `FI_FENCE`、`IBV_SEND_FENCE`），可以将排序强制执行委托给 NIC 硬件，从而避免 proxy 阻塞。
+
+**方法核心思路和主要步骤 (Perseus)：**
+Perseus 通过两种互补的技术解决了这个问题：
+
+1.  **Decoupled Signaling (解耦信号)：**
+    *   **核心思想：** 将数据传输（`PUT`）与信号（`SIGNAL`）完全分离。GPU 线程块无需阻塞地连续发出 `PUT`，然后由每个组（例如，所有发往同一个远端 GPU 的 expert）的指定 leader 线程发出单个 `FENCE`，再跟着该组的所有 `SIGNAL`。
+    *   **机制 (Algorithm 1):**
+        *   **Phase 1: Data transfer (所有 CTA):**
+            *   每个 CTA 将 tokens 准备好，并发起一个非阻塞的 `nvshmem_putmem_nbi()` 操作，不带信号。
+            *   通过原子操作 `cuda::atomic::fetch_add()` 递增一个每组的原子计数器，通知 leader 该 `PUT` 已提交。
+            *   非 leader 的 CTA 在提交 `PUT` 后立即返回 megakernel 调度器，可以继续执行其他计算任务（如本地或 NVLink 上的 expert 计算），实现了通信与计算的重叠。
+        *   **Phase 2: Signaling (仅 leader CTA):**
+            *   Leader CTA 等待直到其组内的原子计数器达到预设的组大小，这确保了组内所有 `PUT` 都已进入 proxy 的 FIFO 队列。
+            *   然后，Leader 发出一个单独的 `nvshmem_fence()` 操作，接着是该组内所有 expert 的 `nvshmemx_signal_op()`。
+    *   **效果：** 将 `FENCE` 的数量从每个 expert 一个减少到每个目标 GPU 一个（例如，在 Qwen3 示例中减少 8 倍），同时保留传输并发性。它允许 NIC 管道化 `PUT` 操作，因为它们之间没有 `FENCE`。
+
+2.  **NIC-side Ordering (NIC 侧排序)：**
+    *   **核心思想：** 将排序强制执行从 proxy 的阻塞式排空转移到 NIC 硬件。
+    *   **机制：**
+        *   Perseus 修改了 NVSHMEM 的传输模块，用 NIC 硬件 `FENCE` 标志（Libfabric 的 `FI_FENCE` 或 InfiniBand verbs 的 `IBV_SEND_FENCE`）替换了 proxy 的阻塞式排空操作（`fi_cntr_wait` 或 `check_poll_avail`）。
+        *   当 proxy 收到 `FENCE` 请求时，它不再阻塞，而是设置一个待定标志，并继续提交工作。
+        *   接下来发送到 NIC 的 `SIGNAL` 操作会携带这个 `FENCE` 标志，指示 NIC 只有在同一连接上所有先前的请求都完成后才处理这个 `SIGNAL`。
+    *   **效果：** proxy 不再阻塞，排序保证由 NIC 硬件实现。这消除了 `FENCE` 引起的 proxy 停顿，即便在 decoupling signaling 之后仍存在的少量 `FENCE` 也变得轻量。
+
+**两者互补：** Decoupled signaling 减少了 `FENCE` 的频率，在 `FENCE` 数量占主导时效果显著；NIC-side ordering 消除了每个 `FENCE` 的阻塞成本，在每个 `FENCE` 开销占主导时效果显著。两者结合覆盖了从开销主导到传输主导的整个工作负载范围。
+**多 QP 传输适配：** 在多 Queue Pair (QP) 的 IBRC 上，默认的循环调度策略会导致一个 peer 的操作分布到不同 QP 上，而 `IBV_SEND_FENCE` 仅在单个 QP 内强制排序。Perseus 将所有针对同一 peer 的操作绑定到确定的 QP 上（`qp = pe % num_qps`），确保依赖操作共享同一个 QP 并继承其 FIFO 顺序。
+
+**实验设置：**
+1.  **实现基础：** Perseus 基于 FlashMoE [3]（最先进的开源 MoE megakernel，支持多节点）和 NVSHMEM [38] (v3.5.21) 构建。修改了 FlashMoE 的 signaling 协议和 NVSHMEM 的传输层。
+2.  **硬件条件：**
+    *   NERSC Perlmutter：4x NVIDIA A100 GPU/节点，高达 16 个节点 (64 块 A100)，每秒 200 Gbps，使用 HPE Slingshot-11 NIC (Libfabric proxy-based)。
+    *   商用 GPU 云：8x H100 GPU/节点，高达 4 个节点 (32 块 H100)，InfiniBand NDR (400 Gbps)，使用 ConnectX-7 NIC，测试 IBRC (proxy-based) 和 IBGDA (GPU-direct)。IBRC 使用 4 个 QP/设备。
+3.  **工作负载：**
+    *   MoE 模型：Qwen3-30B (通信密集型)，GPT-OSS-120B (均衡型)，DeepSeek-V3 (计算密集型)。
+    *   Sequence lengths (S)：从 256 到 64K tokens，覆盖开销主导和传输主导情境。
+    *   路由：使用平衡专家路由，并评估了 Zipf 分布的倾斜路由。
+4.  **对比基线：** 未修改的 FlashMoE 版本（“vanilla”），IBGDA (GPU-direct)，以及 Triton-distributed 的 `ALLTOALL` 基准测试。
+
+**关键对比结果：**
+1.  **端到端性能：**
+    *   在 Libfabric 上，Perseus 实现了高达 10.3 倍的端到端加速（Qwen3-30B, S=256, 16 节点）。
+    *   在 IBRC 上，Perseus 实现了高达 2.47 倍的端到端加速（Qwen3-30B, S=64K, 4 节点），并且在某些情况下匹配或超越了 vanilla IBGDA GPU-direct 性能（高达 1.2 倍）。这表明序列化而非传输类型是多节点 megakernel 性能的瓶颈。
+2.  **可扩展性恢复：**
+    *   Perseus 在 Qwen3-30B 上将 16 节点弱扩展的性能下降从 19 倍降低到 3.5 倍。
+    *   TensorCore 利用率也恢复到单节点水平的 95-98%，而 vanilla Qwen3 仅为 31%。
+3.  **Ablation Study：**
+    *   在 2 节点下，Decoupled Signaling 效果优于 NIC-side Ordering（由于 per-fence 成本较低，减少 `FENCE` 数量更重要）。
+    *   在 8 节点下，NIC-side Ordering 效果优于 Decoupled Signaling（因为每个 `FENCE` 的成本更高）。
+    *   结合使用，Perseus 在 8 节点上实现 1.5-3.5 倍加速，确认两种技术是互补的。
+4.  **对专家路由倾斜的鲁棒性：** Perseus 在 Zipf 分布的倾斜路由下仍保持显著加速，尤其在 S=8K 时，加速比随倾斜程度增加。
+5.  **普适性 (Triton-distributed 案例研究)：** 将 NIC-side ordering 应用于 Triton-distributed 的 `ALLTOALL` kernel，在不修改应用代码的情况下，实现了高达 79 倍的加速（4 节点平均 59.6 倍），并将通信开销（$\alpha$）减少了约 99%。与 NCCL 相比，GPU-initiated `ALLTOALL` 在 Perseus 优化后比 NCCL 快 11 倍，而在没有 Perseus 时慢 18.7 倍。
+
+**潜在局限或不足：**
+1.  **GPU-direct 传输上的增益有限：** Perseus 对 IBGDA 等 GPU-direct 传输的改进相对温和（最多 1.25 倍），因为这些传输本身就避免了 proxy 序列化。其主要价值在于使 proxy-based 传输能够媲美甚至超越 GPU-direct 性能。
+2.  **特定于 `PUT-WITH-SIGNAL` 模型：** Perseus 的优化主要针对使用内存 `PUT-WITH-SIGNAL` 模型进行通信的 megakernel。对于其他通信模式（如基于完成队列 `CQ` 轮询的通知），可能需要不同的优化。
+3.  **多线程 proxy 复杂性：** 尽管多线程 proxy 能够实现并发提交，但它们不解决跨线程排序问题，可能需要额外的同步开销。Perseus 直接解决了排序成本，不依赖于 proxy 线程数量。
+4.  **未解决所有瓶颈：** 虽然 Perseus 显著提高了性能，但 MoE 模型的复杂性仍可能引入其他瓶颈，例如专家容量、负载均衡等。
+   
 ## KernelBenchX
 KernelBenchX: A Comprehensive Benchmark for Evaluating LLM-Generated GPU Kernels
 
