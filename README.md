@@ -1,5 +1,19 @@
 # Awesome or inspiring paper for AI
 
+## ZipCCL
+ZipCCL: Efficient Lossless Data Compression of Communication Collectives for Accelerating LLM Training
+
+https://arxiv.org/pdf/2604.27844 2026.4.30 哈工大-甚至；港科广
+
+1. 针对**分布式LLM训练**中日益突出的通信瓶颈，ZipCCL观察到LLM张量的指数位通常呈近高斯分布，为无损压缩提供了巨大潜力，并解决了现有通用压缩方案计算开销过大的问题。
+2. ZipCCL通过理论基础的**指数编码**、GPU优化的**通信感知压缩/解压缩核**以及**自适应通信策略**这三大核心创新，实现了高效的无损压缩。
+3. 64-GPU集群验证，ZipCCL可将通信时间缩短达1.35x，并在MoE和密集型Transformer模型上实现端到端训练加速高达1.18x，且不影响模型质量。
+4个节点*8块NVIDIA RTX A6000 GPU。节点间互联带宽为200Gb/s。
+2节点 * 8块H800，网络带宽为400Gb/s；Qwen3-235b 32卡通信加速25%；E2E加速15%。
+DeepSeek-V3 [26]：专家数量设为64，层数4（适配A6000显存）。+H800 *16卡；通信加速17%；E2E +6%
+Qwen3-235B-A22B (Qwen3-MoE) [42]：层数16。
+<img width="431" height="706" alt="image" src="https://github.com/user-attachments/assets/4dff8221-e792-4765-8a29-0eb2f9a25002" />
+
 ## FlashMoE Megakernel Perseus
 Eliminating Hidden Serialization in Multi-Node Megakernel Communication
 
