@@ -1,5 +1,77 @@
 # Awesome or inspiring paper for AI
 
+## LAQuant
+LAQuant: A Simple Overhead-free Large Reasoning Model Quantization by Layer-wise Lookahead Loss
+
+https://arxiv.org/pdf/2605.08755 2026.5.9
+
+1. 针对大型推理模型 (LRMs) 在**长解码任务中现有量化方法精度显著下降**的问题，LAQuant发现关键因素在于**KV缓存保真度损失**和**校准数据与部署分布之间的Hessian子空间**未对齐。
+2. LAQuant提出了一种**layer-wise W quant QAT方法**，通过结合推理域校准数据和一层前瞻损失来解决这些问题，其隐式跨层协同适应性保留了下一层残差流。
+3. LAQuant在Qwen3和R1-Distill-Llama模型上实现了最先进的推理准确性，例如在W3G128量化下，Qwen3-4B的AIME25 Pass@1比ParoQuant提高15.11pp，并在RTX A6000 GPU上实现了3.42倍的解码加速，且无额外运行时开销。
+
+
+<img width="692" height="437" alt="image" src="https://github.com/user-attachments/assets/62e66c6d-4111-4f11-8d10-f3527a45ae00" />
+
+**1. 场景与具体问题**
+大型推理模型（LRM），如用于数学和编程任务的模型，通常需要进行长时间的自回归解码（例如，生成长达 32k 个 token），这使得每个 token 的解码成本成为部署的关键考量。量化是提高推理效率的标准方法，但传统的端到端（E2E）QAT（Quantization-Aware Training）方法，尽管能保持困惑度（perplexity）和短解码精度，却在长解码推理基准（如 AIME、LiveCodeBench）上表现出明显的精度下降。
+
+**2. 业界存在哪些不足**
+*   **E2E QAT 的局限性**：E2E QAT 仅优化最终的 logit 分布，对每层的 KV-cache 误差没有直接约束。然而，KV-cache 的保真度对长解码至关重要，因为每个生成的 token 都会重新关注先前的 K（key）和 V（value）投影。我们的分析表明，E2E QAT 在优化过程中会通过 softmax Fisher 矩阵衰减学习信号，导致 K/V-cache 方向上的梯度信号不足，从而牺牲了 KV-cache 的保真度。
+*   **校准数据（calibration data）选择不当**：传统的量化算法通常使用预训练文本语料库（如 WikiText2、C4）进行校准。但对于 LRM，校准数据选择至关重要，通用文本校准会导致与推理时激活分布的 Hessian 子空间不对齐，从而造成精度显著下降。
+*   **在线转换的性能开销**：ParoQuant 等基于旋转（rotation-based）的方法虽然能减少每层量化误差，但引入了不可吸收的（non-absorbable）在线旋转操作，这在长解码推理中会产生显著的每 token 推理开销，并且在现有推理框架中部署复杂。
+
+**3. 关键观察与假设**
+*   **KV-cache 保真度的关键性**：KV-cache 的误差在长解码过程中会累积，导致后续 Transformer 层接收到越来越失真的输入，并且未来每个 token 都必须在受损的 KV-cache 上进行注意力计算。实验数据显示，K/V-cache 的均方根误差（RMSE）与 AIME25 Pass@1 之间存在强烈的负相关性（Pearson r ≈ -0.85），表明 KV-cache 保真度是 LRM 量化成功的关键因素。
+*   **Hessian 子空间对齐**：量化模型对特定方向的精度分配取决于校准数据激活的二阶统计量（Hessian）。如果部署时的激活分布与校准数据激活分布的 Hessian 子空间不一致，量化精度就会被错误地分配。推理领域专属的校准数据能更好地与推理时激活分布的 Hessian 子空间对齐，从而显著提升性能。
+*   **E2E 梯度的衰减（attenuation）**：E2E QAT 的损失函数在残差空间中引入了一个度量 $M_{E2E} = J^\top H_{KL} J$，其中 $H_{KL}$ 是 softmax 分布的 Fisher 信息，并且其谱范数（spectral norm）上限受限于 $\max_i p_i^\star (1-p_i^\star)$。当 softmax 分布尖锐时（即某个 token 的概率 $p_i^\star \to 1$），该上限趋近于 0，导致梯度信号被强烈衰减。这种衰减对 K/V-cache 相关方向尤为明显，因为这些方向通常位于梯度响应较弱的子空间。而层间重建损失（layer-wise reconstruction loss）的度量 $M_{lw} = I$，对所有方向的响应是均匀的。
+
+**4. 方法核心思路和主要步骤**
+LAQuant 是一种层间（layer-wise）的 QAT 方法，通过结合推理领域的校准数据和一种单层 Lookahead Loss 来解决上述问题，并且不引入任何在线转换开销。
+*   **Hessian-Aligned Calibration**：LAQuant 采用推理领域专属的校准语料库（DeepSeek-R1 traces over OpenR1-Math-220k）。这种选择通过确保校准数据激活的 Hessian 子空间与部署时激活分布的 Hessian 子空间对齐，解决了校准数据选择不当的问题。
+*   **One-Layer Lookahead Loss**：为了在层间 QAT 中实现跨层协同适应（cross-layer co-adaptation）并保留 KV-cache 保真度，LAQuant 引入了单层 Lookahead Loss：
+    $L_{la}(\theta_{(l)}^q) = \text{SmoothL1}(F_{l+1}(Q_l(\hat{h}_l; \theta_{(l)}^q)), F_{l+1}(F_l(h_l^\star)))$
+    其中 $Q_l$ 是第 $l$ 层的量化学生模型，$\hat{h}_l$ 是学生模型的输入，$F_l$ 是第 $l$ 层的 FP16 教师模型，$h_l^\star$ 是教师模型的输入。这个损失函数将量化残差 $\epsilon_l$ 传播到下一层教师模型 $F_{l+1}$ 的输出，然后才测量误差。
+    *   **作用机制**：在局部一阶展开下，Lookahead Loss 诱导的度量为 $M_{la} = J_{l+1}^\top J_{l+1}$，其中 $J_{l+1} = \partial F_{l+1}/\partial h|_{h=F_l(h_l^\star)}$ 是下一层教师模型的 Jacobian 矩阵。与 E2E QAT 的 $M_{E2E}$ 不同，$M_{la}$ 不包含 softmax Fisher 因子 $H_{KL}$ 和多层 Jacobian 的组合，避免了 E2E 梯度衰减。它通过 $J_{l+1}$ 对残差方向进行加权，从而让量化器在优化当前层时，能够考虑到下一层将如何使用当前层的输出。这意味着量化优化会偏好那些其投影误差组合后能使下一层残差较小的配置，而不仅仅是最小化单个投影的边际误差。这种机制实现了跨层协同适应，直接改善了 K 和 V 投影输出的 RMSE，从而提升 KV-cache 保真度。
+*   **Layer-wise QAT Pipeline**：LAQuant 采用层间训练方式，逐层优化模型的权重、量化参数（scales 和 zeros）、可学习的 clipping bounds 和 per-channel scaling。梯度通过 straight-through estimator 传递。
+
+**5. 实验设置**
+*   **模型**：Qwen3-1.7B/4B/8B (Base + chat variants) 和 R1-Distill-Llama-8B (DeepSeek-R1-distilled Llama-3.1 8B)。
+*   **量化配置**：W3G128 和 W4G128（3/4-bit 权重，group size 128）。
+*   **实现基础**：基于 EfficientQAT 框架实现。
+*   **训练细节**：每层训练 20 个 epoch，embedding 和 LM head 冻结。权重、量化参数、clipping bounds 和 per-channel scaling 共同通过 AdamW 优化。权重学习率为其他可训练量的一半。使用 SmoothL1 作为重建损失。
+*   **校准数据**：OpenR1-Math-220k 中的前 4,096 个样本（与基准测试集不重叠），对 prompt 和 DeepSeek-R1 response 应用 Qwen 风格的 chat template，并右截断至 2,048 token。对于通用任务，使用 WikiText2/C4/RedPajama 混合语料。
+*   **硬件**：RTX A6000 进行推理吞吐量测试，H200 144GB GPU 进行训练效率测试。
+*   **软件**：推理使用 lighteval (reasoning) 和 lm_eval (non-reasoning) 在 vLLM v0.10.1.1 上进行。INT3 GEMV Kernel 基于 GPTQ 原始内核进行修改，适应小模型和 group-wise 量化。
+*   **负载情况**：长解码工作负载，例如 AIME25 生成长达 32k token。
+*   **对比基线**：GPTQ、ReasoningQAT (R-QAT)、ParoQuant (ParoQ)。为公平比较，引入 ParoQuant++ (与 LAQuant 使用相同推理领域校准数据和训练数据量)。GPTQ 也使用相同数据预算。
+
+**6. 关键对比结果**
+*   **推理精度 (W3G128)**：LAQuant 在所有测试模型和基准上都表现出 SOTA 性能。
+    *   **Qwen3-4B W3G128**：LAQuant 在 AIME25 Pass@1 上达到 54.69%，相比 ParoQuant 提升 15.11 pp (39.58% → 54.69%)，相比 ParoQuant++ 提升 1.93 pp (52.76% → 54.69%)。平均推理任务精度为 58.12%，相比 ParoQuant++ 提升 0.92 pp。
+    *   **R1-Distill-Llama-8B W3G128**：LAQuant 平均推理任务精度为 39.54%，相比 ParoQuant++ 提升 1.81 pp (37.73% → 39.54%)。
+*   **推理速度**：
+    *   **Qwen3-4B W3G128**：LAQuant 在 RTX A6000 上实现 3.42× 的解码速度提升（相对于 FP16），高于 ParoQuant 的 3.01×。这归因于 LAQuant 没有在线旋转操作。
+    *   **整体而言**：去除在线旋转操作使得吞吐量在 W4 下提升 6-11% (平均 7.7%)，在 W3 下提升 11-14% (平均 12.5%)。
+*   **训练效率**：LAQuant 的训练成本更低。在 Qwen3-8B 上，训练时间从 ParoQuant 的 19.82 GPU 小时减少到 14.91 GPU 小时（减少 24.8%），并且峰值 VRAM 略低。
+*   **通用任务表现**：LAQuant 在通用任务（困惑度、零样本精度）上与 ParoQuant 表现相当，同时避免了在线转换。
+*   **KV-cache 保真度**：LAQuant 实现了比 E2E QAT 低 1.25× 的聚合 K-cache RMSE 和低 1.16× 的聚合 V-cache RMSE。
+
+**7. 潜在局限或不足**
+*   **与 FP16 的差距**：在 W3G128 配置下，LAQuant 在竞争性推理任务上与 FP16 仍有可测量的精度差距（Qwen3 1.7B/4B/8B 上平均分别相差 9.67, 8.28, 5.53 pp）。这种差距在小模型上更大，表明低比特推理量化对小模型更具挑战。
+*   **校准数据选择过程**：尽管论文形式化了 Hessian 子空间对齐作为校准数据与部署匹配的诊断方法，但目前使用的语料库是凭经验选择的，并未提供一套系统性的流程来选择或合成给定目标部署分布的校准数据。此外，它隐含地假设在目标领域有教师模型（trace generator）可用。
+*   **模型规模覆盖**：实验模型最大为 8B 参数，未覆盖更大的 LRM（如 30B, 70B 等）。尽管层间 QAT 的成本与参数数量呈线性关系，但其在更大规模模型上的效果仍待验证。
+*   **训练内存开销**：Lookahead Loss 增加了训练时的内存开销，因为需要同时保持教师模型当前层和下一层的激活。
+*   **Lookahead 深度固定**：LAQuant 默认使用固定的单层 Lookahead 深度（k=1），但不同层的下游 Jacobian 条件可能不同。允许 k 值根据层动态调整（例如基于 Jacobian 谱特性）可能进一步提升性能。
+  
+   
+## FairyFuse CPU GEMV
+FairyFuse: Multiplication-Free LLM Inference on CPUs via Fused Ternary Kernels
+
+https://arxiv.org/pdf/2604.20913 2026.4.22 BMW
+1. FairyFuse 针对 CPU 平台上的 LLM 推理，解决了内存带宽瓶颈和现有量化系统仍依赖浮点乘法的问题，旨在实现乘法无关的推理。
+2. 将复杂值模型的八个 real-valued sub-GEMVs 融合为一个 AVX-512 循环，并利用 BMI2 指令实现无乘法的 masked add/sub 操作，可将算术强度从 memory-bound 区域推向 CPU 的 compute ridge，因此 16 倍的 ternary 数据压缩对 CPU 性能提升显著，而对带宽更丰富的 GPU 则效果甚微甚至产生负面影响。
+3. FairyFuse 在 Intel Xeon 8558P 单个 socket 上实现了 32.4 tokens/秒的端到端吞吐量，比 llama.cpp Q4_K_M 快 1.24 倍，同时 WikiText-2 困惑度为 5.52（接近 FP16 的 5.47），保持了近乎无损的模型质量。
+
 ## SOAR FP4 scale
 SOAR: Scale Optimization for Accurate Reconstruction in NVFP4 Quantization
 
