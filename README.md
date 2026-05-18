@@ -1,5 +1,113 @@
 # Awesome or inspiring paper for AI
 
+## ScaleSearch FP4
+SEARCH YOUR BLOCK FLOATING POINT SCALES!
+https://arxiv.org/pdf/2605.12464 2026.5.12
+
+1. 针对推理加速中Block Floating Point (BFP)量化精度不足的问题，本文观察到现有**基于块最大幅值的量化方法次优**，且NVFP4等微缩放BFP格式中的浮点比例因子提供了微调量化误差的潜力。
+2. 提出了ScaleSearch算法，通过在NVFP4的E4M3格式中搜索相邻的 可表示比例因子来最小化块级量化误差，并将其扩展为**ScaleSearchAttention**以实现KV cache和注意力机制的NVFP4量化。
+3. ScaleSearch将NVFP4的量化误差降低了27%，在LLM PTQ中使MATH500性能提升高达15点; 而ScaleSearchAttention将Llama 3.1 70B在Wikitext-2上的Perplexity (PPL)降低了0.77点，同时保持了极低的开销。
+
+针对 NVFP4 格式中的每个16元素的微块，不再简单地取块内｜max|映射到 NVFP4 的最大可表示值（6.0），而是通过搜索该默认**尺度附近的、同样可表示的 FP8 尺度**，来选择能够最小化量化误差（MSE）的尺度
+对于权重PTQ，修改了 TensorRT-Model-Optimizer；对于Attn，基于PyTorch-SageAttn3实现了QKV全部NVFP4
+
+<img width="733" height="317" alt="image" src="https://github.com/user-attachments/assets/07a64928-b70d-476e-a123-67235c1abf23" />
+<img width="812" height="453" alt="image" src="https://github.com/user-attachments/assets/d64df66b-1b71-4b9d-a77c-2ffa18a1ad20" />
+<img width="752" height="230" alt="image" src="https://github.com/user-attachments/assets/a2f55ec8-cd99-48a2-98c3-1dc712104a6e" />
+<img width="408" height="197" alt="image" src="https://github.com/user-attachments/assets/d02f4cf9-5437-471c-a59d-f48a3abe0ad7" />
+
+**场景与具体问题**
+生成模型推理加速是当前关注的重点，其中量化（Quantization）技术通过启用更快的低精度计算和减少内存传输，发挥着关键作用。最近，GPU 加速器已开始支持微缩放 BFP 格式，如 NVIDIA 的 NVFP4 和 MXFP4，它们能够直接在 Tensor Core 上进行 4 比特矩阵乘法，相比 FP8 带来显著的吞吐量提升（B200 上 2 倍，B300 上 3 倍）。然而，业界现有的 BFP 量化算法（例如 vLLM、TensorRT）通常基于块内最大绝对值来确定量化尺度，这种简单方法在实际应用中被发现对量化误差而言可能是次优的。具体而言，虽然 NVFP4 格式的尺度因子（scale factor）包含额外的尾数位（mantissa bits），提供了精细调整尺度的潜力，但传统方法并未充分利用这些额外的自由度来优化量化精度。
+
+**业界不足**
+传统 BFP 量化方法（包括 NVFP4 的标准实现）通常采用最大值缩放（max-based scaling）策略，即根据块内元素的最大绝对值来设定唯一尺度。这种策略虽然能确保所有数值都在低精度格式的可表示范围内，但它未能最小化量化引入的均方误差（Mean Squared Error, MSE）。当数据分布中存在离群值或非均匀分布时，一个基于最大值确定的尺度可能导致大量非最大值区域的量化误差较大，从而影响模型整体性能。现有方法没有系统性地探索利用 BFP 格式中尺度因子的尾数位来寻找更优的量化尺度。
+
+**关键观察与假设**
+本研究的核心观察在于，NVFP4 等微缩放 BFP 格式的尺度因子并非简单的定点数或纯指数，而是具有浮点表示，其中包含了尾数位。这些尾数位提供了比仅依赖指数的传统 BFP 格式更精细的尺度调整能力。基于此，论文假设可以通过对这些尾数位进行精细搜索，从而找到能够最小化块内量化误差的最佳尺度，而不仅仅是简单地将块内最大值映射到目标格式的最大可表示值。这种搜索机制将允许更灵活地适应不同数据分布，降低整体量化误差。
+
+**方法核心思路和主要步骤**
+
+ScaleSearch 的核心思想是针对 NVFP4 格式中的每个 16 元素的微块，不再简单地将块内最大绝对值映射到 NVFP4 的最大可表示值（6.0），而是通过搜索该默认尺度附近的、同样可表示的 FP8 尺度，来选择能够最小化量化误差（MSE）的尺度。
+
+1.  **ScaleSearch 算法 ($\text{Algorithm 1}$):**
+    *   **输入**: 一个实数微块向量 $x \in \mathbb{R}^{16}$，以及搜索范围 $[\text{fmin}, \text{fmax}]$。
+    *   **初始化默认尺度**: 首先计算传统的最大值缩放尺度 $s$，即 $s = \text{roundUE4M3}(\text{max}_{i \in \{1,...,16\}} |x_i| \cdot (1.0/6.0))$。这里的 $\text{UE4M3}$ 是 NVFP4 尺度因子所使用的 8 比特浮点格式。
+    *   **尺度搜索**: 论文观察到 $s$ 可以被重新解释为一个 8 比特整数 $\text{sint8}$。通过对这个整数值添加一个偏移量 $f$ (在 $[\text{fmin}, \text{fmax}]$ 范围内)，然后将 $\text{sint8} + f$ 重新解释为 $\text{fp8UE4M3}$ 格式的尺度 $\text{s(f)}$。
+    *   **量化、反量化与误差计算**: 对于每个候选尺度 $\text{s(f)}$：
+        *   将原始块 $x$ 中的每个元素 $x_i$ 除以 $\text{s(f)}$ 后，通过最近邻舍入（$\text{roundE2M1}$）量化为 4 比特 E2M1 格式的 $q_i$。
+        *   将 $q_i$ 乘以 $\text{s(f)}$ 反量化得到 $\hat{x}_i$。
+        *   计算当前尺度下的均方误差 $\mathcal{L} = \sum_{i=1}^{16}(x_i - \hat{x}_i)^2$。
+    *   **选择最佳尺度**: 遍历所有候选尺度，选择使量化误差 $\mathcal{L}$ 最小的尺度 $s^*$ 及其对应的量化向量 $q^*$。
+
+    伪代码中的关键步骤如下：
+    ```
+    s = roundUE4M3(xmax * (1.0/6.0))  // 传统最大值缩放尺度
+    sint8 = reinterpret(s, int8)      // 将浮点尺度转换为8位整数表示
+
+    for f = fmin to fmax do
+        if 1 <= sint8 + f <= 127 then // 确保新尺度在UE4M3的有效范围内
+            s(f) = reinterpret(sint8 + f, fp8UE4M3) // 转换为浮点尺度
+            qi = roundE2M1(xi / s(f))             // 量化
+            x_hat_i = qi * s(f)                     // 反量化
+            current_loss = sum( (xi - x_hat_i)^2 ) // 计算误差
+            if current_loss < best_loss then
+                best_loss = current_loss
+                s_star = s(f)
+                q_star = q
+            end if
+        end if
+    end for
+    ```
+    根据经验分析，论文选择的搜索范围是 $\text{fmin} = -2$ 到 $\text{fmax} = +6$，因为在这个范围内能显著降低误差且计算开销可控。
+
+2.  **ScaleSearchAttention（SSA）**:
+    ScaleSearchAttention 是一种端到端的注意力机制优化方法，它将注意力计算转化为原生的 NVFP4 格式，以实现硬件加速。
+    *   **NVFP4 直接计算**: Q、K、P、V 等所有注意力层张量都量化为 NVFP4 格式，并直接使用 NVFP4 Tensor Core 进行矩阵乘法，累加器为 FP32，从而避免反量化开销。
+    *   **ScaleSearch 应用**: Q、K、V、P 的块尺度均通过 ScaleSearch 确定。量化沿矩阵乘法的归约维度进行，以符合 NVFP4 MMA 指令的要求。
+    *   **不相干性处理（Incoherence Processing, IP）与幅度衰减**: 为了进一步弥合精度差距，SSA 引入了 IP 技术。遵循 QuIP# (Tseng et al., 2024)，通过 Hadamard 矩阵变换 Q 和 K 矩阵，在保留注意力得分的同时减少离群值。此外，还引入了一对线性变换 $Q' = QR^{-T}, K' = KR$，其中 $R \in \mathbb{R}^{d \times d}$ 是可逆变换。这个变换在保持注意力得分不变（$Q'K'^\top = (QR^{-T})(KR)^\top = QR^{-T}R^\top K^\top = QK^\top$）的同时，能够最小化投影后 Q 和 K 矩阵的平均平方幅度，从而直接减少量化误差。
+    *   **注意力汇点感知混合精度缓存（Attention-sink-aware mixed-precision cache）**: 借鉴注意力汇点分析（attention sink analysis），SSA 采用混合精度 KV 缓存策略。注意力矩阵 $QK^\top$ 被分成大小为 $B$ 的块。上下文的最初几个块和最近的几个块（即“汇点”）以全精度存储和计算，而其他中间块则量化为 NVFP4。这确保了在关键区域保留高精度，同时最大限度地压缩 KV 缓存。全精度部分不随上下文或生成长度线性增长，因此大部分计算仍由快速 NVFP4 Tensor Core 完成。
+
+**实验设置**
+
+*   **实现基础**: ScaleSearch 被集成到现有的量化管线中。对于权重 PTQ，修改了 TensorRT-Model-Optimizer (ModelOpt) 的 NVFP4 量化路径。对于 ScaleSearchAttention，在 PyTorch 模拟量化框架上进行开发，模拟 NVFP4 Tensor Core 操作。
+*   **硬件/软件**: 实验在 GPU 上进行，具体型号未明确指出，但暗示是支持 NVFP4 的 NVIDIA Blackwell 架构相关设备。vLLM 的量化实现作为基线进行性能对比。
+*   **负载情况**:
+    *   **PTQ**: 量化 DeepSeek-R1-Distill-Qwen-1.5B 和 Qwen3-8B 两种大型语言模型。
+    *   **低精度注意力**: 评估扩散模型（Mochi 和 CogvideoX-2B）的注意力计算。
+    *   **SSA**: 对 Llama 3.1 8B, Llama 3.1 70B, Qwen3 4B, Qwen3 8B 等语言模型进行困惑度（Perplexity, PPL）评估，并在 GPQA Diamond 基准测试上评估 Llama 3.1 8B Instruct 模型。
+*   **对比基线**:
+    *   **PTQ**: 未量化基线模型（Baseline）、基于 TensorRT-Model-Optimizer 的标准 NVFP4 量化（ModelOpt）。
+    *   **扩散模型注意力**: SageAttention3 (SA3) 及其全精度版本。
+    *   **SSA**: 全精度模型（FULLPREC）、基础 NVFP4 量化（Naive-FP4，基于 NVIDIA 算法）、SageAttention3 (SA3)。
+    *   **效率**: FlashAttention、xformers、eager torch 等不同注意力实现。
+
+**关键对比结果**
+
+1.  **量化误差降低**: ScaleSearch 使合成高斯数据和 NVFP4 格式的量化误差降低了 27%。对 MXFP4 格式，也有 8-11% 的降低。
+2.  **PTQ 性能提升**:
+    *   对于 DeepSeek-R1-Distill-Qwen-1.5B 和 Qwen3-8B，ScaleSearch 在 GPQA、MATH-500 和 AIME-120 等基准测试上，比传统 NVFP4 量化方法高出高达 15 个百分点。例如，Qwen3-8B 在 MATH-500 上从 73.1 提升到 88.1。
+3.  **扩散模型注意力性能提升**:
+    *   ScaleSearch 结合 SageAttention3 在 Mochi 和 CogVideoX 模型上显著提升了 VQA-a、VQA-t 和 FScore 等指标，而对 CLIPSIM 和 CLIP-T 等指标影响较小（与全精度接近）。
+4.  **ScaleSearchAttention (SSA) 困惑度降低**:
+    *   SSA 在 Wikitext-2 数据集上，对所有测试模型（Llama 3.1 8B/70B, Qwen3 4B/8B）均优于 Naive-FP4 和 SageAttention3。
+    *   对于 Llama 3.1 70B，SSA 将 PPL 从 3.4 降低到 2.6348 (相对 Naive-FP4 降低 22%)，接近全精度表现 (2.5554)。
+    *   将 ScaleSearch 添加到 Naive-FP4 或 SageAttention3 中，也能观察到 PPL 的一致性提升，验证了其有效性。
+5.  **语言基准测试性能提升**:
+    *   Llama 3.1 8B Instruct 模型在 GPQA Diamond 基准测试上，SSA 达到 32.32 的准确率，优于 SA3 (26.26)，并与全精度模型表现相当 (31.81)。
+6.  **开销与效率**:
+    *   **量化开销**: ScaleSearch 在 FP32 到 NVFP4 的量化过程中引入的开销很小。在推荐的搜索范围 [-2, 6] 下，仅引入 1.74 倍的开销（0.0258 ms 增加到 0.0449 ms）。
+    *   **注意力吞吐量**: 结合 ScaleSearch 的 SageAttention3 在长序列长度下，仍能达到基线 (SageAttention3) 98.3% (非因果) 和 97.5% (因果) 的 TOPs，表明其对注意力核心算子的运行时开销影响可忽略。
+    *   **端到端延迟**: 在文本到视频生成任务中，ScaleSearch 仅比 SageAttention3 引入微小的延迟增加（例如 Mochi 模型的 353.40s 增加到 364.68s），表明在实际工作负载中开销可忽略。
+
+**潜在局限或不足**
+
+1.  **搜索范围的启发式选择**: 论文通过经验分析和对高斯数据与真实数据偏移分布的观察，确定了 [-2, 6] 的搜索范围。虽然这个范围被证明有效，但这仍是一种启发式方法，而非理论最优解。对于不同的数据分布或未来新型 BFP 格式，可能需要重新评估最佳搜索范围。
+2.  **计算开销与块大小**: 论文指出 ScaleSearch 的优势在小块大小下更为显著，随着块大小增加，其 MSE 优势减小。对于极大的块或整个张量量化，其收益可能会递减。虽然 NVFP4 使用小块 (16)，但未来若有更大块的格式，这种方法的有效性可能受限。
+3.  **对硬件的依赖性**: ScaleSearch 的核心优势在于利用了 NVFP4 尺度因子中的尾数位。这意味着该方法高度依赖于特定硬件（如 NVIDIA Blackwell 架构）和其浮点尺度的实现。对于其他 BFP 格式或不具有类似浮点尺度表示的硬件，ScaleSearch 的直接应用或效果可能大打折扣。
+4.  **理论分析深度**: 论文主要通过实验验证了 ScaleSearch 的有效性。对于为何在 $[-2, 6]$ 范围内能有效减少量化误差的更深层数学原理（例如，它如何捕捉到次大值而非仅仅最大值的量化优化），虽然有初步解释（例如解释了围绕 0 和 4/5 两个峰值的出现），但仍可进行更严谨的理论分析。
+5.  **内存占用**: 尽管量化本身减少了内存占用，但 ScaleSearch 本身在寻找最佳尺度时，需要对每个微块进行多次量化-反量化-误差计算，这可能在内存中临时存储多个量化结果的中间状态，尽管其开销相对较小。
+   
+
 ## LAQuant
 LAQuant: A Simple Overhead-free Large Reasoning Model Quantization by Layer-wise Lookahead Loss
 
